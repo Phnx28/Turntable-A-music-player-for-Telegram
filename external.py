@@ -1,0 +1,322 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import time
+from pathlib import Path
+from typing import Any, Iterable
+from urllib.parse import quote
+
+import httpx
+
+from core import (
+    Database,
+    lyrics_fingerprint,
+    normalize_text,
+    parse_lrc,
+    plain_lyrics,
+    rank_metadata_candidates,
+)
+
+
+class ExternalServices:
+    def __init__(self, database: Database, art_directory: Path, musicbrainz_contact: str):
+        self.database = database
+        self.art_directory = art_directory
+        self.art_directory.mkdir(parents=True, exist_ok=True)
+        self.default_musicbrainz_contact = musicbrainz_contact.strip()
+        self.http = httpx.AsyncClient(follow_redirects=True, timeout=15)
+        self.musicbrainz_lock = asyncio.Lock()
+        self.last_musicbrainz_request = 0.0
+
+    async def close(self) -> None:
+        await self.http.aclose()
+
+    @property
+    def user_agent(self) -> str:
+        contact = self.musicbrainz_contact or "configure-MusicBrainz-contact"
+        return f"TelegramMusic/1.0 ({contact})"
+
+    @property
+    def musicbrainz_contact(self) -> str:
+        return str(
+            self.database.get_settings().get("musicbrainzContact")
+            or self.default_musicbrainz_contact
+        ).strip()
+
+    async def test_musicbrainz(self) -> dict[str, bool]:
+        if not self.musicbrainz_contact:
+            raise ValueError("Enter a contact email address or website first")
+        await self._musicbrainz_get("/recording/", {"query": 'recording:"test"', "fmt": "json", "limit": "1"})
+        return {"ok": True}
+
+    async def metadata_candidates(self, track: dict[str, Any], refresh: bool = False) -> list[dict[str, Any]]:
+        if not self.musicbrainz_contact:
+            raise RuntimeError("Set MUSICBRAINZ_CONTACT before fetching metadata")
+        metadata = track["metadata"]
+        fingerprint = lyrics_fingerprint(metadata, track["durationMs"])
+        cache_key = f"metadata:{track['key']}:{hashlib.sha256(fingerprint.encode()).hexdigest()}"
+        if not refresh and (cached := self.database.cache_get(cache_key)) is not None:
+            return cached
+        title = str(metadata.get("title") or "").strip()
+        artist = str(metadata.get("artist") or "").strip()
+        if not title:
+            raise ValueError("Add a title before fetching metadata")
+        query = f'recording:"{self._lucene(title)}"'
+        if artist and normalize_text(artist) != "unknown artist":
+            query += f' AND artist:"{self._lucene(artist)}"'
+        payload = await self._musicbrainz_get(
+            "/recording/", {"query": query, "fmt": "json", "limit": "10"}
+        )
+        candidates = [self._candidate(recording) for recording in payload.get("recordings", [])]
+        candidates = [candidate for candidate in candidates if candidate]
+        ranked = rank_metadata_candidates(candidates, metadata, track["durationMs"])[:5]
+        self.database.cache_set(cache_key, ranked, 24 * 60 * 60)
+        return ranked
+
+    async def _musicbrainz_get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
+        async with self.musicbrainz_lock:
+            wait = 1.05 - (time.monotonic() - self.last_musicbrainz_request)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            response = await self.http.get(
+                f"https://musicbrainz.org/ws/2{path}",
+                params=params,
+                headers={"User-Agent": self.user_agent, "Accept": "application/json"},
+            )
+            self.last_musicbrainz_request = time.monotonic()
+        response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def _lucene(value: str) -> str:
+        return value.replace("\\", "\\\\").replace('"', '\\"')[:250]
+
+    @staticmethod
+    def _artist_credit(value: Any) -> str:
+        if not isinstance(value, list):
+            return ""
+        return "".join(
+            f"{item.get('name', '')}{item.get('joinphrase', '')}"
+            for item in value
+            if isinstance(item, dict)
+        ).strip()
+
+    def _candidate(self, recording: dict[str, Any]) -> dict[str, Any] | None:
+        recording_id = recording.get("id")
+        if not recording_id:
+            return None
+        releases = recording.get("releases") or []
+        release = next(
+            (item for item in releases if item.get("status") == "Official"),
+            releases[0] if releases else {},
+        )
+        release_id = release.get("id", "")
+        release_group = release.get("release-group") or {}
+        release_group_id = release_group.get("id", "")
+        date = release.get("date") or release_group.get("first-release-date") or ""
+        media = release.get("media") or []
+        medium = media[0] if media else {}
+        track_number = 0
+        tracks = medium.get("track") or medium.get("tracks") or []
+        if tracks:
+            try:
+                track_number = int(tracks[0].get("position") or 0)
+            except (TypeError, ValueError):
+                pass
+        tags = sorted(
+            recording.get("tags") or [], key=lambda item: int(item.get("count") or 0), reverse=True
+        )
+        cover_url = ""
+        if release_group_id:
+            cover_url = f"https://coverartarchive.org/release-group/{quote(release_group_id)}/front-500"
+        elif release_id:
+            cover_url = f"https://coverartarchive.org/release/{quote(release_id)}/front-500"
+        candidate_id = f"{recording_id}:{release_id or '-'}"
+        try:
+            year = int(str(date)[:4]) if date else 0
+        except ValueError:
+            year = 0
+        return {
+            "id": candidate_id,
+            "recordingId": recording_id,
+            "releaseId": release_id,
+            "score": int(recording.get("score") or 0),
+            "title": recording.get("title") or "",
+            "artist": self._artist_credit(recording.get("artist-credit")),
+            "album": release.get("title") or "",
+            "albumArtist": self._artist_credit(release.get("artist-credit")),
+            "genre": tags[0].get("name", "") if tags else "",
+            "year": year,
+            "trackNumber": track_number,
+            "discNumber": int(medium.get("position") or 0),
+            "durationMs": int(recording.get("length") or 0),
+            "coverUrl": cover_url,
+        }
+
+    async def apply_candidate(
+        self,
+        track: dict[str, Any],
+        candidate_id: str,
+        fields: Iterable[str] | None = None,
+        cover_quality: str = "1200",
+    ) -> dict[str, Any]:
+        candidates = await self.metadata_candidates(track)
+        candidate = next((item for item in candidates if item["id"] == candidate_id), None)
+        if not candidate:
+            raise KeyError("Metadata candidate expired; search again")
+        allowed = {
+            "title",
+            "artist",
+            "album",
+            "albumArtist",
+            "genre",
+            "year",
+            "trackNumber",
+            "discNumber",
+            "artworkPath",
+        }
+        selected = set(fields or allowed) & allowed
+        values = {key: candidate[key] for key in selected if key in candidate and key != "artworkPath"}
+        if "artworkPath" in selected and candidate.get("coverUrl"):
+            try:
+                values["artworkPath"] = await self._download_cover(
+                    self._cover_url(candidate["coverUrl"], cover_quality), cover_quality
+                )
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code != 404:
+                    raise
+        return self.database.save_metadata_patch(
+            track["chatId"], track["messageId"], values, []
+        )
+
+    async def candidate_cover(self, track: dict[str, Any], candidate_id: str) -> tuple[bytes, str]:
+        candidates = await self.metadata_candidates(track)
+        candidate = next((item for item in candidates if item["id"] == candidate_id), None)
+        if not candidate or not candidate.get("coverUrl"):
+            raise KeyError("Candidate artwork not found")
+        url = candidate["coverUrl"]
+        if not url.startswith("https://coverartarchive.org/"):
+            raise ValueError("Artwork host is not allowed")
+        async with self.http.stream("GET", url, headers={"User-Agent": self.user_agent}) as response:
+            response.raise_for_status()
+            mime_type = response.headers.get("content-type", "").split(";", 1)[0]
+            if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+                raise ValueError("Cover Art Archive returned an unsupported image")
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > 2 * 1024 * 1024:
+                    raise ValueError("Artwork preview exceeds 2 MB")
+                chunks.append(chunk)
+        return b"".join(chunks), mime_type
+
+    @staticmethod
+    def _cover_url(url: str, quality: str) -> str:
+        if quality not in {"500", "1200", "original"}:
+            raise ValueError("Cover quality must be 500, 1200, or original")
+        base = url.removesuffix("-500")
+        return base if quality == "original" else f"{base}-{quality}"
+
+    async def _download_cover(self, url: str, quality: str = "1200") -> str:
+        if not url.startswith("https://coverartarchive.org/"):
+            raise ValueError("Artwork host is not allowed")
+        digest = hashlib.sha256(url.encode()).hexdigest()
+        for extension in (".jpg", ".png", ".webp"):
+            existing = self.art_directory / f"{digest}{extension}"
+            if existing.is_file():
+                return existing.name
+        temporary = self.art_directory / f".{digest}.tmp"
+        total = 0
+        mime_type = ""
+        try:
+            async with self.http.stream(
+                "GET", url, headers={"User-Agent": self.user_agent}
+            ) as response:
+                response.raise_for_status()
+                mime_type = response.headers.get("content-type", "").split(";", 1)[0]
+                if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+                    raise ValueError("Cover Art Archive returned an unsupported image")
+                with temporary.open("wb") as output:
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        maximum = 25 if quality == "original" else 12 if quality == "1200" else 5
+                        if total > maximum * 1024 * 1024:
+                            raise ValueError(f"Artwork exceeds the {maximum} MB limit")
+                        output.write(chunk)
+            extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime_type]
+            destination = self.art_directory / f"{digest}{extension}"
+            temporary.replace(destination)
+            return destination.name
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+    async def lyrics(self, track: dict[str, Any], refresh: bool = False) -> dict[str, Any]:
+        metadata = track["metadata"]
+        fingerprint = lyrics_fingerprint(metadata, track["durationMs"])
+        current = self.database.get_lyrics(track["chatId"], track["messageId"])
+        if current and current["kind"] == "manual" and not refresh:
+            return current
+        if current and not refresh and current["queryFingerprint"] == fingerprint:
+            if current["kind"] != "missing" or int(time.time()) - current["fetchedAt"] < 24 * 60 * 60:
+                return current
+        title = str(metadata.get("title") or "").strip()
+        artist = str(metadata.get("artist") or "").strip()
+        if not title or not artist or normalize_text(artist) == "unknown artist":
+            return self.database.save_lyrics(
+                track["chatId"],
+                track["messageId"],
+                kind="missing",
+                plain_text="",
+                synced_text="",
+                lines=[],
+                fingerprint=fingerprint,
+            )
+        params = {
+            "track_name": title,
+            "artist_name": artist,
+            "duration": str(round(track["durationMs"] / 1000)),
+        }
+        if metadata.get("album"):
+            params["album_name"] = str(metadata["album"])
+        response = await self.http.get(
+            "https://lrclib.net/api/get",
+            params=params,
+            headers={"User-Agent": self.user_agent, "Accept": "application/json"},
+        )
+        if response.status_code == 404:
+            payload = {"plainLyrics": "", "syncedLyrics": ""}
+            kind = "missing"
+        else:
+            response.raise_for_status()
+            payload = response.json()
+            kind = "lrclib"
+        synced = payload.get("syncedLyrics") or ""
+        plain = plain_lyrics(payload.get("plainLyrics") or "")
+        lines = parse_lrc(synced, track["durationMs"]) if synced else []
+        return self.database.save_lyrics(
+            track["chatId"],
+            track["messageId"],
+            kind=kind,
+            plain_text=plain,
+            synced_text=synced,
+            lines=lines,
+            fingerprint=fingerprint,
+        )
+
+    def save_manual_lyrics(self, track: dict[str, Any], text: str) -> dict[str, Any]:
+        metadata = track["metadata"]
+        synced = text if parse_lrc(text, track["durationMs"]) else ""
+        lines = parse_lrc(synced, track["durationMs"]) if synced else []
+        plain = "\n".join(line["text"] for line in lines) if lines else plain_lyrics(text)
+        return self.database.save_lyrics(
+            track["chatId"],
+            track["messageId"],
+            kind="manual",
+            plain_text=plain,
+            synced_text=synced,
+            lines=lines,
+            fingerprint=lyrics_fingerprint(metadata, track["durationMs"]),
+        )

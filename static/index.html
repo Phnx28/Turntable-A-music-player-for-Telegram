@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en" data-theme="system" data-font="sans" data-accent="blue">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f7f7f4">
+    <title>Telegram Music</title>
+    <link rel="stylesheet" href="/assets/style.css">
+  </head>
+  <body>
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></symbol>
+      <symbol id="i-prev" viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 9 7V5z"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM6 5v14l9-7z"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zm11.5.5v5a3 3 0 0 0 0-5zm0-3v2a5 5 0 0 1 0 7v2a7 7 0 0 0 0-11z"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><path d="m20 18.6-4.4-4.4a7 7 0 1 0-1.4 1.4l4.4 4.4zM5 10a5 5 0 1 1 10 0 5 5 0 0 1-10 0"/></symbol>
+      <symbol id="i-sync" viewBox="0 0 24 24"><path d="M18.7 7A8 8 0 0 0 5 6l-2 2v-6h6L6.5 4.5A10 10 0 0 1 22 9zM5.3 17A8 8 0 0 0 19 18l2-2v6h-6l2.5-2.5A10 10 0 0 1 2 15z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M11 4h2v9l3-3 1.4 1.4-5.4 5.4-5.4-5.4L8 10l3 3zM5 18h14v2H5z"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="m4 16-.8 4 4-.8L18.8 7.6l-3.2-3.2zm13-13 3.2 3.2 1.3-1.3-3.2-3.2z"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></symbol>
+      <symbol id="i-lyrics" viewBox="0 0 24 24"><path d="M5 5h14v2H5zm0 4h11v2H5zm0 4h14v2H5zm0 4h9v2H5z"/></symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 3h5v5h-2V6.4l-3.7 3.7-1.4-1.4L17.6 5H16zM3 6h4.5c2 0 3.1 1.1 4.6 3.2l-1.5 1.4C9.2 8.6 8.6 8 7.5 8H3zm16 10v-1.6l-3.7 3.7c-1.7 1.7-3 1.9-5.3 1.9H3v-2h7c1.8 0 2.5-.2 3.9-1.3l3.7-3.7H16v-2h5v5zM3 11h4.5v2H3z"/></symbol>
+      <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M7 7h10V4l4 4-4 4V9H7a3 3 0 0 0-3 3H2a5 5 0 0 1 5-5zm10 10H7v3l-4-4 4-4v3h10a3 3 0 0 0 3-3h2a5 5 0 0 1-5 5z"/></symbol>
+      <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M4 4h16v16H4zm2 2v12h4V6zm10 3-3 3 3 3 1.4-1.4-1.6-1.6 1.6-1.6z"/></symbol>
+      <symbol id="i-queue" viewBox="0 0 24 24"><path d="M4 6h12v2H4zm0 5h12v2H4zm0 5h8v2H4zm14-5v7l5-3.5z"/></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.572"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="m8.7 10.7 6.6-3.4m-6.6 6 6.6 3.4"/></symbol>
+      <symbol id="i-locate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></symbol>
+      <symbol id="i-chevron-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></symbol>
+    </svg>
+
+    <main id="access-view" class="gate" hidden>
+      <section class="gate-panel" aria-labelledby="access-title">
+        <p class="eyebrow">Personal music index</p>
+        <h1 id="access-title">Telegram Music</h1>
+        <p class="gate-copy">Unlock the player. Your Telegram session stays encrypted on this server.</p>
+        <form id="access-form" class="stack">
+          <label for="app-password">App password</label>
+          <input id="app-password" name="password" type="password" autocomplete="current-password" required autofocus>
+          <button class="button primary" type="submit">Unlock player</button>
+          <p id="access-error" class="form-error" role="alert"></p>
+        </form>
+      </section>
+      <div class="gate-signal" aria-hidden="true"></div>
+    </main>
+
+    <main id="telegram-view" class="gate" hidden>
+      <section class="gate-panel wide login-panel" aria-labelledby="telegram-title">
+        <header class="login-heading">
+          <p class="eyebrow">One-time connection</p>
+          <h1 id="telegram-title">Link Telegram</h1>
+          <p class="gate-copy">Choose either secure method. Your Telegram password and login codes are never stored.</p>
+        </header>
+        <div class="login-columns">
+          <section class="login-method qr-method">
+            <div class="method-heading"><span class="method-mark">QR</span><div><h2>Scan with Telegram</h2><p>Settings → Devices → Link Desktop Device</p></div></div>
+            <div id="qr-stage" class="qr-stage" aria-live="polite" aria-busy="true">
+              <div id="qr-loader" class="qr-loader"><span class="qr-loader-mark" aria-hidden="true"></span><span>Preparing secure QR…</span></div>
+              <div id="qr-code" class="qr-code" aria-label="Telegram login QR code"></div>
+            </div>
+            <div class="method-footer">
+              <p id="qr-status" class="small-copy">Generating a new code…</p>
+              <button id="qr-start" class="text-button" type="button">Refresh QR</button>
+            </div>
+          </section>
+          <section class="login-method ruled-left">
+            <div class="method-heading"><span class="method-mark">TEL</span><div><h2>Use your number</h2><p>Telegram sends the code inside the app.</p></div></div>
+            <div class="login-stages" aria-live="polite">
+            <form id="phone-form" class="stack compact login-stage">
+              <label for="telegram-country">Country</label>
+              <select id="telegram-country" required disabled><option value="">Loading countries…</option></select>
+              <label for="telegram-phone">Phone number</label>
+              <div class="phone-field"><span id="dial-prefix">+</span><input id="telegram-phone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="Phone number" required></div>
+              <p class="field-help">Enter the national number without its leading zero.</p>
+              <button class="button primary" type="submit">Send Telegram code</button>
+            </form>
+            <form id="code-form" class="stack compact login-stage" hidden>
+              <p class="stage-kicker">Code sent</p>
+              <label for="telegram-code">Telegram code</label>
+              <input id="telegram-code" inputmode="numeric" autocomplete="one-time-code" placeholder="Enter the code" required>
+              <button class="button primary" type="submit">Continue</button>
+              <button id="change-number" class="text-button" type="button">Change phone number</button>
+            </form>
+            <form id="twofa-form" class="stack compact login-stage" hidden>
+              <p class="stage-kicker">Two-step verification</p>
+              <label for="telegram-password">Telegram 2FA password</label>
+              <input id="telegram-password" type="password" autocomplete="current-password" placeholder="Your Telegram password" required>
+              <button class="button primary" type="submit">Finish linking</button>
+              <button id="change-number-2fa" class="text-button" type="button">Start again</button>
+            </form>
+            </div>
+            <p id="phone-status" class="login-status small-copy">Choose your country to continue.</p>
+          </section>
+        </div>
+      </section>
+      <div class="gate-signal" aria-hidden="true"></div>
+    </main>
+
+    <main id="app-shell" class="app-shell" hidden>
+      <aside id="source-rail" class="source-rail">
+        <header class="brand-row">
+          <div>
+            <p class="brand">Telegram Music</p>
+            <p id="account-name" class="utility muted"></p>
+          </div>
+          <button id="collapse-sidebar" class="icon-button desktop-only" type="button" aria-label="Collapse sources"><svg><use href="#i-collapse"/></svg></button>
+          <button id="close-nav" class="icon-button mobile-only" type="button" aria-label="Close sources">
+            <svg><use href="#i-close"/></svg>
+          </button>
+        </header>
+        <div class="global-search-wrap">
+          <label id="global-search-control" class="global-search-control" title="Search all Telegram">
+            <svg aria-hidden="true"><use href="#i-search"/></svg>
+            <span class="sr-only">Search all Telegram music and selected sources</span>
+            <input id="global-search" type="search" placeholder="Search all Telegram" autocomplete="off" aria-controls="global-results" aria-expanded="false">
+          </label>
+          <section id="global-results" class="global-results" aria-label="Telegram search results" hidden>
+            <header class="global-results-head">
+              <div><p class="eyebrow">Library lens</p><strong id="global-results-title">Search everywhere</strong></div>
+              <button id="close-global-search" class="icon-button" type="button" aria-label="Close global search"><svg><use href="#i-close"/></svg></button>
+            </header>
+            <div id="global-search-signal" class="global-search-signal" hidden><span></span><small>Checking Telegram channels and bots…</small></div>
+            <div id="global-source-results" class="global-result-group"></div>
+            <div id="global-track-results" class="global-result-group"></div>
+            <p id="global-search-empty" class="empty-copy">Type a title, artist, or source name.</p>
+          </section>
+        </div>
+        <div class="source-tools">
+          <select id="sidebar-sort" aria-label="Sort sources"><option value="custom">Custom order</option><option value="name">Name</option><option value="recent">Recent activity</option><option value="count">Track count</option></select>
+          <button id="bulk-sources" class="icon-button" type="button" aria-label="Select sources to unselect"><svg><use href="#i-edit"/></svg></button>
+        </div>
+        <div id="bulk-bar" class="bulk-bar" hidden><span id="bulk-count">0 selected</span><button id="bulk-unselect" class="text-button danger" type="button">Unselect</button><button id="bulk-cancel" class="text-button" type="button">Done</button></div>
+        <nav aria-label="Music sources">
+          <button class="source-link active" type="button" data-source="">
+            <span class="source-avatar" aria-hidden="true">♪</span><span class="source-copy"><strong>All music</strong><small>Selected sources</small></span><span id="all-count" class="source-count">0</span>
+          </button>
+          <button id="liked-source" class="source-link" type="button" data-liked-source>
+            <span class="source-avatar liked-avatar" aria-hidden="true"><svg><use href="#i-heart"/></svg></span><span class="source-copy"><strong>Liked songs</strong><small>Saved locally</small></span><span id="liked-count" class="source-count">0</span>
+          </button>
+          <div id="source-list"></div>
+        </nav>
+        <button id="add-source" class="add-source" type="button">
+          <svg><use href="#i-plus"/></svg><span>Add Telegram source</span>
+        </button>
+        <footer class="rail-footer">
+          <button id="open-settings" class="text-button" type="button">Settings</button>
+        </footer>
+      </aside>
+      <div id="left-resizer" class="sidebar-resizer left-resizer" role="separator" tabindex="0" aria-label="Resize source sidebar" aria-orientation="vertical"></div>
+
+      <section id="library" class="library">
+        <header class="library-header">
+          <button id="open-nav" class="icon-button mobile-only" type="button" aria-label="Open sources">
+            <svg><use href="#i-menu"/></svg>
+          </button>
+          <div class="library-heading">
+            <p id="source-kind" class="eyebrow">Your Telegram</p>
+            <h1 id="source-title">All music</h1>
+            <p id="library-summary" class="small-copy">Select a source to build its playlist.</p>
+            <div class="playlist-actions">
+              <button id="play-playlist" class="button primary" type="button"><svg><use href="#i-play"/></svg>Play</button>
+              <button id="shuffle-playlist" class="button" type="button"><svg><use href="#i-shuffle"/></svg>Shuffle play</button>
+            </div>
+          </div>
+          <div class="header-actions">
+            <label class="search-control">
+              <svg><use href="#i-search"/></svg>
+              <span class="sr-only">Search tracks</span>
+              <input id="track-search" type="search" placeholder="Filter this playlist">
+            </label>
+            <button id="sync-source" class="icon-button" type="button" aria-label="Sync current source">
+              <svg><use href="#i-sync"/></svg>
+            </button>
+          </div>
+        </header>
+        <div id="sync-strip" class="sync-strip" hidden><span class="sync-motion"></span><span id="sync-copy">Syncing…</span></div>
+
+        <div class="track-head utility" aria-hidden="true">
+          <span>Track</span><span>Source</span><span>Time</span><span></span>
+        </div>
+        <div id="track-list" class="track-list" aria-live="polite"></div>
+        <section id="empty-library" class="empty-state" hidden>
+          <p class="eyebrow">No tracks here</p>
+          <h2>Add a channel, bot, or private chat.</h2>
+          <p>The app will find its audio and keep the playlist in sync.</p>
+          <button class="button primary" type="button" data-action="add-source">Choose a source</button>
+        </section>
+      </section>
+
+      <div id="right-resizer" class="sidebar-resizer right-resizer" role="separator" tabindex="0" aria-label="Resize now playing sidebar" aria-orientation="vertical"></div>
+
+      <section id="now-panel" class="now-panel" aria-label="Now playing" hidden>
+        <header class="panel-header">
+          <p class="eyebrow">Now playing</p>
+          <button id="close-now" class="icon-button" type="button" aria-label="Close now playing">
+            <svg><use href="#i-close"/></svg>
+          </button>
+        </header>
+        <div class="large-art-wrap">
+          <img id="large-art" class="large-art" alt="" hidden>
+          <div id="large-art-placeholder" class="art-placeholder large" aria-hidden="true"><span></span></div>
+        </div>
+        <div class="now-title">
+          <h2 id="now-title">Nothing playing</h2>
+          <p id="now-artist" class="muted">Choose a track</p>
+        </div>
+        <div class="now-tabs" role="tablist">
+          <button id="lyrics-tab" class="tab active" type="button" role="tab" aria-selected="true">Lyrics</button>
+          <button id="queue-tab" class="tab" type="button" role="tab" aria-selected="false">Queue</button>
+          <button id="details-tab" class="tab" type="button" role="tab" aria-selected="false">Details</button>
+        </div>
+        <div id="queue-pane" class="queue-pane" role="tabpanel" hidden>
+          <div class="queue-header"><span id="queue-summary" class="small-copy">Nothing queued</span><button id="clear-queue" class="text-button" type="button">Clear</button></div>
+          <div id="queue-list" class="queue-list"></div>
+        </div>
+        <div id="lyrics-pane" class="lyrics-pane" role="tabpanel">
+          <div id="lyrics-lines" class="lyrics-lines"></div>
+          <p id="lyrics-empty" class="empty-copy">Play a track to load lyrics.</p>
+          <button id="add-lyrics-empty" class="button" type="button" hidden>Add lyrics</button>
+          <button id="sync-lyrics" class="button sync-lyrics" type="button" hidden><svg><use href="#i-locate"/></svg>Sync to lyrics</button>
+        </div>
+        <div id="details-pane" class="details-pane" role="tabpanel" hidden>
+          <dl id="track-details"></dl>
+          <div class="detail-actions">
+            <button id="edit-current" class="button" type="button"><svg><use href="#i-edit"/></svg>Edit metadata</button>
+            <a id="download-current" class="button" href="#"><svg><use href="#i-download"/></svg>Download</a>
+            <button id="edit-lyrics" class="button" type="button"><svg><use href="#i-lyrics"/></svg>Edit lyrics</button>
+          </div>
+        </div>
+      </section>
+
+      <footer id="player" class="player" aria-label="Audio player">
+        <input id="progress" class="progress" type="range" min="0" max="1000" value="0" aria-label="Track position">
+        <div class="player-track">
+          <button id="player-open" class="player-cover-button" type="button" aria-label="Open now playing"><span class="mini-art-wrap">
+            <img id="mini-art" class="mini-art" alt="" hidden>
+            <div id="mini-art-placeholder" class="art-placeholder mini" aria-hidden="true"><span></span></div>
+          </span></button>
+          <button id="player-locate" class="player-copy" type="button" aria-label="Locate current track"><strong id="player-title">Nothing playing</strong><small id="player-artist">Choose a track</small></button>
+          <div class="player-track-actions">
+            <button id="like-current" class="icon-button" type="button" aria-label="Like current track" aria-pressed="false"><svg><use href="#i-heart"/></svg></button>
+            <button id="save-current-telegram" class="icon-button desktop-action" type="button" aria-label="Send to Saved Messages"><svg><use href="#i-send"/></svg></button>
+            <button id="share-current" class="icon-button desktop-action" type="button" aria-label="Share with Telegram contact"><svg><use href="#i-share"/></svg></button>
+            <button id="player-more" class="icon-button" type="button" aria-label="More track actions"><svg><use href="#i-more"/></svg></button>
+          </div>
+        </div>
+        <div class="transport">
+          <button id="shuffle" class="icon-button mode-button" type="button" aria-label="Shuffle off" aria-pressed="false"><svg><use href="#i-shuffle"/></svg></button>
+          <button id="previous" class="icon-button" type="button" aria-label="Previous track"><svg><use href="#i-prev"/></svg></button>
+          <button id="play" class="play-button" type="button" aria-label="Play" aria-pressed="false">
+            <span class="transport-icon transport-play"><svg><use href="#i-play"/></svg></span>
+            <span class="transport-icon transport-pause"><svg><use href="#i-pause"/></svg></span>
+          </button>
+          <button id="next" class="icon-button" type="button" aria-label="Next track"><svg><use href="#i-next"/></svg></button>
+          <button id="repeat" class="icon-button mode-button" type="button" aria-label="Repeat off"><svg><use href="#i-repeat"/></svg><span id="repeat-badge"></span></button>
+        </div>
+        <div class="player-time utility"><span id="elapsed">0:00</span><span>/</span><span id="duration">0:00</span></div>
+        <label class="volume-control">
+          <svg><use href="#i-volume"/></svg>
+          <span class="sr-only">Volume</span>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8">
+        </label>
+        <button id="show-lyrics" class="icon-button" type="button" aria-label="Show lyrics"><svg><use href="#i-lyrics"/></svg></button>
+      </footer>
+      <audio id="audio" preload="metadata"></audio>
+    </main>
+
+    <dialog id="source-dialog" class="modal wide-modal">
+      <header class="modal-header">
+        <div><p class="eyebrow">Telegram library</p><h2>Choose sources</h2></div>
+        <button class="icon-button" type="button" data-close="source-dialog" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <p class="small-copy">Each selected chat becomes a playlist. Groups are intentionally left out.</p>
+      <div class="discover-tools"><label>Sort <select id="discover-sort"><option value="recent">Latest post</option><option value="count">Music files</option><option value="name">Name</option></select></label><span id="discover-progress" class="small-copy"></span></div>
+      <div id="discover-list" class="discover-list"></div>
+    </dialog>
+
+    <dialog id="metadata-dialog" class="modal wide-modal">
+      <header class="modal-header">
+        <div><p class="eyebrow">Local metadata layer</p><h2>Edit track</h2></div>
+        <button class="icon-button" type="button" data-close="metadata-dialog" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <form id="metadata-form" class="metadata-form">
+        <label>Title<input name="title" maxlength="500"></label>
+        <label>Artist<input name="artist" maxlength="500"></label>
+        <label>Album<input name="album" maxlength="500"></label>
+        <label>Album artist<input name="albumArtist" maxlength="500"></label>
+        <label>Genre<input name="genre" maxlength="500"></label>
+        <label>Year<input name="year" type="number" min="0" max="9999"></label>
+        <label>Track<input name="trackNumber" type="number" min="0"></label>
+        <label>Disc<input name="discNumber" type="number" min="0"></label>
+        <div class="form-actions full-row">
+          <button class="button primary" type="submit">Save changes</button>
+          <button id="reset-metadata" class="button" type="button">Reset to Telegram</button>
+          <button id="fetch-metadata" class="button" type="button">Fetch metadata</button>
+          <label class="inline-choice">Cover <select id="cover-quality"><option value="500">Standard</option><option value="1200" selected>High</option><option value="original">Original</option></select></label>
+        </div>
+      </form>
+      <section id="candidate-section" hidden>
+        <div class="section-rule"><span class="utility">Internet matches</span></div>
+        <div id="candidate-list" class="candidate-list"></div>
+      </section>
+      <p id="metadata-status" class="dialog-status" role="status" aria-live="polite"></p>
+    </dialog>
+
+    <dialog id="lyrics-dialog" class="modal">
+      <header class="modal-header">
+        <div><p class="eyebrow">Plain or LRC</p><h2>Edit lyrics</h2></div>
+        <button class="icon-button" type="button" data-close="lyrics-dialog" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <form id="lyrics-form" class="stack">
+        <label for="lyrics-text">Lyrics</label>
+        <textarea id="lyrics-text" rows="18" placeholder="[00:12.00] First line…"></textarea>
+        <div class="form-actions">
+          <button class="button primary" type="submit">Save lyrics</button>
+          <button id="reset-lyrics" class="button" type="button">Fetch again</button>
+        </div>
+      </form>
+      <p id="lyrics-status" class="dialog-status" role="status" aria-live="polite"></p>
+    </dialog>
+
+    <dialog id="share-dialog" class="modal">
+      <header class="modal-header"><div><p class="eyebrow">Telegram contacts</p><h2>Share track</h2></div><button class="icon-button" type="button" data-close="share-dialog" aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
+      <label for="contact-search">Find a contact</label>
+      <input id="contact-search" type="search" placeholder="Name or username" autocomplete="off">
+      <div id="contact-list" class="contact-list" aria-live="polite"></div>
+    </dialog>
+
+    <dialog id="settings-dialog" class="modal settings-modal wide-modal">
+      <header class="modal-header">
+        <div><p class="eyebrow">Player preferences</p><h2>Settings</h2></div>
+        <button class="icon-button" type="button" data-close="settings-dialog" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
+      <section data-settings-pane="appearance">
+      <fieldset class="choice-group first">
+        <legend>Theme</legend>
+        <div class="segmented" data-setting="theme">
+          <button type="button" data-value="light">Light</button><button type="button" data-value="dark">Dark</button><button type="button" data-value="system">System</button>
+        </div>
+      </fieldset>
+      <fieldset class="choice-group">
+        <legend>Type</legend>
+        <div class="segmented type-options" data-setting="font">
+          <button type="button" data-value="sans">Sans</button><button type="button" data-value="serif">Serif</button><button type="button" data-value="mono">Mono</button>
+        </div>
+      </fieldset>
+      <fieldset class="choice-group">
+        <legend>Accent</legend>
+        <div class="accent-options" data-setting="accent">
+          <button type="button" data-value="blue" aria-label="Pastel blue"></button><button type="button" data-value="mint" aria-label="Pastel mint"></button><button type="button" data-value="lilac" aria-label="Pastel lilac"></button><button type="button" data-value="peach" aria-label="Pastel peach"></button><button type="button" data-value="butter" aria-label="Pastel butter"></button>
+        </div>
+      </fieldset>
+      </section>
+      <section data-settings-pane="playback" hidden>
+        <div class="setting-block"><label for="prefetch-count"><strong>Songs to prefetch</strong><span>Cache upcoming tracks for gapless starts. Set 0 to disable.</span></label><input id="prefetch-count" type="number" min="0" max="20" value="1"></div>
+        <div class="cache-row"><span id="cache-usage" class="small-copy">Checking cache…</span><button id="clear-cache" class="button" type="button">Clear prefetched songs</button></div>
+        <button class="button primary save-settings" type="button">Save playback settings</button>
+      </section>
+      <section data-settings-pane="metadata" hidden>
+        <div class="setting-block"><label for="musicbrainz-contact"><strong>MusicBrainz contact</strong><span>MusicBrainz does not use an API key for lookups. Enter an email address or website for the required User-Agent.</span></label><input id="musicbrainz-contact" type="text" placeholder="you@example.com"></div>
+        <a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">Read the MusicBrainz API guide ↗</a>
+        <div class="setting-block"><label for="default-cover-quality"><strong>Default cover quality</strong></label><select id="default-cover-quality"><option value="500">Standard · 500 px</option><option value="1200">High · 1200 px</option><option value="original">Original</option></select></div>
+        <div class="form-actions"><button class="button primary save-settings" type="button">Save metadata settings</button><button id="test-musicbrainz" class="button" type="button">Test connection</button></div>
+      </section>
+      <section data-settings-pane="account" hidden>
+      <div class="danger-zone">
+        <button id="disconnect-telegram" class="text-button danger" type="button">Disconnect Telegram and clear library</button>
+      </div>
+      </section></div></div>
+    </dialog>
+
+    <dialog id="error-dialog" class="modal alert-modal"><div class="alert-mark">!</div><h2 id="error-title">Something went wrong</h2><p id="error-message"></p><div class="form-actions"><button id="error-retry" class="button primary" type="button" hidden>Try again</button><button class="button" type="button" data-close="error-dialog">Close</button></div></dialog>
+    <dialog id="confirm-dialog" class="modal alert-modal"><h2 id="confirm-title">Confirm action</h2><p id="confirm-message"></p><div class="form-actions"><button id="confirm-accept" class="button primary" type="button">Continue</button><button class="button" type="button" data-close="confirm-dialog">Cancel</button></div></dialog>
+    <div id="context-menu" class="context-menu" role="menu" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden><span id="toast-message"></span><button id="toast-action" type="button" hidden></button><span class="toast-timer" aria-hidden="true"></span></div>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>
