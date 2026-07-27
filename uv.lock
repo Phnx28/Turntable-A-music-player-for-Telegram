@@ -503,7 +503,7 @@ wheels = [
 ]
 
 [[package]]
-name = "telegram-music-player"
+name = "telegram-turntable"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
