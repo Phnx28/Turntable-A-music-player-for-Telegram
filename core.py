@@ -868,9 +868,12 @@ class Database:
             self._flush_search()
         clauses = ["t.available = 1"]
         parameters: list[Any] = []
+        # ponytail: s.selected only decides what the *combined* library shows. Asking for one
+        # chat_id is already an explicit choice, so applying it there hid every track of an
+        # unselected source and made it look empty until a resync.
         if liked:
             clauses.append("t.liked_at IS NOT NULL")
-        elif not include_unselected:
+        elif not include_unselected and not chat_id:
             clauses.append("s.selected = 1")
         if chat_id:
             clauses.append("t.chat_id = ?")

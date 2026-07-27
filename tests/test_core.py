@@ -68,6 +68,29 @@ class CoreTests(unittest.TestCase):
             self.assertEqual("Needle Remix", database.get_track("1", "2")["metadata"]["title"])
             database.close()
 
+    def test_unselected_source_still_lists_its_own_tracks(self):
+        # Clicking the player title to locate a track asks for one chat_id. That is an explicit
+        # choice, so the source must list its tracks even while unselected -- it used to come
+        # back empty and look like the source had lost everything until a resync.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Kept"})
+            database.upsert_source({"chatId": "2", "kind": "channel", "title": "Dropped"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg"},
+                {"chatId": "2", "messageId": "1", "fileName": "b.mp3", "mimeType": "audio/mpeg"},
+                {"chatId": "2", "messageId": "2", "fileName": "c.mp3", "mimeType": "audio/mpeg"},
+            ])
+            database.set_source_selected("2", False)
+
+            page = database.list_tracks(chat_id="2")
+            self.assertEqual(2, page["total"])
+            self.assertEqual(2, len(page["items"]))
+            # The combined library still hides it, which is what "unselected" means there.
+            self.assertEqual(1, database.list_tracks()["total"])
+            self.assertEqual(1, database.list_tracks(chat_id="1")["total"])
+            database.close()
+
     def test_weighted_shuffle_has_no_duplicates_and_tails_recent_tracks(self):
         current = now_ts()
         items = [

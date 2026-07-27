@@ -1115,8 +1115,16 @@ async function locateCurrent() {
       state.temporarySource = { ...source, temporary: true, trackCount: 1 };
       await selectTemporary();
     } else if (state.source !== source.chatId || state.likedMode) await selectSource(source.chatId);
-    else { $("track-search").value = ""; $("library").scrollTop = 0; await loadLibrary(); }
-    const temporary = Boolean(state.temporarySource?.chatId === state.source);
+    else {
+      // A previous locate may have left a temporary source pointing elsewhere; keep it only
+      // while it is still the chat being viewed, or the position lookup disagrees with the list.
+      if (state.temporarySource && state.temporarySource.chatId !== source.chatId) {
+        if (state.temporaryJob?.jobId) api(`/api/jobs/${encodeURIComponent(state.temporaryJob.jobId)}`, { method: "DELETE" }).catch(() => {});
+        state.temporarySource = null; state.temporaryJob = null;
+      }
+      $("track-search").value = ""; $("library").scrollTop = 0; await loadLibrary();
+    }
+    const temporary = Boolean(state.temporarySource?.chatId === state.source && !state.sources.some((item) => item.chatId === state.source));
     const result = await api(`/api/tracks/${encodeURIComponent(state.current.key)}/position?source=${encodeURIComponent(state.source)}&temporary=${temporary}`);
     await loadPage(Math.floor(result.index / 100) * 100);
     state.windowStart = -1; renderTracks(true);
