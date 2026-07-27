@@ -289,6 +289,11 @@ class Database:
         self.connection = sqlite3.connect(path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.lock = threading.RLock()
+        # ponytail: WAL allows concurrent readers, but one shared connection behind one lock
+        # serialized them anyway, so parallel reads queued behind each other (66ms alone vs
+        # 374ms with five in flight). Reads get a per-thread connection; writes stay on the
+        # single locked connection so write serialization and transactions are unchanged.
+        self._local = threading.local()
         self._track_counts: dict[str, int] | None = None
         # ponytail: defer FTS rebuild until a search-using read needs the index
         self._dirty_search_keys: set[str] = set()
@@ -297,6 +302,21 @@ class Database:
             self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA wal_autocheckpoint = 1000")
             self._migrate()
+
+    @property
+    def reader(self) -> sqlite3.Connection:
+        """A read-only connection owned by the calling thread.
+
+        FastAPI runs sync endpoints in a threadpool, so this gives each worker its own
+        SQLite handle and lets WAL serve them in parallel. Never use it for writes.
+        """
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            connection = sqlite3.connect(self.path, check_same_thread=False)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only = ON")
+            self._local.connection = connection
+        return connection
 
     def close(self) -> None:
         self._flush_search()
@@ -896,44 +916,46 @@ class Database:
         limit = max(25, min(int(limit), 200))
         clauses, parameters = self._library_filter(chat_id, query, liked, include_unselected)
         where = " AND ".join(clauses)
-        with self.lock:
-            rows = self.connection.execute(
+        # _library_filter already flushed any pending FTS writes above, so this is now a pure
+        # read and can run on the per-thread connection without taking the write lock.
+        reader = self.reader
+        rows = reader.execute(
+            f"""
+            SELECT t.rowid AS track_rowid, t.chat_id, t.message_id, t.file_name,
+                   t.file_size, t.duration_ms, t.telegram_title, t.telegram_artist,
+                   t.sent_at, t.document_id, s.title AS source_title,
+                   s.kind AS source_kind, s.selected AS source_selected,
+                   o.payload AS override_payload
+            FROM tracks t
+            JOIN sources s ON s.chat_id = t.chat_id
+            LEFT JOIN metadata_overrides o
+                ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+            WHERE {where}
+            ORDER BY t.sent_at DESC, t.rowid DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*parameters, limit, offset),
+        ).fetchall()
+            # ponytail: COUNT(*) OVER() on this query cost ~200ms on a 55k library because the
+            # window function materializes every matching row before the LIMIT. A plain COUNT(*)
+            # never builds the rows and lands in single-digit ms, so ask for it separately and
+            # only when the caller cannot already know it.
+        if total is None:
+            # The overrides join cannot change the count, but short queries filter on
+            # o.payload, so it has to stay in the FROM clause.
+            count = reader.execute(
                 f"""
-                SELECT t.rowid AS track_rowid, t.chat_id, t.message_id, t.file_name,
-                       t.file_size, t.duration_ms, t.telegram_title, t.telegram_artist,
-                       t.sent_at, t.document_id, s.title AS source_title,
-                       s.kind AS source_kind, s.selected AS source_selected,
-                       o.payload AS override_payload
+                SELECT COUNT(*)
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
                     ON o.chat_id = t.chat_id AND o.message_id = t.message_id
                 WHERE {where}
-                ORDER BY t.sent_at DESC, t.rowid DESC
-                LIMIT ? OFFSET ?
                 """,
-                (*parameters, limit, offset),
-            ).fetchall()
-            # ponytail: COUNT(*) OVER() on this query cost ~200ms on a 55k library because the
-            # window function materializes every matching row before the LIMIT. A plain COUNT(*)
-            # never builds the rows and lands in single-digit ms, so ask for it separately and
-            # only when the caller cannot already know it.
-            if total is None:
-                # The overrides join cannot change the count, but short queries filter on
-                # o.payload, so it has to stay in the FROM clause.
-                count = self.connection.execute(
-                    f"""
-                    SELECT COUNT(*)
-                    FROM tracks t
-                    JOIN sources s ON s.chat_id = t.chat_id
-                    LEFT JOIN metadata_overrides o
-                        ON o.chat_id = t.chat_id AND o.message_id = t.message_id
-                    WHERE {where}
-                    """,
-                    parameters,
-                ).fetchone()[0]
-            else:
-                count = total
+                parameters,
+            ).fetchone()[0]
+        else:
+            count = total
         return {
             "items": [self._track_summary(row) for row in rows],
             "offset": offset,
