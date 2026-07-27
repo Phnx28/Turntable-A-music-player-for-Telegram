@@ -919,11 +919,15 @@ class Database:
             # never builds the rows and lands in single-digit ms, so ask for it separately and
             # only when the caller cannot already know it.
             if total is None:
+                # The overrides join cannot change the count, but short queries filter on
+                # o.payload, so it has to stay in the FROM clause.
                 count = self.connection.execute(
                     f"""
                     SELECT COUNT(*)
                     FROM tracks t
                     JOIN sources s ON s.chat_id = t.chat_id
+                    LEFT JOIN metadata_overrides o
+                        ON o.chat_id = t.chat_id AND o.message_id = t.message_id
                     WHERE {where}
                     """,
                     parameters,
