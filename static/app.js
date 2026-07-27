@@ -1284,8 +1284,8 @@ $("source-list").addEventListener("dragend", () => { cleanupSourceDrag(); dragge
 
 $("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey, like).catch(showError); } });
 $("track-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-track-key]"); if (row) { event.preventDefault(); trackMenu(row.dataset.trackKey, event.clientX, event.clientY); } });
-$("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling.classList.remove("is-covered"); } }, true);
-$("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) requestAnimationFrame(() => { event.target.classList.add("is-ready"); event.target.nextElementSibling.classList.add("is-covered"); }); }, true);
+$("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling?.classList.remove("is-covered"); } }, true);
+$("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) requestAnimationFrame(() => { event.target.classList.add("is-ready"); event.target.nextElementSibling?.classList.add("is-covered"); }); }, true);
 $("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(); }, 220); });
 $("library").addEventListener("scroll", () => {
   document.querySelector(".library-header").classList.toggle("is-scrolled", $("library").scrollTop > 8);
