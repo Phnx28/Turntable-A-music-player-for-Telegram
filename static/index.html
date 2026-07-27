@@ -202,10 +202,11 @@
         </div>
         <div id="track-list" class="track-list"></div>
         <section id="empty-library" class="empty-state" hidden>
-          <p class="eyebrow">No tracks here</p>
-          <h2>Add a channel, bot, or private chat.</h2>
-          <p>The app will find its audio and keep the playlist in sync.</p>
-          <button class="button primary" type="button" data-action="add-source">Choose a source</button>
+          <p class="eyebrow" id="empty-eyebrow">No tracks here</p>
+          <h2 id="empty-title">Add a channel, bot, or private chat.</h2>
+          <p id="empty-body">The app will find its audio and keep the playlist in sync.</p>
+          <button class="button primary" type="button" data-action="add-source" id="empty-add">Choose a source</button>
+          <button class="button" type="button" id="empty-clear-search" hidden>Clear search</button>
         </section>
       </section>
 

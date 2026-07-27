@@ -1148,3 +1148,16 @@ dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
 
 .text-button.danger, .button.danger { color: var(--danger, #b3261e); }
 .button.danger { border-color: currentColor; }
+
+/* Searching keeps the current rows on screen and fades them, so refining a query never
+   blanks the library. The pointer lock stops clicks landing on rows that are about to
+   be replaced by different tracks. */
+#library.is-refreshing #track-list {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 140ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #library.is-refreshing #track-list { transition: none; }
+}

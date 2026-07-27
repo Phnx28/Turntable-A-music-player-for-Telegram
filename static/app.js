@@ -408,9 +408,21 @@ function renderTracks(force = false) {
   const list = $("track-list");
   const empty = state.totalTracks === 0 && !state.libraryLoading;
   $("empty-library").hidden = !empty; list.hidden = empty;
-  if (empty) { list.replaceChildren(); renderSources(); return; }
+  if (empty) {
+    const query = $("track-search").value.trim();
+    $("empty-eyebrow").textContent = query ? "No matches" : "No tracks here";
+    $("empty-title").textContent = query ? `Nothing matches "${query}".` : "Add a channel, bot, or private chat.";
+    $("empty-body").textContent = query
+      ? "Try fewer words, or search every chat with the search box in the sidebar."
+      : "The app will find its audio and keep the playlist in sync.";
+    $("empty-add").hidden = Boolean(query);
+    $("empty-clear-search").hidden = !query;
+    list.replaceChildren(); renderSources(); return;
+  }
   if (!state.totalTracks) {
-    list.innerHTML = librarySkeleton();
+    // Mid-refresh the old rows are still on screen and dimmed; replacing them with a skeleton
+    // is the flash we are avoiding.
+    if (!$("library").classList.contains("is-refreshing")) list.innerHTML = librarySkeleton();
     return;
   }
   const scroller = $("library");
@@ -460,12 +472,15 @@ async function loadPage(offset, force = false, token = libraryRequest) {
   } finally { state.pageRequests.delete(offset); }
 }
 
-async function loadLibrary(force = false) {
+async function loadLibrary(force = false, keepVisible = false) {
   requestController?.abort(); requestController = new AbortController();
   const token = ++libraryRequest;
   state.tracks = []; state.loadedPages.clear(); state.pageRequests.clear();
   state.totalTracks = 0; state.windowStart = -1; state.libraryLoading = true;
-  $("track-list").innerHTML = librarySkeleton();
+  // Refining a search should not blank the list. Keep the previous rows on screen, dimmed,
+  // until the new page lands; a skeleton flash on every keystroke reads as the app breaking.
+  if (keepVisible) $("library").classList.add("is-refreshing");
+  else $("track-list").innerHTML = librarySkeleton();
   try {
     if (force) {
       const [sources, stats] = await Promise.all([api("/api/sources", { signal: requestController.signal }), api("/api/library/stats", { signal: requestController.signal })]);
@@ -473,7 +488,11 @@ async function loadLibrary(force = false) {
     }
     await loadPage(0, force, token);
   } finally {
-    if (token === libraryRequest) { state.libraryLoading = false; renderTracks(true); revealLibrary(); }
+    if (token === libraryRequest) {
+      state.libraryLoading = false;
+      $("library").classList.remove("is-refreshing");
+      renderTracks(true); revealLibrary();
+    }
   }
 }
 
@@ -1383,7 +1402,8 @@ $("track-list").addEventListener("error", (event) => { if (event.target.matches(
 // The row may be replaced by an innerHTML re-render between load and the rAF
 // callback, which detaches the image and leaves nextElementSibling null.
 $("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) requestAnimationFrame(() => { event.target.classList.add("is-ready"); event.target.nextElementSibling?.classList.add("is-covered"); }); }, true);
-$("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(); }, 220); });
+$("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(false, true); }, 220); });
+$("empty-clear-search").addEventListener("click", () => { $("track-search").value = ""; $("library").scrollTop = 0; loadLibrary(); $("track-search").focus(); });
 $("library").addEventListener("scroll", () => {
   document.querySelector(".library-header").classList.toggle("is-scrolled", $("library").scrollTop > 8);
   $("library").classList.add("is-scrolling");
