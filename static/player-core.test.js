@@ -4,6 +4,7 @@ import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayer
 
 test("player helpers", () => {
   assert.equal(formatTime(65.9), "1:05");
+  assert.equal(formatTime(3825), "1:03:45");
   assert.equal(adjacentIndex(3, 2, 1), 0);
   assert.equal(adjacentIndex(3, 0, -1), 2);
   assert.equal(bufferedPercent({ length: 2, end: (index) => [15, 65][index] }, 100), 65);

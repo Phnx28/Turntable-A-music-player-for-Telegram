@@ -237,12 +237,17 @@ class Database:
         self.connection = sqlite3.connect(path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.lock = threading.RLock()
+        self._track_counts: dict[str, int] | None = None
+        # ponytail: defer FTS rebuild until a search-using read needs the index
+        self._dirty_search_keys: set[str] = set()
         with self.lock:
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
+            self.connection.execute("PRAGMA wal_autocheckpoint = 1000")
             self._migrate()
 
     def close(self) -> None:
+        self._flush_search()
         with self.lock:
             self.connection.close()
 
@@ -455,18 +460,29 @@ class Database:
 
     def list_sources(self, selected_only: bool = True) -> list[dict[str, Any]]:
         with self.lock:
+            if self._track_counts is None:
+                self._track_counts = {
+                    str(row["chat_id"]): int(row["track_count"])
+                    for row in self.connection.execute(
+                        """
+                        SELECT chat_id, COUNT(*) AS track_count
+                        FROM tracks WHERE available = 1 GROUP BY chat_id
+                        """
+                    )
+                }
+            counts = self._track_counts
             rows = self.connection.execute(
                 f"""
-                SELECT s.*,
-                       COUNT(CASE WHEN t.available = 1 THEN 1 END) AS track_count
+                SELECT s.*
                 FROM sources s
-                LEFT JOIN tracks t ON t.chat_id = s.chat_id
                 {"WHERE s.selected = 1" if selected_only else ""}
-                GROUP BY s.chat_id
                 ORDER BY s.sort_order, s.title COLLATE NOCASE
                 """
             ).fetchall()
-        return [self._source_row(row) for row in rows]
+        return [
+            self._source_row({**dict(row), "track_count": counts.get(str(row["chat_id"]), 0)})
+            for row in rows
+        ]
 
     def get_source(self, chat_id: str) -> dict[str, Any] | None:
         with self.lock:
@@ -476,7 +492,7 @@ class Database:
         return self._source_row(row) if row else None
 
     @staticmethod
-    def _source_row(row: sqlite3.Row) -> dict[str, Any]:
+    def _source_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         value = dict(row)
         return {
             "chatId": str(value["chat_id"]),
@@ -501,6 +517,7 @@ class Database:
                 raise KeyError("Source not found")
 
     def set_sources_selected(self, chat_ids: Iterable[str], selected: bool) -> None:
+        self._track_counts = None
         ids = list(dict.fromkeys(str(value) for value in chat_ids))
         if not ids:
             return
@@ -526,6 +543,7 @@ class Database:
         self.set_source_selected(chat_id, False)
 
     def clear_sources(self) -> None:
+        self._track_counts = None
         with self.transaction() as connection:
             connection.execute("DELETE FROM sources")
 
@@ -542,6 +560,7 @@ class Database:
             )
 
     def upsert_tracks(self, tracks: Iterable[Mapping[str, Any]]) -> None:
+        self._track_counts = None
         values = [
             (
                 str(item["chatId"]),
@@ -593,9 +612,11 @@ class Database:
                 """,
                 values,
             )
-            self._update_search(connection, [track_key(value[0], value[1]) for value in values])
+            for value in values:
+                self._dirty_search_keys.add(track_key(value[0], value[1]))
 
     def mark_missing_unavailable(self, chat_id: str, seen_message_ids: set[str]) -> None:
+        self._track_counts = None
         with self.transaction() as connection:
             if seen_message_ids:
                 placeholders = ",".join("?" for _ in seen_message_ids)
@@ -683,6 +704,8 @@ class Database:
         liked: bool = False,
         include_unselected: bool = False,
     ) -> tuple[list[str], list[Any]]:
+        if query:
+            self._flush_search()
         clauses = ["t.available = 1"]
         parameters: list[Any] = []
         if liked:
@@ -716,7 +739,8 @@ class Database:
                        t.file_size, t.duration_ms, t.telegram_title, t.telegram_artist,
                        t.sent_at, t.document_id, s.title AS source_title,
                        s.kind AS source_kind, s.selected AS source_selected,
-                       o.payload AS override_payload
+                       o.payload AS override_payload,
+                       COUNT(*) OVER() AS total_count
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
@@ -727,17 +751,7 @@ class Database:
                 """,
                 (*parameters, limit, offset),
             ).fetchall()
-            count = self.connection.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM tracks t
-                JOIN sources s ON s.chat_id = t.chat_id
-                LEFT JOIN metadata_overrides o
-                    ON o.chat_id = t.chat_id AND o.message_id = t.message_id
-                WHERE {where}
-                """,
-                parameters,
-            ).fetchone()[0]
+            count = rows[0]["total_count"] if rows else 0
         return {
             "items": [self._track_summary(row) for row in rows],
             "offset": offset,
@@ -754,44 +768,38 @@ class Database:
     ) -> int:
         target_chat, target_message = split_track_key(key)
         clauses, parameters = self._library_filter(chat_id, query, liked, include_unselected)
+        base_clause_text = " AND ".join(clauses) if clauses else "1=1"
+        base_params = list(parameters)
         clauses.extend(["t.chat_id = ?", "t.message_id = ?"])
         with self.lock:
-            target = self.connection.execute(
+            row = self.connection.execute(
                 f"""
-                SELECT t.sent_at, t.rowid
+                SELECT (
+                    SELECT COUNT(*) FROM tracks t2
+                    JOIN sources s2 ON s2.chat_id = t2.chat_id
+                    LEFT JOIN metadata_overrides o2
+                      ON o2.chat_id = t2.chat_id AND o2.message_id = t2.message_id
+                    WHERE {base_clause_text}
+                      AND (t2.sent_at > t.sent_at OR (t2.sent_at = t.sent_at AND t2.rowid > t.rowid))
+                ) AS position
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
                   ON o.chat_id = t.chat_id AND o.message_id = t.message_id
                 WHERE {' AND '.join(clauses)}
                 """,
-                (*parameters, target_chat, target_message),
+                (*base_params, *parameters, target_chat, target_message),
             ).fetchone()
-            if not target:
+            if not row:
                 raise KeyError("Track is not in this playlist")
-            base_clauses, base_parameters = self._library_filter(
-                chat_id, query, liked, include_unselected
-            )
-            position = self.connection.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM tracks t
-                JOIN sources s ON s.chat_id = t.chat_id
-                LEFT JOIN metadata_overrides o
-                  ON o.chat_id = t.chat_id AND o.message_id = t.message_id
-                WHERE {' AND '.join(base_clauses)}
-                  AND (t.sent_at > ? OR (t.sent_at = ? AND t.rowid > ?))
-                """,
-                (*base_parameters, target["sent_at"], target["sent_at"], target["rowid"]),
-            ).fetchone()[0]
-        return int(position)
+        return int(row["position"])
 
     def track_summaries(self, keys: Iterable[str]) -> list[dict[str, Any]]:
         ordered = list(dict.fromkeys(keys))[:100]
         if not ordered:
             return []
         pairs = [split_track_key(key) for key in ordered]
-        clauses = " OR ".join("(t.chat_id = ? AND t.message_id = ?)" for _ in pairs)
+        clauses = "(t.chat_id, t.message_id) IN (" + ", ".join("(?, ?)" for _ in pairs) + ")"
         parameters = [value for pair in pairs for value in pair]
         with self.lock:
             rows = self.connection.execute(
@@ -894,8 +902,17 @@ class Database:
                     "DELETE FROM metadata_overrides WHERE chat_id = ? AND message_id = ?",
                     (chat_id, message_id),
                 )
-            self._update_search(connection, [track_key(chat_id, message_id)])
+            self._dirty_search_keys.add(track_key(chat_id, message_id))
         return self.get_track(chat_id, message_id)  # type: ignore[return-value]
+
+    def _flush_search(self) -> None:
+        with self.lock:
+            if not self._dirty_search_keys:
+                return
+            keys = list(self._dirty_search_keys)
+            self._dirty_search_keys.clear()
+        with self.transaction() as connection:
+            self._update_search(connection, keys)
 
     def _rebuild_search(self, connection: sqlite3.Connection) -> None:
         connection.execute("DELETE FROM tracks_fts")
@@ -915,7 +932,7 @@ class Database:
                 self._update_search(connection, ordered[index:index + 100], delete)
             return
         pairs = [split_track_key(key) for key in ordered]
-        clauses = " OR ".join("(t.chat_id = ? AND t.message_id = ?)" for _ in pairs)
+        clauses = "(t.chat_id, t.message_id) IN (" + ", ".join("(?, ?)" for _ in pairs) + ")"
         parameters = [value for pair in pairs for value in pair]
         rows = connection.execute(
             f"""

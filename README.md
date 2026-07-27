@@ -20,30 +20,22 @@ Removing a source only removes it from this app. It does not leave the channel, 
 
 ## Quick start
 
-You will need Python 3.12 or newer, [uv](https://docs.astral.sh/uv/), and Telegram API credentials from [my.telegram.org](https://my.telegram.org/). FFmpeg is optional and is only needed to write edited metadata into downloaded files.
+You will need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). FFmpeg is optional and is only needed to write edited metadata into downloaded files.
 
-1. Copy the example configuration and install the dependencies:
+1. Install the dependencies:
 
    ```sh
    cp .env.example .env
    uv sync
    ```
 
-2. Generate an encryption key:
+2. Start the player:
 
    ```sh
-   uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+   uv run uvicorn app:app --reload
    ```
 
-3. Fill in `.env` with your Telegram API ID, API hash, a strong app password, and the generated encryption key. For local HTTP development, uncomment `DEV_INSECURE_COOKIE=1`.
-
-4. Start the player:
-
-   ```sh
-   uv run --env-file .env uvicorn app:app --reload
-   ```
-
-5. Open [http://localhost:8000](http://localhost:8000), unlock the app, and connect Telegram using QR login or your phone number. Two-step verification is supported.
+3. Open [http://localhost:8000](http://localhost:8000) and connect Telegram using QR login or your phone number. Two-step verification is supported.
 
 The first sync can take a while for large channels. It runs in the background and shows how many messages were checked and how many tracks were found.
 
@@ -64,7 +56,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Set `DATA_DIR=/data` in `.env`. In production, put the app behind HTTPS and leave `DEV_INSECURE_COOKIE` unset so the login cookie remains secure.
+In production, put the app behind HTTPS.
 
 The provided image stays small and does not install FFmpeg. Extend the image with FFmpeg if you want downloaded files to include local metadata edits.
 
@@ -74,7 +66,7 @@ The app stores its SQLite library, cached artwork, prefetched audio, and encrypt
 
 The Telegram session is encrypted at rest with `APP_ENCRYPTION_KEY`, but the key and database together are enough to recover it. Keep them separate from public backups. Changing the encryption key makes the stored session unreadable and requires reconnecting.
 
-This is designed for one trusted owner, not as a public multi-user service. Use a strong `APP_PASSWORD`, serve it over HTTPS outside local development, and apply sensible network access controls.
+This is designed for one trusted owner, not as a public multi-user service. Serve it over HTTPS outside local development and apply sensible network access controls.
 
 ## Checks
 

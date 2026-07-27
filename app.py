@@ -17,6 +17,7 @@ from urllib.parse import quote
 import httpx
 from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +39,11 @@ from telegram_service import TelegramService
 ROOT = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
 
+# Embedded Telegram API credentials — app registration identifier, not a secret.
+# Users authenticate with their own phone number; rate limits are per-account.
+_DEFAULT_API_ID = 30986221
+_DEFAULT_API_HASH = "7449770300bb823d8cc388103a973942"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -51,28 +57,34 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        missing = [
-            name
-            for name in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH", "APP_PASSWORD", "APP_ENCRYPTION_KEY")
-            if not os.environ.get(name)
-        ]
-        if missing:
-            raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-        try:
-            api_id = int(os.environ["TELEGRAM_API_ID"])
-        except ValueError as error:
-            raise RuntimeError("TELEGRAM_API_ID must be an integer") from error
-        encryption_key = os.environ["APP_ENCRYPTION_KEY"]
+        env_api_id = os.environ.get("TELEGRAM_API_ID")
+        api_id = int(env_api_id) if env_api_id else _DEFAULT_API_ID
+        api_hash = os.environ.get("TELEGRAM_API_HASH", _DEFAULT_API_HASH)
+
+        data_directory = Path(os.environ.get("DATA_DIR", ROOT / "data"))
+
+        encryption_key = os.environ.get("APP_ENCRYPTION_KEY") or ""
+        if not encryption_key:
+            key_file = data_directory / "encryption.key"
+            if key_file.is_file():
+                encryption_key = key_file.read_text().strip()
+            else:
+                encryption_key = Fernet.generate_key().decode()
+                data_directory.mkdir(parents=True, exist_ok=True)
+                key_file.write_text(encryption_key)
+                os.chmod(key_file, 0o600)
+
         try:
             Fernet(encryption_key.encode())
         except Exception as error:
-            raise RuntimeError("APP_ENCRYPTION_KEY must be a Fernet key") from error
+            raise RuntimeError("APP_ENCRYPTION_KEY is not a valid Fernet key") from error
+
         return cls(
             api_id=api_id,
-            api_hash=os.environ["TELEGRAM_API_HASH"],
-            app_password=os.environ["APP_PASSWORD"],
+            api_hash=os.environ.get("TELEGRAM_API_HASH", _DEFAULT_API_HASH),
+            app_password=os.environ.get("APP_PASSWORD", ""),
             encryption_key=encryption_key,
-            data_directory=Path(os.environ.get("DATA_DIR", ROOT / "data")),
+            data_directory=data_directory,
             musicbrainz_contact=os.environ.get("MUSICBRAINZ_CONTACT", ""),
             cookie_secure=os.environ.get("DEV_INSECURE_COOKIE") != "1",
         )
@@ -194,16 +206,25 @@ def _make_cookie(settings: Settings) -> str:
 def _valid_cookie(settings: Settings, value: str | None) -> bool:
     if not value:
         return False
-    try:
-        expires, nonce, signature = value.split(".", 2)
-        if int(expires) < time.time() or len(nonce) < 16:
-            return False
-        payload = f"{expires}.{nonce}"
-        expected = hmac.new(_cookie_key(settings), payload.encode(), hashlib.sha256).digest()
-        actual = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
-        return hmac.compare_digest(expected, actual)
-    except (ValueError, TypeError):
+    payload, separator, signature_b64 = value.rpartition(".")
+    if not separator or not signature_b64:
         return False
+    expires_str, sep, token = payload.partition(".")
+    if not sep or not token or not expires_str:
+        return False
+    try:
+        expires = int(expires_str)
+    except ValueError:
+        return False
+    if expires < int(time.time()):
+        return False
+    try:
+        padding = "=" * (-len(signature_b64) % 4)
+        signature = base64.urlsafe_b64decode(signature_b64 + padding)
+        expected = hmac.new(_cookie_key(settings), payload.encode(), hashlib.sha256).digest()
+    except Exception:
+        return False
+    return hmac.compare_digest(signature, expected)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -242,6 +263,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database.close()
 
     application = FastAPI(title="Telegram Music", docs_url=None, redoc_url=None, lifespan=lifespan)
+    application.add_middleware(GZipMiddleware, minimum_size=1000)
     application.mount("/assets", StaticFiles(directory=ROOT / "static"), name="assets")
 
     @application.middleware("http")
@@ -260,6 +282,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # ponytail: rotate the session cookie on each authenticated /api/ call so a leaked
+        # token stops being useful after the legitimate user's next request; skipped on
+        # static assets (path != /api/) and the logout endpoint (would re-issue what it
+        # just deleted)
+        if (
+            request.url.path.startswith("/api/")
+            and request.url.path != "/api/access/session"
+            and _valid_cookie(settings, request.cookies.get("tm_session"))
+        ):
+            response.set_cookie(
+                "tm_session",
+                _make_cookie(settings),
+                max_age=30 * 24 * 60 * 60,
+                httponly=True,
+                secure=settings.cookie_secure,
+                samesite="strict",
+                path="/",
+            )
         return response
 
     @application.exception_handler(KeyError)
@@ -353,9 +393,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def access_login(request: Request, body: PasswordBody) -> Response:
         client_ip = request.client.host if request.client else "unknown"
         now = time.monotonic()
+        # ponytail: full sweep when dict exceeds 1000 entries; per-bucket pruning handles returning IPs
+        if len(login_attempts) > 1000:
+            for ip in list(login_attempts):
+                login_attempts[ip] = [t for t in login_attempts[ip] if now - t < 15 * 60]
+                if not login_attempts[ip]:
+                    del login_attempts[ip]
         recent = [stamp for stamp in login_attempts.get(client_ip, []) if now - stamp < 15 * 60]
         if len(recent) >= 5:
             raise HTTPException(status_code=429, detail="Too many attempts; retry in 15 minutes")
+        if recent:
+            login_attempts[client_ip] = recent
+        else:
+            login_attempts.pop(client_ip, None)
         if not hmac.compare_digest(body.password.encode(), settings.app_password.encode()):
             recent.append(now)
             login_attempts[client_ip] = recent
@@ -454,6 +504,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/api/sources/{chat_id}/sync", dependencies=[Depends(require_access)])
     async def source_sync(request: Request, chat_id: str, body: SyncBody) -> dict[str, Any]:
         return telegram(request).start_sync(chat_id, full=body.full)
+
+    @application.post("/api/sources/sync-all", dependencies=[Depends(require_access)])
+    async def sources_sync_all(request: Request) -> dict[str, bool]:
+        await telegram(request).sync_all()
+        return {"ok": True}
 
     @application.post("/api/sources/{chat_id}/preview", dependencies=[Depends(require_access)])
     async def source_preview(request: Request, chat_id: str) -> dict[str, Any]:
@@ -616,7 +671,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await media_response(request, key, download=True)
 
     @application.get("/api/tracks/{key}/cover", dependencies=[Depends(require_access)])
-    async def cover(request: Request, key: str) -> Response:
+    async def cover(request: Request, key: str, quality: str = "default") -> Response:
         item = get_track(request, key)
         artwork = item["metadata"].get("artworkPath")
         if artwork:
@@ -624,7 +679,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             root = (settings.data_directory / "artwork").resolve()
             if candidate.parent == root and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "private, max-age=86400"})
-        thumbnail = await telegram(request).thumbnail(item["chatId"], item["messageId"])
+        thumbnail = await telegram(request).thumbnail(item["chatId"], item["messageId"], quality=quality)
         if not thumbnail:
             return Response(status_code=404, headers={"Cache-Control": "private, max-age=86400"})
         return Response(thumbnail, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})

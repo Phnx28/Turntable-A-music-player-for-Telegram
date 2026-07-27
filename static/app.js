@@ -6,6 +6,7 @@ const state = {
   lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1,
   shuffle: localStorage.getItem("tm-shuffle") === "1",
   repeat: localStorage.getItem("tm-repeat") || "off",
+  speed: Number(localStorage.getItem("tm-speed")) || 1,
   cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
   loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, windowStart: -1, libraryLoading: false,
@@ -17,10 +18,11 @@ const state = {
   buffering: false,
 };
 const audio = $("audio");
-let searchTimer, globalSearchTimer, toastTimer, qrTimer, requestController, globalController, positionTimer;
+let searchTimer, globalSearchTimer, toastTimer, qrTimer, qrStatusTimer, requestController, globalController, positionTimer;
 let libraryRequest = 0, globalRequest = 0, libraryFrame = 0, scrollIdleTimer = 0, retryAction = null, lyricsController;
 let confirmResolve = null, draggedSource = "", draggedQueue = -1, pendingShare = null;
 let lastUiTrackKey = "";
+let lastAudibleVolume = .8;
 const pendingCovers = new Set();
 
 class AppError extends Error {
@@ -154,6 +156,25 @@ function pauseQr(message) {
   $("qr-stage").dataset.pauseLabel = message;
 }
 
+function setQrStatus(message) {
+  const status = $("qr-status");
+  clearTimeout(qrStatusTimer);
+  status.classList.add("is-changing");
+  qrStatusTimer = setTimeout(() => {
+    status.textContent = message;
+    status.classList.remove("is-changing");
+  }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 150);
+}
+
+async function clearQr() {
+  const code = $("qr-code");
+  if (!code.childElementCount) return;
+  code.classList.add("is-exiting");
+  await new Promise((resolve) => setTimeout(resolve, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 150));
+  code.replaceChildren();
+  code.classList.remove("is-exiting");
+}
+
 function phoneNumber() {
   const country = $("telegram-country").value;
   const number = $("telegram-phone").value.replace(/\D/g, "");
@@ -188,24 +209,26 @@ async function loadCountries() {
 
 async function startQr() {
   clearTimeout(qrTimer);
+  const qrExit = clearQr();
   state.flow = "";
   setLoginStage("phone", "Choose your country to continue.");
   $("telegram-code").value = "";
   $("telegram-password").value = "";
   $("qr-stage").classList.remove("paused");
   $("qr-stage").setAttribute("aria-busy", "true");
-  $("qr-code").replaceChildren();
-  $("qr-status").textContent = "Generating a new code…";
+  setQrStatus("Generating a new code…");
   $("qr-start").setAttribute("aria-busy", "true");
   try {
     const flow = await api("/api/telegram/qr", { method: "POST" });
+    await qrExit;
     state.flow = flow.flowId;
     $("qr-code").innerHTML = flow.svg;
     $("qr-stage").setAttribute("aria-busy", "false");
-    $("qr-status").textContent = "Ready to scan · refreshes automatically";
+    setQrStatus("Ready to scan · refreshes automatically");
     pollQr(flow.flowId);
   } catch (error) {
-    $("qr-status").textContent = "Couldn’t generate a QR code.";
+    await qrExit;
+    setQrStatus("Couldn’t generate a QR code.");
     showError(error, startQr);
   } finally {
     $("qr-start").removeAttribute("aria-busy");
@@ -221,12 +244,12 @@ function pollQr(flowId) {
       if (status.state === "ready") return boot();
       if (status.state === "password_required") {
         pauseQr("QR accepted");
-        $("qr-status").textContent = "QR accepted · enter your 2FA password";
+        setQrStatus("QR accepted · enter your 2FA password");
         return setLoginStage("twofa", "Enter your Telegram two-step verification password.");
       }
       if (status.state === "expired") return startQr();
       if (status.state === "error") {
-        $("qr-status").textContent = "QR login stopped.";
+        setQrStatus("QR login stopped.");
         return showError(new AppError(status.error || "QR login stopped."), startQr);
       }
       pollQr(flowId);
@@ -287,14 +310,17 @@ function renderSources() {
   $("all-count").textContent = state.sources.reduce((total, item) => total + item.trackCount, 0);
   $("liked-count").textContent = state.likedCount.toLocaleString();
   $("liked-source").classList.toggle("active", state.likedMode);
+  $("liked-source").toggleAttribute("aria-current", state.likedMode);
   const temporary = state.temporarySource && !state.sources.some((item) => item.chatId === state.temporarySource.chatId)
     ? `<div class="source-link source-entry temporary-source ${state.source === state.temporarySource.chatId ? "active" : ""}" data-temporary-source="${state.temporarySource.chatId}" role="button" tabindex="0" title="${escapeHtml(state.temporarySource.title)}">${avatarMarkup(state.temporarySource)}<span class="source-copy"><strong>${escapeHtml(state.temporarySource.title)}</strong><small>Temporary · current track</small></span><span class="source-count">Live</span></div>` : "";
-  $("source-list").innerHTML = temporary + sorted.map((source) => `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${$("sidebar-sort").value === "custom" && !state.bulk}">
+  $("source-list").innerHTML = temporary + sorted.map((source) => `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${$("sidebar-sort").value === "custom" && !state.bulk}"${!state.likedMode && source.chatId === state.source ? ' aria-current="page"' : ""}>
     ${state.bulk ? `<input class="source-select" type="checkbox" data-bulk-source="${source.chatId}" ${state.selectedSources.has(source.chatId) ? "checked" : ""} aria-label="Select ${escapeHtml(source.title)}">` : avatarMarkup(source)}
     <span class="source-copy"><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)}${source.syncError ? " · needs attention" : ""}</small></span>
     <span class="source-actions"><span class="source-count">${source.trackCount}</span><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="false" title="Sync new tracks" aria-label="Sync new tracks from ${escapeHtml(source.title)}">${icon("sync")}</button><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="true" title="Full rescan" aria-label="Full rescan ${escapeHtml(source.title)}">${icon("repeat")}</button></span>
   </div>`).join("");
-  document.querySelector('[data-source=""]')?.classList.toggle("active", !state.source && !state.likedMode);
+  const allMusic = document.querySelector('[data-source=""]');
+  allMusic?.classList.toggle("active", !state.source && !state.likedMode);
+  allMusic?.toggleAttribute("aria-current", !state.source && !state.likedMode);
   const selected = state.likedMode ? null : state.sources.find((item) => item.chatId === state.source) || (state.temporarySource?.chatId === state.source ? state.temporarySource : null);
   $("source-title").textContent = state.likedMode ? "Liked songs" : selected?.title || "All music";
   $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : selected.kind) : "Your Telegram";
@@ -302,10 +328,12 @@ function renderSources() {
   $("bulk-count").textContent = `${state.selectedSources.size} selected`;
   $("bulk-unselect").disabled = !state.selectedSources.size;
   $("sync-source").disabled = state.likedMode || Boolean(selected?.temporary);
+  document.querySelector('.source-entry.active')?.scrollIntoView({ block: 'nearest' });
 }
 
 function renderTrackRow(track) {
   const playing = track.key === state.current?.key;
+  const liked = Boolean(track.liked);
   return `<article class="track-row ${playing ? "current" : ""}" data-track-key="${escapeHtml(track.key)}" tabindex="-1">
     <button class="track-main" type="button" data-play-key="${escapeHtml(track.key)}">
       <span class="mini-art-wrap"><img class="mini-art row-art" data-src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt=""><span class="art-placeholder mini"><span></span></span><span class="track-play-overlay">${icon(playing && !audio.paused ? "pause" : "play")}</span></span>
@@ -313,6 +341,9 @@ function renderTrackRow(track) {
     </button>
     <span class="track-source">${escapeHtml(track.source.title)}</span>
     <span class="track-duration utility">${formatTime(track.durationMs / 1000)}</span>
+    <span class="track-row-actions">
+      <button class="icon-button row-like ${liked ? "active" : ""}" type="button" data-row-like-key="${escapeHtml(track.key)}" aria-pressed="${liked}" aria-label="${liked ? "Unlike" : "Like"} ${escapeHtml(track.title)}">${icon(liked ? "heart-filled" : "heart")}</button>
+    </span>
     <button class="icon-button row-menu" type="button" data-track-menu="${escapeHtml(track.key)}" aria-label="Actions for ${escapeHtml(track.title)}">${icon("more")}</button>
   </article>`;
 }
@@ -348,12 +379,10 @@ function finishLibraryScroll() {
 }
 
 function revealLibrary() {
-  const list = $("track-list");
-  list.classList.remove("library-reveal");
-  requestAnimationFrame(() => list.classList.add("library-reveal"));
+  if (!$("track-list").hidden) $("track-list").classList.add("library-reveal");
 }
 
-function trackRowHeight() { return matchMedia("(max-width: 620px)").matches ? 66 : 68; }
+function trackRowHeight() { return 68; }
 
 function renderTracks(force = false) {
   const list = $("track-list");
@@ -550,28 +579,47 @@ async function playKey(key, queue = null, explicitIndex = null) {
 }
 
 function setTrackUi() {
-  const track = state.current; if (!track) return;
+  const track = state.current;
+  if (!track) { $("progress").disabled = true; return; }
+  $("progress").disabled = false;
   const metadata = track.metadata;
   const changed = lastUiTrackKey !== track.key;
   lastUiTrackKey = track.key;
-  for (const id of ["player-title", "now-title"]) $(id).textContent = metadata.title || track.file.name;
-  for (const id of ["player-artist", "now-artist"]) $(id).textContent = metadata.artist || "Unknown artist";
+  const title = metadata.title || track.file.name;
+  const artist = metadata.artist || "Unknown artist";
+  for (const id of ["player-title", "now-title"]) $(id).textContent = title;
+  for (const id of ["player-artist", "now-artist"]) $(id).textContent = artist;
+  if (changed) $("playback-status").textContent = `Now playing ${title} by ${artist}.`;
   for (const id of ["mini-art", "large-art"]) {
-    const image = $(id); image.src = `${mediaUrl(track)}?v=${encodeURIComponent(metadata.artworkPath || "telegram")}`; image.hidden = false;
-    image.onerror = () => { image.hidden = true; $(`${id}-placeholder`).hidden = false; };
-    image.onload = () => { $(`${id}-placeholder`).hidden = true; };
+    const image = $(id); const placeholder = $(`${id}-placeholder`);
+    image.classList.remove("is-ready"); image.hidden = false;
+    placeholder.hidden = false; placeholder.classList.remove("is-covered");
+    image.onerror = () => { image.classList.remove("is-ready"); placeholder.classList.remove("is-covered"); };
+    image.onload = () => requestAnimationFrame(() => { image.classList.add("is-ready"); placeholder.classList.add("is-covered"); });
+    image.src = `${mediaUrl(track)}?v=${encodeURIComponent(metadata.artworkPath || "telegram")}`;
+    if (id === "large-art") {
+      image.addEventListener("load", () => {
+        const highSrc = `${mediaUrl(track, "cover")}?quality=high&v=${encodeURIComponent(metadata.artworkPath || "telegram")}`;
+        const highImg = new Image();
+        highImg.onload = () => { image.src = highSrc; };
+        highImg.src = highSrc;
+      }, { once: true });
+    }
   }
   $("download-current").href = mediaUrl(track, "download");
   $("like-current").classList.toggle("active", Boolean(track.liked));
+  $("like-current").querySelector("use").setAttribute("href", track.liked ? "#i-heart-filled" : "#i-heart");
   $("like-current").setAttribute("aria-pressed", String(Boolean(track.liked)));
   $("like-current").setAttribute("aria-label", track.liked ? "Unlike current track" : "Like current track");
-  $("track-details").innerHTML = [["Source", track.source.title], ["Album", metadata.album], ["Album artist", metadata.albumArtist], ["Genre", metadata.genre], ["Year", metadata.year || ""], ["File", track.file.name], ["Size", track.file.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""]].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  const detailRows = [["Source", track.source.title], ["Album", metadata.album], ["Album artist", metadata.albumArtist], ["Genre", metadata.genre], ["Year", metadata.year || ""], ["File", track.file.name], ["Size", track.file.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""]].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  const speedOptions = [0.75, 1, 1.25, 1.5, 2].map((v) => `<button type="button" data-speed="${v}" class="${state.speed === v ? "active" : ""}" aria-pressed="${state.speed === v}">${v}x</button>`).join("");
+  $("track-details").innerHTML = `${detailRows}<div><dt>Speed</dt><dd><div class="segmented speed-options">${speedOptions}</div></dd></div>`;
   document.querySelector(".track-row.current")?.classList.remove("current");
   document.querySelector(`.track-row[data-track-key="${CSS.escape(track.key)}"]`)?.classList.add("current");
   if (changed && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     for (const element of [$("player-locate"), document.querySelector(".now-title")]) {
       element.getAnimations().forEach((animation) => animation.cancel());
-      element.animate([{ opacity: 0, transform: "translateY(5px)" }, { opacity: 1, transform: "none" }], { duration: 190, easing: "cubic-bezier(.2,.8,.2,1)" });
+      element.animate([{ opacity: 0, transform: "translateY(5px)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: "cubic-bezier(.2,.8,.2,1)" });
     }
   }
   if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: metadata.title, artist: metadata.artist, album: metadata.album });
@@ -605,7 +653,7 @@ async function loadLyrics(refresh = false) {
   lyricsController?.abort();
   lyricsController = new AbortController();
   const key = state.current.key;
-  $("lyrics-lines").innerHTML = ""; $("lyrics-empty").textContent = "Looking for lyrics…"; $("lyrics-empty").hidden = false;
+  $("lyrics-lines").innerHTML = '<div class="lyrics-skeleton"><span style="width:80%"></span><span style="width:60%"></span><span style="width:72%"></span><span style="width:45%"></span></div>'; $("lyrics-empty").hidden = true;
   try {
     const lyrics = await api(`${mediaUrl(state.current, "lyrics")}${refresh ? "?refresh=true" : ""}`, { signal: lyricsController.signal });
     if (state.current?.key !== key) return;
@@ -630,7 +678,7 @@ function updateLyric() {
   $("lyrics-lines").querySelectorAll("button").forEach((button, position) => button.classList.toggle("active", position === index));
   if (!state.lyricsFollow) return;
   state.lyricAutoScrolling = true;
-  $("lyrics-lines").querySelector(`[data-lyric="${index}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  $("lyrics-lines").querySelector(`[data-lyric="${index}"]`)?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   clearTimeout(state.lyricScrollTimer);
   state.lyricScrollTimer = setTimeout(() => { state.lyricAutoScrolling = false; }, 500);
 }
@@ -715,16 +763,17 @@ function renderQueue() {
   const visibleStart = historyStart;
   const visibleEnd = Math.min(state.queue.length, state.queueIndex + 101);
   const upcoming = state.queue.slice(state.queueIndex + 1);
-  $("queue-summary").textContent = upcoming.length ? `${upcoming.length.toLocaleString()} upcoming` : "Nothing queued";
+  $("queue-summary").textContent = upcoming.length ? `${upcoming.length.toLocaleString()} upcoming` : "Your queue is empty";
   if ($("queue-pane").hidden) return;
   const visible = state.queue.slice(visibleStart, visibleEnd);
-  $("queue-list").innerHTML = visible.map((key, offset) => {
+  const rows = visible.map((key, offset) => {
     const summary = state.summaryCache.get(key); const detail = state.trackCache.get(key); const index = visibleStart + offset;
     const title = summary?.title || detail?.metadata?.title || "Loading track…";
     const artist = summary?.artist || detail?.metadata?.artist || "";
     const section = index < state.queueIndex ? "Played" : index === state.queueIndex ? "Playing" : "Up next";
     return `<div class="queue-row ${index < state.queueIndex ? "played" : ""} ${index === state.queueIndex ? "current" : ""}" draggable="${index > state.queueIndex}" data-queue-index="${index}" data-queue-key="${escapeHtml(key)}"><button class="queue-copy" type="button" data-queue-play="${index}"><span class="queue-state">${section}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(artist)}</small></button><span>${index > state.queueIndex ? `<span class="cache-state ${state.cacheStates[key] || ""}">${escapeHtml(state.cacheStates[key] || "queued")}</span><button class="icon-button" type="button" data-remove-queue="${index}" aria-label="Remove from queue">${icon("close")}</button>` : ""}</span></div>`;
   }).join("");
+  $("queue-list").innerHTML = rows + (upcoming.length ? "" : '<div class="queue-empty"><strong>Your queue is clear.</strong><span>Choose a track or add one from its more menu.</span><button class="button" type="button" data-queue-browse>Browse library</button></div>');
   ensureSummaries(visible);
 }
 
@@ -746,14 +795,24 @@ async function schedulePrefetch() {
 
 function watchJob(job, onUpdate = () => {}, relevant = () => true) {
   if (!job?.jobId) return;
+  let syncAnnouncement = "";
   const poll = async () => {
     try {
       if (!relevant()) return;
       if (document.hidden) return setTimeout(poll, 2000);
       const current = await api(`/api/jobs/${encodeURIComponent(job.jobId)}`); onUpdate(current);
       if (["sync", "preview"].includes(current.kind)) {
-        $("sync-strip").hidden = !["queued", "running"].includes(current.state);
-        $("sync-copy").textContent = current.state === "queued" ? "Waiting to sync…" : `${current.found.toLocaleString()} tracks indexed · ${current.processed.toLocaleString()} files checked`;
+        const strip = $("sync-strip");
+        const active = ["queued", "running"].includes(current.state);
+        strip.hidden = false;
+        strip.classList.toggle("is-complete", current.state === "complete");
+        $("sync-copy").textContent = current.state === "queued" ? "Waiting to sync…" : current.state === "complete" ? "Sync complete" : `${current.found.toLocaleString()} tracks indexed · ${current.processed.toLocaleString()} files checked`;
+        const announcement = active ? "Sync started." : current.state === "complete" ? "Sync complete." : current.error ? `Sync failed. ${current.error}` : "";
+        if (announcement && announcement !== syncAnnouncement) {
+          syncAnnouncement = announcement;
+          $("sync-status").textContent = announcement;
+        }
+        if (!active) setTimeout(() => { strip.hidden = true; strip.classList.remove("is-complete"); }, current.state === "complete" && !matchMedia("(prefers-reduced-motion: reduce)").matches ? 280 : 0);
       }
       if (["queued", "running"].includes(current.state)) setTimeout(poll, current.processed ? 1800 : 1000);
       else if (["sync", "preview"].includes(current.kind)) { state.libraryCache.clear(); await loadLibrary(true); if (current.state === "complete") toast(current.kind === "preview" ? "Temporary source indexed" : "Source is up to date"); else if (current.error) showError(new AppError(current.error, true), () => current.kind === "preview" ? selectTemporary() : syncSource(current.chatId, current.mode === "full")); }
@@ -767,6 +826,13 @@ async function syncSource(chatId, full = false) {
     const job = await api(`/api/sources/${encodeURIComponent(chatId)}/sync`, { method: "POST", body: JSON.stringify({ full }) });
     watchJob(job);
   } catch (error) { showError(error, () => syncSource(chatId, full)); }
+}
+
+async function syncAllSources() {
+  try {
+    await api("/api/sources/sync-all", { method: "POST" });
+    toast("Syncing all sources");
+  } catch (error) { showError(error, syncAllSources); }
 }
 
 async function openSources() {
@@ -872,8 +938,8 @@ function closePanel() { $("now-panel").hidden = true; $("app-shell").classList.r
 
 function openMenu(actions, x, y) {
   const menu = $("context-menu"); menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
-  menu.hidden = false; menu._actions = actions; const width = 215, height = actions.length * 36 + 10;
-  menu.style.left = `${Math.min(x, innerWidth - width - 8)}px`; menu.style.top = `${Math.min(y, innerHeight - height - 8)}px`; menu.querySelector("button")?.focus();
+  menu.hidden = false; menu._actions = actions;
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`; menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`; menu.querySelector("button")?.focus();
 }
 function closeMenu() { $("context-menu").hidden = true; }
 
@@ -921,15 +987,55 @@ function sourceMenu(chatId, x, y) {
   ], x, y);
 }
 
+async function toggleRowLike(key, button) {
+  const track = state.tracks.find((entry) => entry?.key === key);
+  if (!track) return;
+  const previous = Boolean(track.liked);
+  const next = !previous;
+  track.liked = next;
+  state.likedCount += next ? 1 : -1;
+  const summary = state.summaryCache.get(key);
+  if (summary) summary.liked = next;
+  button.classList.toggle("active", next);
+  button.setAttribute("aria-pressed", String(next));
+  button.querySelector("use").setAttribute("href", next ? "#i-heart-filled" : "#i-heart");
+  renderSources();
+  try {
+    await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: next }) });
+    if (state.likedMode) loadLibrary(true);
+  } catch (error) {
+    track.liked = previous;
+    state.likedCount += previous ? 1 : -1;
+    if (summary) summary.liked = previous;
+    button.classList.toggle("active", previous);
+    button.setAttribute("aria-pressed", String(previous));
+    button.querySelector("use").setAttribute("href", previous ? "#i-heart-filled" : "#i-heart");
+    renderSources();
+    showError(error);
+  }
+}
+
 async function toggleLike() {
   if (!state.current) return;
-  const liked = !state.current.liked;
-  const updated = await api(`${mediaUrl(state.current, "like")}`, { method: "PATCH", body: JSON.stringify({ liked }) });
-  state.current.liked = updated.liked;
-  const summary = state.summaryCache.get(state.current.key); if (summary) summary.liked = updated.liked;
-  state.likedCount += updated.liked ? 1 : -1;
-  setTrackUi(); renderSources(); schedulePersist(); toast(updated.liked ? "Added to Liked Songs" : "Removed from Liked Songs");
-  if (state.likedMode) loadLibrary(true);
+  const previous = state.current.liked;
+  state.current.liked = !previous;
+  state.likedCount += state.current.liked ? 1 : -1;
+  const summary = state.summaryCache.get(state.current.key);
+  if (summary) summary.liked = state.current.liked;
+  setTrackUi(); renderSources();
+  try {
+    const updated = await api(`${mediaUrl(state.current, "like")}`, { method: "PATCH", body: JSON.stringify({ liked: state.current.liked }) });
+    state.current.liked = updated.liked;
+    toast(updated.liked ? "Added to Liked Songs" : "Removed from Liked Songs");
+    schedulePersist();
+    if (state.likedMode) loadLibrary(true);
+  } catch (error) {
+    state.current.liked = previous;
+    state.likedCount += previous ? 1 : -1;
+    if (summary) summary.liked = previous;
+    setTrackUi(); renderSources();
+    showError(error);
+  }
 }
 
 async function saveCurrentToTelegram() {
@@ -943,12 +1049,14 @@ async function saveCurrentToTelegram() {
 function renderContacts() {
   const query = $("contact-search").value.trim().toLocaleLowerCase();
   const contacts = state.contacts.filter((contact) => `${contact.name} ${contact.username || ""}`.toLocaleLowerCase().includes(query));
-  $("contact-list").innerHTML = contacts.map((contact) => `<button class="contact-row" type="button" data-contact="${contact.id}"><span class="source-avatar">${escapeHtml(initials(contact.name))}</span><span><strong>${escapeHtml(contact.name)}</strong><small>${contact.username ? `@${escapeHtml(contact.username)}` : "Telegram contact"}</small></span></button>`).join("") || '<p class="empty-copy">No matching contacts.</p>';
+  $("share-status").textContent = `${contacts.length} matching ${contacts.length === 1 ? "contact" : "contacts"}`;
+  $("contact-list").innerHTML = contacts.map((contact) => `<button class="contact-row" type="button" data-contact="${contact.id}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span><strong>${escapeHtml(contact.name)}</strong><small>${contact.username ? `@${escapeHtml(contact.username)}` : "Telegram contact"}</small></span></button>`).join("") || '<p class="empty-copy">No matching contacts.</p>';
 }
 
 async function openShare() {
   if (!state.current) return;
   $("share-dialog").showModal(); $("contact-search").value = "";
+  $("share-status").textContent = "Loading contacts…";
   $("contact-list").innerHTML = '<div class="list-skeleton"><span></span><span></span></div>';
   try { state.contacts = await api("/api/telegram/contacts"); renderContacts(); }
   catch (error) { $("share-dialog").close(); showError(error, openShare); }
@@ -982,9 +1090,12 @@ async function locateCurrent() {
     const temporary = Boolean(state.temporarySource?.chatId === state.source);
     const result = await api(`/api/tracks/${encodeURIComponent(state.current.key)}/position?source=${encodeURIComponent(state.source)}&temporary=${temporary}`);
     await loadPage(Math.floor(result.index / 100) * 100);
-    $("library").scrollTo({ top: Math.max(0, result.index * trackRowHeight()), behavior: "smooth" });
     state.windowStart = -1; renderTracks(true);
-    setTimeout(() => document.querySelector(`.track-row[data-track-key="${CSS.escape(state.current.key)}"]`)?.focus?.(), 350);
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`.track-row[data-track-key="${CSS.escape(state.current.key)}"]`);
+      if (row) row.scrollIntoView({ block: 'center' });
+      row?.focus();
+    });
   } catch (error) { showError(error, locateCurrent); }
   finally { button.disabled = false; button.removeAttribute("aria-busy"); }
 }
@@ -1017,11 +1128,37 @@ async function openSettings() {
 async function saveSettings(button) {
   const pane = button.closest("[data-settings-pane]").dataset.settingsPane;
   const values = pane === "playback" ? { prefetchCount: Number($("prefetch-count").value) } : { musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value };
-  try { button.setAttribute("aria-busy", "true"); state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify(values) }); toast("Settings saved"); }
+  const label = button.dataset.label ||= button.textContent;
+  try {
+    button.textContent = label; button.setAttribute("aria-busy", "true");
+    state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify(values) });
+    button.textContent = "Saved"; button.classList.add("saved"); clearTimeout(button._savedTimer); button._savedTimer = setTimeout(() => { button.textContent = label; button.classList.remove("saved"); }, 2000);
+    toast("Settings saved");
+  }
   catch (error) { showError(error, () => saveSettings(button)); } finally { button.removeAttribute("aria-busy"); }
 }
 
-$("access-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/access/login", { method: "POST", body: JSON.stringify({ password: $("app-password").value }) }); await boot(); } catch (error) { showError(error); } });
+$("access-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("app-password");
+  const errorMessage = $("access-error");
+  const button = event.currentTarget.querySelector('[type="submit"]');
+  input.setAttribute("aria-invalid", "false");
+  errorMessage.textContent = "";
+  button.disabled = true;
+  try {
+    await api("/api/access/login", { method: "POST", body: JSON.stringify({ password: input.value }) });
+    await boot();
+  } catch (error) {
+    input.setAttribute("aria-invalid", "true");
+    errorMessage.textContent = `${error?.message || "Couldn’t unlock the player."} Check the password and try again.`;
+    input.focus();
+  } finally { button.disabled = false; }
+});
+$("app-password").addEventListener("input", () => {
+  $("app-password").setAttribute("aria-invalid", "false");
+  $("access-error").textContent = "";
+});
 $("qr-start").addEventListener("click", startQr);
 $("telegram-country").addEventListener("change", () => {
   const option = $("telegram-country").selectedOptions[0];
@@ -1035,10 +1172,11 @@ $("phone-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('[type="submit"]');
+  const buttonText = button.textContent;
   let phone;
   try { phone = phoneNumber(); } catch (error) { return showError(error); }
   try {
-    button.setAttribute("aria-busy", "true"); button.disabled = true;
+    button.setAttribute("aria-busy", "true"); button.disabled = true; button.classList.add("is-loading"); button.textContent = "Sending…";
     clearTimeout(qrTimer); pauseQr("Switching to phone…");
     state.flow = "";
     const flow = await api("/api/telegram/phone", { method: "POST", body: JSON.stringify({ phone }) });
@@ -1047,9 +1185,9 @@ $("phone-form").addEventListener("submit", async (event) => {
     setLoginStage("code", `Code sent via ${String(flow.delivery || "Telegram").toLowerCase()}.`);
   } catch (error) {
     pauseQr("QR paused");
-    $("qr-status").textContent = "Refresh QR to scan instead.";
+    setQrStatus("Refresh QR to scan instead.");
     showError(error, () => form.requestSubmit());
-  } finally { button.removeAttribute("aria-busy"); button.disabled = false; }
+  } finally { button.removeAttribute("aria-busy"); button.disabled = false; button.classList.remove("is-loading"); button.textContent = buttonText; }
 });
 $("code-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1088,25 +1226,72 @@ document.querySelector('[data-source=""]').addEventListener("click", () => selec
 $("source-list").addEventListener("click", (event) => { const sync = event.target.closest("[data-sync-source]"); if (sync) return syncSource(sync.dataset.syncSource, sync.dataset.full === "true"); const checkbox = event.target.closest("[data-bulk-source]"); if (checkbox) { checkbox.checked ? state.selectedSources.add(checkbox.dataset.bulkSource) : state.selectedSources.delete(checkbox.dataset.bulkSource); return renderSources(); } const temporary = event.target.closest("[data-temporary-source]"); if (temporary && !state.bulk) return selectTemporary(); const row = event.target.closest("[data-source]"); if (row && !state.bulk) selectSource(row.dataset.source); });
 $("source-list").addEventListener("keydown", (event) => { const row = event.target.closest("[data-source]"); if (row && ["Enter", " "].includes(event.key)) { event.preventDefault(); selectSource(row.dataset.source); } });
 $("source-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-source]"); if (row) { event.preventDefault(); sourceMenu(row.dataset.source, event.clientX, event.clientY); } });
-$("source-list").addEventListener("dragstart", (event) => { draggedSource = event.target.closest("[data-source]")?.dataset.source || ""; });
-$("source-list").addEventListener("dragover", (event) => event.preventDefault());
-$("source-list").addEventListener("drop", async (event) => { event.preventDefault(); const target = event.target.closest("[data-source]")?.dataset.source; if (!draggedSource || !target || target === draggedSource) return; const ordered = sourceSort(state.sources).map((item) => item.chatId); ordered.splice(ordered.indexOf(draggedSource), 1); ordered.splice(ordered.indexOf(target), 0, draggedSource); try { await api("/api/sources/order", { method: "PATCH", body: JSON.stringify({ chatIds: ordered }) }); $("sidebar-sort").value = "custom"; await loadLibrary(true); } catch (error) { showError(error); } });
+function cleanupSourceDrag() {
+  $("source-list").querySelectorAll(".source-entry.is-dragging, .source-entry.drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
+}
+function closestSourceEntry(clientY) {
+  const entries = [...$("source-list").querySelectorAll(".source-entry[draggable=true]")];
+  return entries.reduce((best, el) => {
+    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
+    const dist = Math.abs(clientY - mid);
+    return dist < best.dist ? { entry: el, dist } : best;
+  }, { entry: null, dist: Infinity });
+}
+$("source-list").addEventListener("dragstart", (event) => {
+  const entry = event.target.closest(".source-entry[draggable=true]");
+  if (!entry) { event.preventDefault(); return; }
+  draggedSource = entry.dataset.source || "";
+  entry.classList.add("is-dragging");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", "");
+});
+$("source-list").addEventListener("dragover", (event) => {
+  event.preventDefault();
+  if (!draggedSource) return;
+  $("source-list").querySelectorAll(".source-entry.drag-over").forEach((el) => el.classList.remove("drag-over"));
+  const best = closestSourceEntry(event.clientY);
+  if (best.entry && best.entry.dataset.source !== draggedSource) best.entry.classList.add("drag-over");
+});
+$("source-list").addEventListener("drop", async (event) => {
+  event.preventDefault();
+  cleanupSourceDrag();
+  if (!draggedSource) return;
+  const entries = [...$("source-list").querySelectorAll(".source-entry[draggable=true]:not(.is-dragging)")];
+  const closest = entries.reduce((best, el) => {
+    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
+    const dist = Math.abs(event.clientY - mid);
+    return dist < best.dist ? { entry: el, dist } : best;
+  }, { entry: null, dist: Infinity });
+  const target = closest.entry?.dataset.source;
+  if (!target || target === draggedSource) { draggedSource = ""; return; }
+  const ordered = sourceSort(state.sources).map((item) => item.chatId);
+  ordered.splice(ordered.indexOf(draggedSource), 1);
+  ordered.splice(ordered.indexOf(target), 0, draggedSource);
+  try {
+    await api("/api/sources/order", { method: "PATCH", body: JSON.stringify({ chatIds: ordered }) });
+    $("sidebar-sort").value = "custom";
+    await loadLibrary(true);
+  } catch (error) { showError(error); }
+  draggedSource = "";
+});
+$("source-list").addEventListener("dragend", () => { cleanupSourceDrag(); draggedSource = ""; });
 
-$("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } });
+$("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey, like).catch(showError); } });
 $("track-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-track-key]"); if (row) { event.preventDefault(); trackMenu(row.dataset.trackKey, event.clientX, event.clientY); } });
-$("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.hidden = true; event.target.nextElementSibling.hidden = false; } }, true);
-$("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) event.target.nextElementSibling.hidden = true; }, true);
+$("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling.classList.remove("is-covered"); } }, true);
+$("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) requestAnimationFrame(() => { event.target.classList.add("is-ready"); event.target.nextElementSibling.classList.add("is-covered"); }); }, true);
 $("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(); }, 220); });
 $("library").addEventListener("scroll", () => {
+  document.querySelector(".library-header").classList.toggle("is-scrolled", $("library").scrollTop > 8);
   $("library").classList.add("is-scrolling");
   clearTimeout(scrollIdleTimer); scrollIdleTimer = setTimeout(finishLibraryScroll, 120);
   if (libraryFrame) return;
   libraryFrame = requestAnimationFrame(() => { libraryFrame = 0; renderTracks(); });
 }, { passive: true });
-addEventListener("resize", () => { state.windowStart = -1; renderTracks(true); }, { passive: true });
+addEventListener("resize", () => { state.windowStart = -1; renderTracks(true); });
 $("global-search").addEventListener("focus", () => renderGlobalSearch("Type a title, artist, or source name."));
 $("global-search").addEventListener("input", () => { clearTimeout(globalSearchTimer); globalSearchTimer = setTimeout(searchEverywhere, 280); });
-$("global-search-control").addEventListener("click", () => { if ($("app-shell").classList.contains("sidebar-collapsed")) { $("app-shell").classList.remove("sidebar-collapsed"); localStorage.setItem("tm-sidebar", "expanded"); requestAnimationFrame(() => $("global-search").focus()); } });
+$("global-search-trigger").addEventListener("click", () => { if ($("app-shell").classList.contains("sidebar-collapsed")) { $("app-shell").classList.remove("sidebar-collapsed"); localStorage.setItem("tm-sidebar", "expanded"); } requestAnimationFrame(() => $("global-search").focus()); });
 $("close-global-search").addEventListener("click", closeGlobalSearch);
 $("global-results").addEventListener("click", (event) => {
   const source = event.target.closest("[data-global-source]");
@@ -1122,15 +1307,63 @@ $("global-results").addEventListener("contextmenu", (event) => { const track = e
 $("play-playlist").addEventListener("click", () => startPlaylist(false).catch(showError)); $("shuffle-playlist").addEventListener("click", () => startPlaylist(true).catch(showError));
 $("sync-source").addEventListener("click", () => state.source ? syncSource(state.source, false) : toast("Choose a source to sync"));
 $("add-source").addEventListener("click", openSources); document.querySelector('[data-action="add-source"]').addEventListener("click", openSources);
+$("sync-all-sources").addEventListener("click", () => syncAllSources().catch(showError));
 $("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", renderDiscovered);
 $("sidebar-sort").value = localStorage.getItem("tm-source-sort") || "custom"; $("sidebar-sort").addEventListener("change", () => { localStorage.setItem("tm-source-sort", $("sidebar-sort").value); renderSources(); });
 $("bulk-sources").addEventListener("click", () => { state.bulk = true; $("bulk-bar").hidden = false; renderSources(); }); $("bulk-cancel").addEventListener("click", () => { state.bulk = false; state.selectedSources.clear(); $("bulk-bar").hidden = true; renderSources(); }); $("bulk-unselect").addEventListener("click", () => unselectSources([...state.selectedSources]));
 $("collapse-sidebar").addEventListener("click", () => { const collapsed = !$("app-shell").classList.contains("sidebar-collapsed"); $("app-shell").classList.toggle("sidebar-collapsed", collapsed); localStorage.setItem("tm-sidebar", collapsed ? "collapsed" : "expanded"); $("collapse-sidebar").setAttribute("aria-label", collapsed ? "Expand sources" : "Collapse sources"); });
 $("liked-source").addEventListener("click", selectLiked);
 
-$("play").addEventListener("click", () => togglePlayback().catch(showError)); $("previous").addEventListener("click", () => audio.currentTime > 5 ? audio.currentTime = 0 : move(-1).catch(showError)); $("next").addEventListener("click", () => move(1).catch(showError)); $("shuffle").addEventListener("click", () => toggleShuffle().catch(showError)); $("repeat").addEventListener("click", () => { state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off"; updateModes(); toast(`Repeat ${state.repeat}`); });
-$("volume").addEventListener("input", () => { audio.volume = Number($("volume").value); localStorage.setItem("tm-volume", audio.volume); }); audio.volume = Number(localStorage.getItem("tm-volume") ?? .8); $("volume").value = audio.volume;
-$("progress").addEventListener("input", () => { if (audio.duration) audio.currentTime = Number($("progress").value) / 1000 * audio.duration; });
+$("play").addEventListener("click", () => togglePlayback().catch(showError)); $("previous").addEventListener("click", () => audio.currentTime > 3 ? audio.currentTime = 0 : move(-1).catch(showError)); $("next").addEventListener("click", () => move(1).catch(showError)); $("shuffle").addEventListener("click", () => toggleShuffle().catch(showError)); $("repeat").addEventListener("click", () => { state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off"; updateModes(); toast(`Repeat ${state.repeat}`); });
+function setVolume(value) {
+  audio.volume = Math.min(1, Math.max(0, Number(value) || 0));
+  if (audio.volume) lastAudibleVolume = audio.volume;
+  $("volume").value = audio.volume;
+  $("volume-toggle").classList.toggle("muted", !audio.volume);
+  $("volume-toggle").setAttribute("aria-label", audio.volume ? "Mute" : "Restore volume");
+  $("volume-pct").textContent = Math.round(audio.volume * 100);
+  localStorage.setItem("tm-volume", audio.volume);
+}
+$("volume").addEventListener("input", () => setVolume($("volume").value));
+$("volume-toggle").addEventListener("click", () => setVolume(audio.volume ? 0 : lastAudibleVolume));
+setVolume(localStorage.getItem("tm-volume") ?? .8);
+audio.playbackRate = state.speed;
+$("track-details").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-speed]");
+  if (!button) return;
+  const value = Number(button.dataset.speed);
+  if (!value) return;
+  state.speed = value;
+  audio.playbackRate = value;
+  localStorage.setItem("tm-speed", String(value));
+  for (const sibling of $("track-details").querySelectorAll("[data-speed]")) {
+    const active = Number(sibling.dataset.speed) === value;
+    sibling.classList.toggle("active", active);
+    sibling.setAttribute("aria-pressed", String(active));
+  }
+});
+$("progress").addEventListener("input", () => {
+  if (audio.duration) audio.currentTime = Number($("progress").value) / 1000 * audio.duration;
+  const progress = $("progress"), tooltip = $("progress-tooltip");
+  const max = Number(progress.max) || 1;
+  const ratio = Math.min(1, Math.max(0, Number(progress.value) / max));
+  const inputRect = progress.getBoundingClientRect();
+  const rowRect = progress.parentElement.getBoundingClientRect();
+  const seconds = Number.isFinite(audio.duration) ? ratio * audio.duration : 0;
+  tooltip.textContent = formatTime(seconds);
+  tooltip.style.left = `${inputRect.left - rowRect.left + ratio * inputRect.width}px`;
+  tooltip.classList.add("is-visible");
+  tooltip.setAttribute("aria-hidden", "false");
+});
+const hideProgressTooltip = () => {
+  const tooltip = $("progress-tooltip");
+  tooltip.classList.remove("is-visible");
+  tooltip.setAttribute("aria-hidden", "true");
+};
+$("progress").addEventListener("change", hideProgressTooltip);
+$("progress").addEventListener("pointerup", hideProgressTooltip);
+$("progress").addEventListener("pointercancel", hideProgressTooltip);
+$("progress").addEventListener("blur", hideProgressTooltip);
 audio.addEventListener("timeupdate", () => { updateProgress(); updateLyric(); const threshold = audio.duration ? Math.min(30, audio.duration / 2) : 30; if (state.current && !state.current.qualified && audio.currentTime >= threshold) { state.current.qualified = true; api("/api/playback/events", { method: "POST", body: JSON.stringify({ key: state.current.key, event: "qualified" }) }).catch(() => {}); } });
 for (const event of ["progress", "durationchange", "loadedmetadata"]) audio.addEventListener(event, updateProgress);
 for (const event of ["waiting", "stalled"]) audio.addEventListener(event, () => { if (!audio.paused) setBuffering(true); });
@@ -1142,10 +1375,15 @@ audio.addEventListener("error", () => { setBuffering(false); if (state.current) 
 audio.addEventListener("seeked", schedulePersist);
 if ("mediaSession" in navigator) { navigator.mediaSession.setActionHandler("play", () => startAudioPlayback().catch(showError)); navigator.mediaSession.setActionHandler("pause", () => audio.pause()); navigator.mediaSession.setActionHandler("previoustrack", () => move(-1).catch(showError)); navigator.mediaSession.setActionHandler("nexttrack", () => move(1).catch(showError)); }
 
-$("queue-list").addEventListener("click", (event) => { const play = event.target.closest("[data-queue-play]"); const button = event.target.closest("[data-remove-queue]"); if (play) playKey(state.queue[Number(play.dataset.queuePlay)], null, Number(play.dataset.queuePlay)).catch(showError); if (button) { state.queue.splice(Number(button.dataset.removeQueue), 1); renderQueue(); schedulePrefetch(); schedulePersist(); } }); $("queue-list").addEventListener("dragstart", (event) => { draggedQueue = Number(event.target.closest("[data-queue-index]")?.dataset.queueIndex); }); $("queue-list").addEventListener("dragover", (event) => event.preventDefault()); $("queue-list").addEventListener("drop", (event) => { event.preventDefault(); const target = Number(event.target.closest("[data-queue-index]")?.dataset.queueIndex); if (Number.isInteger(draggedQueue) && Number.isInteger(target) && draggedQueue !== target && draggedQueue > state.queueIndex && target > state.queueIndex) { const [key] = state.queue.splice(draggedQueue, 1); state.queue.splice(target, 0, key); renderQueue(); schedulePrefetch(); schedulePersist(); } }); $("clear-queue").addEventListener("click", () => { state.queue = state.current ? [state.current.key] : []; state.queueIndex = state.current ? 0 : -1; renderQueue(); schedulePrefetch(); schedulePersist(); });
+$("queue-list").addEventListener("click", (event) => { const play = event.target.closest("[data-queue-play]"); const button = event.target.closest("[data-remove-queue]"); if (event.target.closest("[data-queue-browse]")) { closePanel(); return $("track-list").querySelector(".track-row")?.focus(); } if (play) playKey(state.queue[Number(play.dataset.queuePlay)], null, Number(play.dataset.queuePlay)).catch(showError); if (button) { state.queue.splice(Number(button.dataset.removeQueue), 1); renderQueue(); schedulePrefetch(); schedulePersist(); } }); $("queue-list").addEventListener("dragstart", (event) => { draggedQueue = Number(event.target.closest("[data-queue-index]")?.dataset.queueIndex); event.target.closest("[data-queue-index]")?.classList.add("queue-dragging"); }); $("queue-list").addEventListener("dragover", (event) => event.preventDefault()); $("queue-list").addEventListener("drop", (event) => { event.preventDefault(); document.querySelector(".queue-dragging")?.classList.remove("queue-dragging"); const target = Number(event.target.closest("[data-queue-index]")?.dataset.queueIndex); if (Number.isInteger(draggedQueue) && Number.isInteger(target) && draggedQueue !== target && draggedQueue > state.queueIndex && target > state.queueIndex) { const [key] = state.queue.splice(draggedQueue, 1); state.queue.splice(target, 0, key); renderQueue(); schedulePrefetch(); schedulePersist(); } }); $("queue-list").addEventListener("dragend", (event) => { event.target.closest("[data-queue-index]")?.classList.remove("queue-dragging"); }); $("clear-queue").addEventListener("click", () => { state.queue = state.current ? [state.current.key] : []; state.queueIndex = state.current ? 0 : -1; renderQueue(); schedulePrefetch(); schedulePersist(); });
 
 $("player-open").addEventListener("click", () => showPanel("lyrics")); $("player-locate").addEventListener("click", () => locateCurrent()); $("show-lyrics").addEventListener("click", () => showPanel("lyrics", true)); $("close-now").addEventListener("click", closePanel); for (const tab of ["lyrics", "queue", "details"]) $(`${tab}-tab`).addEventListener("click", () => showPanel(tab));
-$("lyrics-lines").addEventListener("click", (event) => { const line = event.target.closest("[data-lyric]"); if (line) { audio.currentTime = state.lyrics.lines[Number(line.dataset.lyric)].startMs / 1000; state.lyricsFollow = true; $("sync-lyrics").hidden = true; } }); $("now-panel").addEventListener("wheel", stopFollowingLyrics, { passive: true }); $("now-panel").addEventListener("touchmove", stopFollowingLyrics, { passive: true }); $("sync-lyrics").addEventListener("click", () => { state.lyricsFollow = true; $("sync-lyrics").hidden = true; state.lyric = -2; updateLyric(); }); $("add-lyrics-empty").addEventListener("click", openLyricsEditor); $("edit-current").addEventListener("click", () => openMetadata()); $("edit-lyrics").addEventListener("click", openLyricsEditor);
+$("now-panel").querySelector('[role="tablist"]').addEventListener("keydown", (e) => {
+  const tabs = [...e.currentTarget.querySelectorAll('[role="tab"]')]; const i = tabs.indexOf(document.activeElement); if (i === -1) return;
+  if (e.key === "ArrowRight") { e.preventDefault(); tabs[(i + 1) % tabs.length].click(); tabs[(i + 1) % tabs.length].focus(); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); tabs[(i - 1 + tabs.length) % tabs.length].click(); tabs[(i - 1 + tabs.length) % tabs.length].focus(); }
+});
+$("lyrics-lines").addEventListener("click", (event) => { const line = event.target.closest("[data-lyric]"); if (line) { audio.currentTime = state.lyrics.lines[Number(line.dataset.lyric)].startMs / 1000; state.lyricsFollow = true; $("sync-lyrics").hidden = true; line.classList.remove("seek-pulse"); void line.offsetWidth; line.classList.add("seek-pulse"); } }); $("now-panel").addEventListener("wheel", stopFollowingLyrics, { passive: true }); $("now-panel").addEventListener("touchmove", stopFollowingLyrics, { passive: true }); $("sync-lyrics").addEventListener("click", () => { state.lyricsFollow = true; $("sync-lyrics").hidden = true; state.lyric = -2; updateLyric(); }); $("add-lyrics-empty").addEventListener("click", openLyricsEditor); $("edit-current").addEventListener("click", () => openMetadata()); $("edit-lyrics").addEventListener("click", openLyricsEditor);
 $("like-current").addEventListener("click", () => toggleLike().catch((error) => showError(error, toggleLike))); $("save-current-telegram").addEventListener("click", saveCurrentToTelegram); $("share-current").addEventListener("click", openShare); $("player-more").addEventListener("click", (event) => { if (!state.current) return; const rect = event.currentTarget.getBoundingClientRect(); trackMenu(state.current.key, rect.right, rect.top); });
 $("contact-search").addEventListener("input", renderContacts); $("contact-list").addEventListener("click", (event) => { const contact = event.target.closest("[data-contact]"); if (contact) queueShare(contact.dataset.contact); });
 $("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata").addEventListener("click", resetMetadata); $("fetch-metadata").addEventListener("click", fetchMetadata); $("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); }); $("lyrics-form").addEventListener("submit", saveLyrics); $("reset-lyrics").addEventListener("click", async () => { if (await confirmAction("Fetch lyrics again?", "Saved lyrics will be replaced by a new internet lookup.", "Fetch again")) { try { $("lyrics-status").textContent = "Looking for lyrics…"; state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" }); renderLyrics(); $("lyrics-status").textContent = "Lyrics lookup finished."; } catch (error) { $("lyrics-status").textContent = error.message; } } });
@@ -1160,7 +1398,21 @@ document.querySelectorAll("[data-close]").forEach((button) => button.addEventLis
 document.querySelectorAll("dialog").forEach((dialog) => { dialog.addEventListener("click", (event) => { if (event.target !== dialog) return; const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) { dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } } }); dialog.addEventListener("cancel", () => { if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } }); });
 document.addEventListener("error", (event) => { const image = event.target; if (image.matches?.("img.source-avatar")) { const replacement = document.createElement("span"); replacement.className = "source-avatar"; replacement.textContent = image.dataset.avatarFallback || "♪"; image.replaceWith(replacement); } }, true);
 $("context-menu").addEventListener("click", (event) => { const button = event.target.closest("[data-menu-index]"); if (button) { const action = $("context-menu")._actions[Number(button.dataset.menuIndex)]?.action; closeMenu(); action?.(); } }); document.addEventListener("pointerdown", (event) => { if (!event.target.closest("#context-menu") && !$("context-menu").hidden) closeMenu(); if (!event.target.closest(".global-search-wrap") && !$("global-results").hidden) closeGlobalSearch(); }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); closeGlobalSearch(); } });
-$("open-nav").addEventListener("click", () => $("source-rail").classList.add("open")); $("close-nav").addEventListener("click", () => $("source-rail").classList.remove("open"));
+document.addEventListener("keydown", (event) => {
+  if (event.target.matches("input, textarea, [contenteditable]")) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.key === " " || event.code === "Space") {
+    event.preventDefault();
+    if (state.current) togglePlayback().catch(showError);
+    return;
+  }
+  if (event.key === "ArrowLeft") { event.preventDefault(); audio.currentTime = Math.max(0, audio.currentTime - 5); return; }
+  if (event.key === "ArrowRight") { event.preventDefault(); audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 5); return; }
+  if (event.key === "l" || event.key === "L") { event.preventDefault(); $("like-current")?.click(); return; }
+  if (event.key === "/") { event.preventDefault(); $("global-search")?.focus(); return; }
+  if (event.key === "m" || event.key === "M") { event.preventDefault(); $("volume-toggle")?.click(); return; }
+});
+$("open-nav").addEventListener("click", () => { $("source-rail").classList.add("open"); $("rail-scrim").hidden = false; }); $("close-nav").addEventListener("click", () => { $("source-rail").classList.remove("open"); $("rail-scrim").hidden = true; }); $("rail-scrim").addEventListener("click", () => { $("source-rail").classList.remove("open"); $("rail-scrim").hidden = true; });
 
 installResizer("left-resizer", "left"); installResizer("right-resizer", "right");
 addEventListener("pagehide", persistPlayerState); addEventListener("beforeunload", persistPlayerState);

@@ -5,3 +5,7 @@ __pycache__/
 data/
 library.sqlite3*
 .DS_Store
+TODO.md
+
+node_modules/
+.remember/

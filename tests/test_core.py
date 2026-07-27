@@ -246,6 +246,93 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([], list(service.media_directory.iterdir()))
             service.database.close()
 
+    async def test_sync_source_runs_per_source_in_parallel_and_caps_total(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            # 4 sources, semaphore(3) means 3 run concurrently and the 4th waits.
+            for chat_id in ("1", "2", "3", "4"):
+                service.database.upsert_source(
+                    {"chatId": chat_id, "kind": "channel", "title": f"S{chat_id}", "selected": True}
+                )
+            in_flight = 0
+            peak = 0
+            started = asyncio.Event()
+            proceed = asyncio.Event()
+            service.client = SimpleNamespace(is_connected=lambda: True)
+
+            async def fake_get_entity(chat_id: int) -> int:
+                return chat_id
+
+            async def fake_iter_messages(*_args, **_kwargs):
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                started.set()
+                await proceed.wait()
+                in_flight -= 1
+                if False:  # pragma: no cover - keep this an async generator
+                    yield None
+
+            service.database.get_source = lambda chat_id: {"chatId": chat_id, "selected": True, "lastMessageId": 0}
+            service.require_client = lambda: SimpleNamespace(
+                is_connected=lambda: True,
+                get_entity=AsyncMock(side_effect=fake_get_entity),
+                iter_messages=fake_iter_messages,
+            )
+            tasks = [asyncio.create_task(service.sync_source(chat_id)) for chat_id in ("1", "2", "3", "4")]
+            # wait until 3 have entered iter_messages; the 4th must be parked on the semaphore.
+            await asyncio.wait_for(started.wait(), 2)
+            for _ in range(50):
+                if in_flight >= 3:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(3, in_flight, "semaphore should cap concurrent syncs at 3")
+            proceed.set()
+            results = await asyncio.wait_for(asyncio.gather(*tasks), 2)
+            self.assertEqual(4, len(results))
+            self.assertLessEqual(peak, 3)
+            self.assertIn("1", service.sync_locks)
+            service.database.close()
+
+    async def test_sync_source_serializes_same_chat_id_with_per_source_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.upsert_source(
+                {"chatId": "1", "kind": "channel", "title": "S1", "selected": True}
+            )
+            in_flight = 0
+            peak = 0
+            started = asyncio.Event()
+            proceed = asyncio.Event()
+            service.client = SimpleNamespace(is_connected=lambda: True)
+            service.database.get_source = lambda _chat_id: {"chatId": "1", "selected": True, "lastMessageId": 0}
+
+            async def fake_get_entity(_chat_id: int) -> int:
+                return 1
+
+            async def fake_iter_messages(*_args, **_kwargs):
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                started.set()
+                await proceed.wait()
+                in_flight -= 1
+                if False:  # pragma: no cover
+                    yield None
+
+            service.require_client = lambda: SimpleNamespace(
+                is_connected=lambda: True,
+                get_entity=AsyncMock(side_effect=fake_get_entity),
+                iter_messages=fake_iter_messages,
+            )
+            t1 = asyncio.create_task(service.sync_source("1"))
+            t2 = asyncio.create_task(service.sync_source("1"))
+            await asyncio.wait_for(started.wait(), 2)
+            proceed.set()
+            await asyncio.wait_for(asyncio.gather(t1, t2), 2)
+            self.assertLessEqual(peak, 1, "per-source lock must serialize the same chat_id")
+            service.database.close()
+
 
 if __name__ == "__main__":
     unittest.main()

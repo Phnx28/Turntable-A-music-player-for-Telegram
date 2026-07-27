@@ -90,7 +90,10 @@ class TelegramService:
         self.client: TelegramClient | None = None
         self.flows: dict[str, LoginFlow] = {}
         self.jobs: dict[str, BackgroundJob] = {}
-        self.sync_lock = asyncio.Lock()
+        # ponytail: per-source locks beat one global lock; same chat_id can't double-sync, different ones run in parallel.
+        self.sync_locks: dict[str, asyncio.Lock] = {}
+        # ponytail: caps concurrent scans to avoid FloodWait; bump if profiling shows idle headroom.
+        self.sync_semaphore = asyncio.Semaphore(3)
         self.global_search_lock = asyncio.Lock()
         # ponytail: one global transfer gate is enough for one owner; split by DC only if profiling proves it.
         self.media_semaphore = asyncio.Semaphore(4)
@@ -110,6 +113,7 @@ class TelegramService:
         self.document_cache: dict[str, tuple[float, str, Any, Any]] = {}
         self.discovery_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._countries: list[dict[str, str]] | None = None
+        self._countries_updated: float = 0
         self._clean_partial_cache()
 
     @property
@@ -375,7 +379,7 @@ class TelegramService:
         self._spawn(self.sync_all())
 
     async def countries(self) -> list[dict[str, str]]:
-        if self._countries is not None:
+        if self._countries is not None and time.monotonic() - self._countries_updated < 3600:
             return self._countries
         client = self._new_client()
         await client.connect()
@@ -390,6 +394,7 @@ class TelegramService:
             for code in country.country_codes
         ]
         self._countries = sorted(countries, key=lambda item: (item["name"].casefold(), item["dialCode"]))
+        self._countries_updated = time.monotonic()
         return self._countries
 
     @staticmethod
@@ -581,6 +586,7 @@ class TelegramService:
             raise KeyError("Eligible Telegram chat not found")
         source["selected"] = True
         self.database.upsert_source(source)
+        self.discovery_cache = None
         job = self.start_sync(chat_id, full=True)
         return {"source": self.database.get_source(chat_id) or source, "job": job}
 
@@ -591,6 +597,7 @@ class TelegramService:
         if not source:
             raise KeyError("Source not found")
         self.database.set_source_selected(chat_id, selected)
+        self.discovery_cache = None
         if not selected:
             for job in self.jobs.values():
                 if job.chat_id == chat_id and job.state in {"queued", "running"} and job.task:
@@ -638,42 +645,46 @@ class TelegramService:
         source = self.database.get_source(chat_id)
         if not source:
             raise KeyError("Source not found")
-        async with self.sync_lock:
-            try:
-                if job:
-                    job.state = "running"
-                entity = await client.get_entity(int(chat_id))
-                minimum = 0 if full else int(source["lastMessageId"] or 0)
-                highest_scanned = minimum
-                seen: set[str] = set()
-                items: dict[str, dict[str, Any]] = {}
-                for filter_type in (InputMessagesFilterMusic, InputMessagesFilterDocument):
-                    async for message in client.iter_messages(
-                        entity, filter=filter_type(), min_id=minimum
-                    ):
-                        highest_scanned = max(highest_scanned, int(message.id))
-                        if job:
-                            job.processed += 1
-                        item = self._message_to_track(message, chat_id)
-                        if item:
-                            seen.add(str(message.id))
-                            items[str(message.id)] = item
+        lock = self.sync_locks.get(chat_id)
+        if lock is None:
+            lock = self.sync_locks[chat_id] = asyncio.Lock()
+        async with self.sync_semaphore:
+            async with lock:
+                try:
+                    if job:
+                        job.state = "running"
+                    entity = await client.get_entity(int(chat_id))
+                    minimum = 0 if full else int(source["lastMessageId"] or 0)
+                    highest_scanned = minimum
+                    seen: set[str] = set()
+                    items: dict[str, dict[str, Any]] = {}
+                    for filter_type in (InputMessagesFilterMusic, InputMessagesFilterDocument):
+                        async for message in client.iter_messages(
+                            entity, filter=filter_type(), min_id=minimum
+                        ):
+                            highest_scanned = max(highest_scanned, int(message.id))
                             if job:
-                                job.found = len(seen)
-                            if len(items) >= 100:
-                                self.database.upsert_tracks(list(items.values()))
-                                items.clear()
-                self.database.upsert_tracks(list(items.values()))
-                if full and not temporary:
-                    self.database.mark_missing_unavailable(chat_id, seen)
-                highest = max(highest_scanned, minimum)
-                self.database.finish_sync(chat_id, highest)
-                return self.database.get_source(chat_id) or source
-            except Exception as error:
-                self.database.finish_sync(
-                    chat_id, int(source["lastMessageId"] or 0), self._friendly_sync_error(error)
-                )
-                raise
+                                job.processed += 1
+                            item = self._message_to_track(message, chat_id)
+                            if item:
+                                seen.add(str(message.id))
+                                items[str(message.id)] = item
+                                if job:
+                                    job.found = len(seen)
+                                if len(items) >= 100:
+                                    self.database.upsert_tracks(list(items.values()))
+                                    items.clear()
+                    self.database.upsert_tracks(list(items.values()))
+                    if full and not temporary:
+                        self.database.mark_missing_unavailable(chat_id, seen)
+                    highest = max(highest_scanned, minimum)
+                    self.database.finish_sync(chat_id, highest)
+                    return self.database.get_source(chat_id) or source
+                except Exception as error:
+                    self.database.finish_sync(
+                        chat_id, int(source["lastMessageId"] or 0), self._friendly_sync_error(error)
+                    )
+                    raise
 
     async def contacts(self) -> list[dict[str, Any]]:
         result = await self.require_client()(functions.contacts.GetContactsRequest(hash=0))
@@ -704,6 +715,8 @@ class TelegramService:
         )
         if not messages:
             raise RuntimeError("Telegram did not forward this track")
+        if not isinstance(messages, list):
+            messages = [messages]
         return {"ok": True, "messageId": str(messages[0].id)}
 
     @staticmethod
@@ -803,28 +816,35 @@ class TelegramService:
                 if close:
                     await close()
 
-    async def thumbnail(self, chat_id: str, message_id: str) -> bytes | None:
+    async def thumbnail(self, chat_id: str, message_id: str, quality: str = "default") -> bytes | None:
         client = self.require_client()
         track = self.database.get_track(chat_id, message_id)
         if not track or not track["available"]:
             raise KeyError("Track is unavailable")
         key_digest = hashlib.sha256(track["key"].encode()).hexdigest()[:20]
-        fingerprint = f"{track.get('documentId')}:{track['file']['size']}"
+        quality_tag = "hi" if quality == "high" else "lo"
+        fingerprint = f"{track.get('documentId')}:{track['file']['size']}:{quality}"
         version = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
-        destination = self.thumbnail_directory / f"{key_digest}-{version}.jpg"
-        missing = self.thumbnail_directory / f"{key_digest}-{version}.missing"
+        destination = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.jpg"
+        missing = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.missing"
         if destination.is_file():
             return destination.read_bytes()
         if missing.is_file() and time.time() - missing.stat().st_mtime < 24 * 60 * 60:
             return None
-        for stale in self.thumbnail_directory.glob(f"{key_digest}-*"):
+        for stale in self.thumbnail_directory.glob(f"{key_digest}-{quality_tag}-*"):
             if stale not in {destination, missing}:
                 stale.unlink(missing_ok=True)
         message, document = await self.get_message_document(chat_id, message_id)
         if not getattr(document, "thumbs", None):
             missing.touch()
             return None
-        result = await client.download_media(message, thumb=-1, file=bytes)
+        if quality == "high":
+            sizes = [(t.type, t.w * t.h if hasattr(t, "w") and t.w else 0, t) for t in document.thumbs]
+            sizes.sort(key=lambda s: s[1], reverse=True)
+            thumb_type = sizes[0][0] if sizes else -1
+        else:
+            thumb_type = -1
+        result = await client.download_media(message, thumb=thumb_type, file=bytes)
         if not result:
             missing.touch()
             return None
@@ -1024,21 +1044,24 @@ class TelegramService:
     async def _run_prefetch(self, job: BackgroundJob, keys: list[str]) -> None:
         job.state = "running"
         try:
-            for key in keys:
+            async def _prefetch_one(key):
                 chat_id, message_id = key.split(":", 1)
                 track = self.database.get_track(chat_id, message_id)
                 if not track or not track["available"]:
-                    job.result[key] = "unavailable"
-                    continue
+                    return "unavailable"
                 if self.cached_media(track):
-                    job.result[key] = "ready"
                     job.processed += 1
-                    continue
-                job.result[key] = "prefetching"
+                    return "ready"
                 await self.cache_media(track)
-                job.result[key] = "ready"
                 job.found += 1
                 job.processed += 1
+                return "ready"
+
+            results = await asyncio.gather(
+                *[_prefetch_one(key) for key in keys], return_exceptions=True
+            )
+            for i, result in enumerate(results):
+                job.result[keys[i]] = "error" if isinstance(result, Exception) else result
             job.state = "complete"
         except asyncio.CancelledError:
             job.state = "cancelled"
@@ -1047,6 +1070,9 @@ class TelegramService:
             job.state = "error"
 
     async def _evict_cache(self, maximum: int = 5 * 1024 * 1024 * 1024) -> None:
+        await asyncio.to_thread(self._evict_cache_sync, maximum)
+
+    def _evict_cache_sync(self, maximum: int = 5 * 1024 * 1024 * 1024) -> None:
         entries = self.database.media_cache_entries()
         total = sum(int(entry["size"]) for entry in entries)
         remove: list[str] = []
