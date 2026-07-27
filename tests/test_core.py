@@ -68,6 +68,23 @@ class CoreTests(unittest.TestCase):
             self.assertEqual("Needle Remix", database.get_track("1", "2")["metadata"]["title"])
             database.close()
 
+    def test_short_queries_use_the_overrides_join(self):
+        # One and two character queries fall back to LIKE against o.payload instead of FTS,
+        # so every query that builds a WHERE clause needs the overrides join in scope.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg", "title": "Zebra"},
+                {"chatId": "1", "messageId": "2", "fileName": "b.mp3", "mimeType": "audio/mpeg", "title": "Walrus"},
+            ])
+            database.save_metadata_patch("1", "2", {"title": "Zeppelin"}, [])
+            for query, expected in (("z", 2), ("ze", 2), ("wa", 0), ("zeb", 1)):
+                page = database.list_tracks(query=query)
+                self.assertEqual(expected, page["total"], f"query={query!r}")
+                self.assertEqual(expected, len(page["items"]), f"query={query!r}")
+            database.close()
+
     def test_unselected_source_still_lists_its_own_tracks(self):
         # Clicking the player title to locate a track asks for one chat_id. That is an explicit
         # choice, so the source must list its tracks even while unselected -- it used to come
