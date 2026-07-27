@@ -5,7 +5,11 @@ __pycache__/
 data/
 library.sqlite3*
 .DS_Store
+# Personal working notes and audits — not project history
 TODO.md
+Kimi3thoughts.md
+AUDIT.md
+AUDIT-TODO.md
 
 node_modules/
 .remember/

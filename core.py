@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
+import hmac
 import json
 import math
 import random
 import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -28,6 +31,55 @@ METADATA_FIELDS = {
 }
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav"}
+
+BIND_HOSTS = {"127.0.0.1", "0.0.0.0"}
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+
+# scrypt cost: ~16 MB and ~100 ms per attempt, which makes offline cracking of a
+# stolen hash expensive while staying imperceptible on a single interactive login.
+_SCRYPT_N = 2 ** 14
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+
+
+def hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    derived = hashlib.scrypt(
+        password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
+    )
+    return "$".join(
+        (
+            "scrypt",
+            str(_SCRYPT_N),
+            str(_SCRYPT_R),
+            str(_SCRYPT_P),
+            base64.b64encode(salt).decode(),
+            base64.b64encode(derived).decode(),
+        )
+    )
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        scheme, n, r, p, salt_b64, hash_b64 = (encoded or "").split("$")
+        if scheme != "scrypt":
+            return False
+        expected = base64.b64decode(hash_b64)
+        derived = hashlib.scrypt(
+            password.encode(),
+            salt=base64.b64decode(salt_b64),
+            n=int(n),
+            r=int(r),
+            p=int(p),
+            dklen=len(expected),
+        )
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(derived, expected)
+
+
+def session_digest(token: str) -> str:
+    return hashlib.sha256((token or "").encode()).hexdigest()
 
 
 def now_ts() -> int:
@@ -406,6 +458,104 @@ class Database:
                 """
             )
             self.connection.commit()
+        if version < 5:
+            self.connection.executescript(
+                """
+                ALTER TABLE sources ADD COLUMN pinned_at INTEGER;
+                PRAGMA user_version = 5;
+                """
+            )
+            self.connection.commit()
+            version = 5
+        if version < 6:
+            self.connection.executescript(
+                """
+                CREATE TABLE app_auth (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    password_hash TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE app_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX app_sessions_expiry ON app_sessions(expires_at);
+
+                PRAGMA user_version = 6;
+                """
+            )
+            self.connection.commit()
+
+    def ping(self) -> bool:
+        """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
+        try:
+            with self.lock:
+                self.connection.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
+
+    def get_password_hash(self) -> str:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT password_hash FROM app_auth WHERE id = 1"
+            ).fetchone()
+        return str(row["password_hash"]) if row else ""
+
+    def set_password(self, password: str) -> None:
+        """Store a new password hash and revoke every existing session."""
+        if not password:
+            raise ValueError("Password must not be empty")
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_auth (id, password_hash, updated_at) VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    password_hash = excluded.password_hash,
+                    updated_at = excluded.updated_at
+                """,
+                (hash_password(password), now_ts()),
+            )
+            connection.execute("DELETE FROM app_sessions")
+
+    def clear_password(self) -> None:
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM app_auth")
+            connection.execute("DELETE FROM app_sessions")
+
+    def create_session(self, ttl_seconds: int = SESSION_TTL_SECONDS) -> str:
+        token = secrets.token_urlsafe(32)
+        current = now_ts()
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM app_sessions WHERE expires_at <= ?", (current,))
+            connection.execute(
+                "INSERT INTO app_sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)",
+                (session_digest(token), current, current + ttl_seconds),
+            )
+        return token
+
+    def session_valid(self, token: str) -> bool:
+        if not token:
+            return False
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT expires_at FROM app_sessions WHERE token_hash = ?",
+                (session_digest(token),),
+            ).fetchone()
+        return bool(row) and int(row["expires_at"]) > now_ts()
+
+    def delete_session(self, token: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "DELETE FROM app_sessions WHERE token_hash = ?", (session_digest(token),)
+            )
+
+    def clear_sessions(self) -> None:
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM app_sessions")
 
     def get_account(self) -> dict[str, Any] | None:
         with self.lock:
@@ -506,12 +656,22 @@ class Database:
             "lastMessageId": value.get("last_message_id", 0),
             "lastSyncedAt": value.get("last_synced_at"),
             "syncError": value.get("sync_error"),
+            "pinnedAt": value.get("pinned_at"),
         }
 
     def set_source_selected(self, chat_id: str, selected: bool) -> None:
         with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE sources SET selected = ? WHERE chat_id = ?", (int(selected), chat_id)
+            )
+            if not cursor.rowcount:
+                raise KeyError("Source not found")
+
+    def set_source_pinned(self, chat_id: str, pinned: bool) -> None:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE sources SET pinned_at = ? WHERE chat_id = ?",
+                (now_ts() if pinned else None, chat_id),
             )
             if not cursor.rowcount:
                 raise KeyError("Source not found")
@@ -970,6 +1130,7 @@ class Database:
             "musicbrainzContact": "",
             "coverQuality": "1200",
             "prefetchCount": 1,
+            "bindHost": "127.0.0.1",
         }
         with self.lock:
             rows = self.connection.execute("SELECT key, value FROM app_settings").fetchall()
@@ -978,9 +1139,12 @@ class Database:
         return defaults
 
     def save_settings(self, values: Mapping[str, Any]) -> dict[str, Any]:
-        allowed = {"musicbrainzContact", "coverQuality", "prefetchCount"}
+        allowed = {"musicbrainzContact", "coverQuality", "prefetchCount", "bindHost"}
         if set(values) - allowed:
             raise ValueError("Unknown setting")
+        bind_host = values.get("bindHost")
+        if bind_host is not None and str(bind_host) not in BIND_HOSTS:
+            raise ValueError("Bind address must be 127.0.0.1 or 0.0.0.0")
         contact = values.get("musicbrainzContact")
         if contact is not None and (not isinstance(contact, str) or len(contact.strip()) > 300):
             raise ValueError("MusicBrainz contact must be a short email address or URL")

@@ -6,7 +6,6 @@ const state = {
   lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1,
   shuffle: localStorage.getItem("tm-shuffle") === "1",
   repeat: localStorage.getItem("tm-repeat") || "off",
-  speed: Number(localStorage.getItem("tm-speed")) || 1,
   cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
   loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, windowStart: -1, libraryLoading: false,
@@ -36,17 +35,23 @@ async function api(path, options = {}) {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
-  if (response.status === 401 && path !== "/api/status") showView("access-view");
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
     const failure = body?.error;
+    // An expired or revoked session must return to the gate rather than surface
+    // a stream of unrelated failures from whatever request happened to notice.
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      showView("lock-view");
+      $("lock-status").textContent = "Your session expired. Sign in again.";
+      $("lock-password").focus();
+    }
     throw new AppError(failure?.message || body?.detail || `Request failed (${response.status})`, failure?.retryable, failure?.code);
   }
   return body;
 }
 
 function showView(id) {
-  for (const view of ["access-view", "telegram-view", "app-shell"]) $(view).hidden = view !== id;
+  for (const view of ["lock-view", "telegram-view", "app-shell"]) $(view).hidden = view !== id;
 }
 
 function toast(message, action = null, duration = 3200) {
@@ -265,8 +270,13 @@ function enterTelegramLogin() {
 
 async function boot() {
   applyPreferences();
+  const auth = await api("/api/auth/status");
+  if (auth.passwordEnabled && !auth.authenticated) {
+    showView("lock-view");
+    $("lock-password").focus();
+    return;
+  }
   const status = await api("/api/status");
-  if (!status.unlocked) return showView("access-view");
   if (!status.telegram.linked) {
     showView("telegram-view");
     if (status.startupError) showError(new AppError("The saved Telegram authorization expired. Reconnect with QR or phone; your local library and edits are safe."), null, "Reconnect Telegram");
@@ -296,10 +306,13 @@ async function boot() {
 
 function sourceSort(items) {
   const mode = $("sidebar-sort").value || "custom";
-  return [...items].sort((a, b) => mode === "name" ? a.title.localeCompare(b.title)
+  const compare = (a, b) => mode === "name" ? a.title.localeCompare(b.title)
     : mode === "recent" ? (b.lastPostAt || 0) - (a.lastPostAt || 0)
     : mode === "count" ? b.trackCount - a.trackCount
-    : a.sortOrder - b.sortOrder || a.title.localeCompare(b.title));
+    : a.sortOrder - b.sortOrder || a.title.localeCompare(b.title);
+  const pinned = items.filter((item) => item.pinnedAt).sort((a, b) => a.pinnedAt - b.pinnedAt);
+  const rest = items.filter((item) => !item.pinnedAt).sort(compare);
+  return [...pinned, ...rest];
 }
 
 function avatarMarkup(source) {
@@ -314,11 +327,14 @@ function renderSources() {
   $("liked-source").toggleAttribute("aria-current", state.likedMode);
   const temporary = state.temporarySource && !state.sources.some((item) => item.chatId === state.temporarySource.chatId)
     ? `<div class="source-link source-entry temporary-source ${state.source === state.temporarySource.chatId ? "active" : ""}" data-temporary-source="${state.temporarySource.chatId}" role="button" tabindex="0" title="${escapeHtml(state.temporarySource.title)}">${avatarMarkup(state.temporarySource)}<span class="source-copy"><strong>${escapeHtml(state.temporarySource.title)}</strong><small>Temporary · current track</small></span><span class="source-count">Live</span></div>` : "";
-  $("source-list").innerHTML = temporary + sorted.map((source) => `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${$("sidebar-sort").value === "custom" && !state.bulk}"${!state.likedMode && source.chatId === state.source ? ' aria-current="page"' : ""}>
+  $("source-list").innerHTML = temporary + sorted.map((source) => {
+    const draggable = $("sidebar-sort").value === "custom" && !state.bulk && !source.pinnedAt;
+    return `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}${source.pinnedAt ? " pinned" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${draggable}"${!state.likedMode && source.chatId === state.source ? ' aria-current="page"' : ""}>
     ${state.bulk ? `<input class="source-select" type="checkbox" data-bulk-source="${source.chatId}" ${state.selectedSources.has(source.chatId) ? "checked" : ""} aria-label="Select ${escapeHtml(source.title)}">` : avatarMarkup(source)}
-    <span class="source-copy"><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)}${source.syncError ? " · needs attention" : ""}</small></span>
-    <span class="source-actions"><span class="source-count">${source.trackCount}</span><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="false" title="Sync new tracks" aria-label="Sync new tracks from ${escapeHtml(source.title)}">${icon("sync")}</button><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="true" title="Full rescan" aria-label="Full rescan ${escapeHtml(source.title)}">${icon("repeat")}</button></span>
-  </div>`).join("");
+    <span class="source-copy"><strong>${source.pinnedAt ? `<span class="source-pin-mark" aria-hidden="true">${icon("pin")}</span>` : ""}${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)}${source.syncError ? " · needs attention" : ""}</small></span>
+    <span class="source-actions"><span class="source-count">${source.trackCount}</span><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="false" title="Sync new tracks" aria-label="Sync new tracks from ${escapeHtml(source.title)}">${icon("sync")}</button><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="true" title="Full rescan" aria-label="Full rescan ${escapeHtml(source.title)}">${icon("repeat")}</button><button class="icon-button ${source.pinnedAt ? "active" : ""}" type="button" data-pin-source="${source.chatId}" title="${source.pinnedAt ? "Unpin" : "Pin"} from top" aria-pressed="${Boolean(source.pinnedAt)}" aria-label="${source.pinnedAt ? "Unpin" : "Pin"} ${escapeHtml(source.title)}">${icon("pin")}</button></span>
+  </div>`;
+  }).join("");
   const allMusic = document.querySelector('[data-source=""]');
   allMusic?.classList.toggle("active", !state.source && !state.likedMode);
   allMusic?.toggleAttribute("aria-current", !state.source && !state.likedMode);
@@ -618,8 +634,6 @@ function setTrackUi() {
   $("like-current").setAttribute("aria-pressed", String(Boolean(track.liked)));
   $("like-current").setAttribute("aria-label", track.liked ? "Unlike current track" : "Like current track");
   const detailRows = [["Source", track.source.title], ["Album", metadata.album], ["Album artist", metadata.albumArtist], ["Genre", metadata.genre], ["Year", metadata.year || ""], ["File", track.file.name], ["Size", track.file.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""]].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
-  const speedOptions = [0.75, 1, 1.25, 1.5, 2].map((v) => `<button type="button" data-speed="${v}" class="${state.speed === v ? "active" : ""}" aria-pressed="${state.speed === v}">${v}x</button>`).join("");
-  $("track-details").innerHTML = `${detailRows}<div><dt>Speed</dt><dd><div class="segmented speed-options">${speedOptions}</div></dd></div>`;
   document.querySelector(".track-row.current")?.classList.remove("current");
   document.querySelector(`.track-row[data-track-key="${CSS.escape(track.key)}"]`)?.classList.add("current");
   if (changed && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -628,7 +642,13 @@ function setTrackUi() {
       element.animate([{ opacity: 0, transform: "translateY(5px)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: "cubic-bezier(.2,.8,.2,1)" });
     }
   }
-  if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: metadata.title, artist: metadata.artist, album: metadata.album });
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: metadata.title, artist: metadata.artist, album: metadata.album,
+      artwork: [{ src: mediaUrl(track, "cover"), sizes: "512x512", type: "image/jpeg" }],
+    });
+    try { navigator.mediaSession.setPositionState?.({ duration: audio.duration || 0, playbackRate: 1, position: 0 }); } catch {}
+  }
 }
 
 function updateTransport() {
@@ -659,7 +679,7 @@ async function loadLyrics(refresh = false) {
   lyricsController?.abort();
   lyricsController = new AbortController();
   const key = state.current.key;
-  $("lyrics-lines").innerHTML = '<div class="lyrics-skeleton"><span style="width:80%"></span><span style="width:60%"></span><span style="width:72%"></span><span style="width:45%"></span></div>'; $("lyrics-empty").hidden = true;
+  $("lyrics-lines").innerHTML = '<div class="lyrics-skeleton"><span></span><span></span><span></span><span></span></div>'; $("lyrics-empty").hidden = true;
   try {
     const lyrics = await api(`${mediaUrl(state.current, "lyrics")}${refresh ? "?refresh=true" : ""}`, { signal: lyricsController.signal });
     if (state.current?.key !== key) return;
@@ -1128,7 +1148,78 @@ async function openSettings() {
   try {
     state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality;
     const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} cached · ${(cache.bytes / 1048576).toFixed(1)} MB`;
+    const [network, auth] = await Promise.all([api("/api/network"), api("/api/auth/status")]);
+    state.network = network;
+    state.passwordEnabled = auth.passwordEnabled;
+    renderNetwork();
+    renderPasswordState();
+    showPasswordForm(null);
   } catch (error) { showError(error, openSettings); }
+}
+
+function renderNetwork() {
+  const { bindHost, activeHost, managed, inDocker } = state.network || {};
+  for (const button of document.querySelectorAll("[data-bind-host] [data-value]")) {
+    const active = button.dataset.value === bindHost;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  $("bind-host-help").textContent = bindHost === "0.0.0.0"
+    ? "Anyone on your network can open this player. Set a password below."
+    : "Loopback keeps the player reachable only from this computer.";
+
+  const notice = $("bind-restart-notice");
+  if (inDocker) {
+    notice.hidden = false;
+    notice.textContent = bindHost === "0.0.0.0"
+      ? "Docker: publish the port as \"8000:8000\" in compose.yaml, then run docker compose up -d."
+      : "Docker: publish the port as \"127.0.0.1:8000:8000\" in compose.yaml, then run docker compose up -d.";
+  } else if (activeHost && activeHost !== bindHost) {
+    notice.hidden = false;
+    notice.textContent = `Saved. Currently still serving on ${activeHost} \u2014 restart to apply.`;
+  } else if (!managed) {
+    notice.hidden = false;
+    notice.textContent = "Started without run.py, so this setting is not applied. Restart with: uv run python run.py";
+  } else {
+    notice.hidden = true;
+  }
+}
+
+function renderPasswordState() {
+  const enabled = Boolean(state.passwordEnabled);
+  $("password-state-label").textContent = enabled
+    ? "Password is on. This player asks for it before loading."
+    : "No password. Anyone who can reach this player can use it.";
+  const toggle = $("password-toggle");
+  toggle.hidden = false;
+  toggle.textContent = enabled ? "Change password" : "Set a password";
+  $("password-remove").hidden = !enabled;
+  $("sign-out").hidden = !enabled;
+}
+
+function showPasswordForm(which) {
+  $("password-status").textContent = "";
+  $("password-form").hidden = which !== "set";
+  $("password-disable-form").hidden = which !== "disable";
+  $("password-current-block").hidden = !state.passwordEnabled;
+  $("password-toggle").hidden = which !== null;
+  $("password-remove").hidden = which !== null || !state.passwordEnabled;
+  if (which === "set") ($("password-current-block").hidden ? $("password-new") : $("password-current")).focus();
+  if (which === "disable") $("password-disable-current").focus();
+}
+
+async function setBindHost(value) {
+  if (!state.network || state.network.bindHost === value) return;
+  const previous = state.network.bindHost;
+  try {
+    state.network = { ...state.network, ...await api("/api/network", { method: "PATCH", body: JSON.stringify({ bindHost: value }) }) };
+    renderNetwork();
+    toast(value === "0.0.0.0" ? "Now reachable on your network after restart" : "Now this machine only after restart");
+  } catch (error) {
+    state.network = { ...state.network, bindHost: previous };
+    renderNetwork();
+    showError(error);
+  }
 }
 
 async function saveSettings(button) {
@@ -1144,86 +1235,79 @@ async function saveSettings(button) {
   catch (error) { showError(error, () => saveSettings(button)); } finally { button.removeAttribute("aria-busy"); }
 }
 
-$("access-form").addEventListener("submit", async (event) => {
+$("bind-host-options").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-value]");
+  if (button) setBindHost(button.dataset.value);
+});
+
+$("password-toggle").addEventListener("click", () => showPasswordForm("set"));
+$("password-remove").addEventListener("click", () => showPasswordForm("disable"));
+$("password-cancel").addEventListener("click", () => showPasswordForm(null));
+$("password-disable-cancel").addEventListener("click", () => showPasswordForm(null));
+
+$("password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const input = $("app-password");
-  const errorMessage = $("access-error");
-  const button = event.currentTarget.querySelector('[type="submit"]');
-  input.setAttribute("aria-invalid", "false");
-  errorMessage.textContent = "";
-  button.disabled = true;
+  const status = $("password-status");
+  const next = $("password-new").value;
+  if (next.length < 8) return void (status.textContent = "Use at least 8 characters.");
+  if (next !== $("password-confirm").value) return void (status.textContent = "Those passwords do not match.");
+  status.textContent = "Saving\u2026";
   try {
-    await api("/api/access/login", { method: "POST", body: JSON.stringify({ password: input.value }) });
+    const result = await api("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ current: $("password-current").value, password: next }),
+    });
+    state.passwordEnabled = result.passwordEnabled;
+    for (const id of ["password-current", "password-new", "password-confirm"]) $(id).value = "";
+    renderPasswordState();
+    showPasswordForm(null);
+    toast("Password saved");
+  } catch (error) { status.textContent = error.message; }
+});
+
+$("password-disable-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const status = $("password-status");
+  status.textContent = "Removing\u2026";
+  try {
+    await api("/api/auth/password/disable", {
+      method: "POST",
+      body: JSON.stringify({ current: $("password-disable-current").value }),
+    });
+    state.passwordEnabled = false;
+    $("password-disable-current").value = "";
+    renderPasswordState();
+    showPasswordForm(null);
+    toast("Password removed");
+  } catch (error) { status.textContent = error.message; }
+});
+
+$("sign-out").addEventListener("click", async () => {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+    $("settings-dialog").close();
+    showView("lock-view");
+    $("lock-status").textContent = "";
+    $("lock-password").focus();
+  } catch (error) { showError(error); }
+});
+
+$("lock-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const field = $("lock-password");
+  const status = $("lock-status");
+  status.textContent = "Checking\u2026";
+  try {
+    await api("/api/auth/login", { method: "POST", body: JSON.stringify({ password: field.value }) });
+    field.value = "";
+    status.textContent = "";
     await boot();
   } catch (error) {
-    input.setAttribute("aria-invalid", "true");
-    errorMessage.textContent = `${error?.message || "Couldn’t unlock the player."} Check the password and try again.`;
-    input.focus();
-  } finally { button.disabled = false; }
-});
-$("app-password").addEventListener("input", () => {
-  $("app-password").setAttribute("aria-invalid", "false");
-  $("access-error").textContent = "";
-});
-$("qr-start").addEventListener("click", startQr);
-$("telegram-country").addEventListener("change", () => {
-  const option = $("telegram-country").selectedOptions[0];
-  $("dial-prefix").textContent = option?.value ? `+${option.value}` : "+";
-  if (option?.dataset.iso) {
-    localStorage.setItem("tm-country", option.dataset.iso);
-    if (!$("phone-form").hidden) $("phone-status").textContent = "Enter your number to receive a Telegram code.";
+    status.textContent = error.message;
+    field.select();
   }
 });
-$("phone-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = form.querySelector('[type="submit"]');
-  const buttonText = button.textContent;
-  let phone;
-  try { phone = phoneNumber(); } catch (error) { return showError(error); }
-  try {
-    button.setAttribute("aria-busy", "true"); button.disabled = true; button.classList.add("is-loading"); button.textContent = "Sending…";
-    clearTimeout(qrTimer); pauseQr("Switching to phone…");
-    state.flow = "";
-    const flow = await api("/api/telegram/phone", { method: "POST", body: JSON.stringify({ phone }) });
-    state.flow = flow.flowId;
-    pauseQr("Phone login in progress");
-    setLoginStage("code", `Code sent via ${String(flow.delivery || "Telegram").toLowerCase()}.`);
-  } catch (error) {
-    pauseQr("QR paused");
-    setQrStatus("Refresh QR to scan instead.");
-    showError(error, () => form.requestSubmit());
-  } finally { button.removeAttribute("aria-busy"); button.disabled = false; button.classList.remove("is-loading"); button.textContent = buttonText; }
-});
-$("code-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = event.currentTarget.querySelector('[type="submit"]');
-  try {
-    button.setAttribute("aria-busy", "true"); button.disabled = true;
-    const result = await api("/api/telegram/code", { method: "POST", body: JSON.stringify({ flowId: state.flow, code: $("telegram-code").value }) });
-    if (result.state === "ready") return boot();
-    if (result.state === "password_required") {
-      $("telegram-code").value = "";
-      return setLoginStage("twofa", "Enter your Telegram two-step verification password.");
-    }
-    if (result.state === "expired") setLoginStage("phone", "That code expired. Send a new one.");
-    if (result.error) showError(new AppError(result.error));
-  } catch (error) { showError(error); }
-  finally { button.removeAttribute("aria-busy"); button.disabled = false; }
-});
-$("twofa-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = event.currentTarget.querySelector('[type="submit"]');
-  try {
-    button.setAttribute("aria-busy", "true"); button.disabled = true;
-    const result = await api("/api/telegram/password", { method: "POST", body: JSON.stringify({ flowId: state.flow, password: $("telegram-password").value }) });
-    if (result.state === "ready") return boot();
-    $("telegram-password").value = "";
-    if (result.error) showError(new AppError(result.error));
-    requestAnimationFrame(() => $("telegram-password").focus());
-  } catch (error) { showError(error); }
-  finally { button.removeAttribute("aria-busy"); button.disabled = false; }
-});
+
 function restartPhoneLogin() { state.flow = ""; $("telegram-code").value = ""; $("telegram-password").value = ""; setLoginStage("phone", "Choose your country and send a new code."); }
 $("change-number").addEventListener("click", restartPhoneLogin);
 $("change-number-2fa").addEventListener("click", restartPhoneLogin);
@@ -1285,6 +1369,8 @@ $("source-list").addEventListener("dragend", () => { cleanupSourceDrag(); dragge
 $("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey, like).catch(showError); } });
 $("track-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-track-key]"); if (row) { event.preventDefault(); trackMenu(row.dataset.trackKey, event.clientX, event.clientY); } });
 $("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling?.classList.remove("is-covered"); } }, true);
+// The row may be replaced by an innerHTML re-render between load and the rAF
+// callback, which detaches the image and leaves nextElementSibling null.
 $("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) requestAnimationFrame(() => { event.target.classList.add("is-ready"); event.target.nextElementSibling?.classList.add("is-covered"); }); }, true);
 $("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(); }, 220); });
 $("library").addEventListener("scroll", () => {
@@ -1333,21 +1419,6 @@ function setVolume(value) {
 $("volume").addEventListener("input", () => setVolume($("volume").value));
 $("volume-toggle").addEventListener("click", () => setVolume(audio.volume ? 0 : lastAudibleVolume));
 setVolume(localStorage.getItem("tm-volume") ?? .8);
-audio.playbackRate = state.speed;
-$("track-details").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-speed]");
-  if (!button) return;
-  const value = Number(button.dataset.speed);
-  if (!value) return;
-  state.speed = value;
-  audio.playbackRate = value;
-  localStorage.setItem("tm-speed", String(value));
-  for (const sibling of $("track-details").querySelectorAll("[data-speed]")) {
-    const active = Number(sibling.dataset.speed) === value;
-    sibling.classList.toggle("active", active);
-    sibling.setAttribute("aria-pressed", String(active));
-  }
-});
 $("progress").addEventListener("input", () => {
   const progress = $("progress"), tooltip = $("progress-tooltip");
   const max = Number(progress.max) || 1;
@@ -1426,4 +1497,5 @@ $("open-nav").addEventListener("click", () => { $("source-rail").classList.add("
 installResizer("left-resizer", "left"); installResizer("right-resizer", "right");
 addEventListener("pagehide", persistPlayerState); addEventListener("beforeunload", persistPlayerState);
 
-boot().catch((error) => { showView("access-view"); showError(error, boot); });
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+boot().catch((error) => { showError(error, boot); });

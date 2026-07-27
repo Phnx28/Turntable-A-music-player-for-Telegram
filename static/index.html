@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f7f7f4">
+    <link rel="manifest" href="/manifest.webmanifest">
     <title>Telegram Turntable</title>
     <link rel="stylesheet" href="/assets/style.css">
   </head>
@@ -34,21 +35,24 @@
       <symbol id="i-share" viewBox="0 0 24 24"><path fill="currentColor" d="M4 12a8 8 0 1 0 16 0z" opacity=".5"/><path fill="var(--accent)" fill-rule="evenodd" d="M15.53 7.53a.75.75 0 0 1-1.06 0l-1.72-1.72V14a.75.75 0 0 1-1.5 0V5.81L9.53 7.53a.75.75 0 0 1-1.06-1.06l3-3a.75.75 0 0 1 1.06 0l3 3a.75.75 0 0 1 0 1.06" clip-rule="evenodd"/></symbol>
       <symbol id="i-locate" viewBox="0 0 24 24"><path fill="currentColor" d="M19.717 20.362C21.143 19.585 22 18.587 22 17.5c0-1.152-.963-2.204-2.546-3C17.623 13.58 14.962 13 12 13s-5.623.58-7.454 1.5C2.963 15.296 2 16.348 2 17.5s.963 2.204 2.546 3C6.377 21.42 9.038 22 12 22c3.107 0 5.882-.637 7.717-1.638" opacity=".5"/><path fill="var(--accent)" fill-rule="evenodd" d="M5 8.515C5 4.917 8.134 2 12 2s7 2.917 7 6.515c0 3.57-2.234 7.735-5.72 9.225a3.28 3.28 0 0 1-2.56 0C7.234 16.25 5 12.084 5 8.515M12 11a2 2 0 1 0 0-4a2 2 0 0 0 0 4" clip-rule="evenodd"/></symbol>
       <symbol id="i-chevron-up" viewBox="0 0 24 24"><path fill="var(--accent)" d="m8.303 11.596l3.327-3.431a.5.5 0 0 1 .74 0l6.43 6.63c.401.414.158 1.205-.37 1.205h-5.723z"/><path fill="currentColor" d="M11.293 16H5.57c-.528 0-.771-.791-.37-1.205l2.406-2.482z" opacity=".5"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M14.5 2.25a.75.75 0 0 0-1.06 0l-2.66 2.66l-.47.47H7a.75.75 0 0 0-.75.75v3.31l-2.72 2.72a.75.75 0 0 0 0 1.06l4.69 4.69L4 22.25l1.5 1.5l4.34-4.22l4.69 4.69a.75.75 0 0 0 1.06 0l2.72-2.72H17.5a.75.75 0 0 0 .75-.75v-3.31l.47-.47l2.66-2.66a.75.75 0 0 0 0-1.06L15.5 7.31zM15.44 13l-2.69 2.69a.75.75 0 0 1-1.06 0L9 13l1.06-1.06a.75.75 0 0 0 0-1.06L9 9.81l1.75-1.75h3.5L16 9.81l-1.06 1.06a.75.75 0 0 0 0 1.06z" clip-rule="evenodd" opacity=".5"/><path fill="var(--accent)" d="M14.62 11.06a.75.75 0 0 0 0-1.06L13.56 8.94a.75.75 0 0 0-1.06 0L10.81 10.62a.75.75 0 0 0 0 1.06l1.06 1.06a.75.75 0 0 0 1.06 0z"/></symbol>
     </svg>
 
     <a href="#library" class="skip-link">Skip to content</a>
-    <main id="access-view" class="gate" hidden>
-      <section class="gate-panel" aria-labelledby="access-title">
-        <p class="eyebrow">Personal music index</p>
-        <h1 id="access-title">Telegram Turntable</h1>
-        <p class="gate-copy">Unlock the player. Your Telegram session stays encrypted on this server.</p>
-        <form id="access-form" class="stack">
-          <label for="app-password">App password</label>
-          <input id="app-password" name="password" type="password" autocomplete="current-password" aria-describedby="access-help access-error" aria-invalid="false" required autofocus>
-          <p id="access-help" class="field-help access-help">Use the password configured for this player.</p>
-          <p id="access-error" class="form-error" role="alert"></p>
-          <button class="button primary" type="submit">Unlock player</button>
+
+    <main id="lock-view" class="gate" hidden>
+      <section class="gate-panel login-panel lock-panel" aria-labelledby="lock-title">
+        <header class="login-heading">
+          <p class="eyebrow">Locked</p>
+          <h1 id="lock-title">Enter your password</h1>
+          <p class="gate-copy">This player is password protected.</p>
+        </header>
+        <form id="lock-form" class="stack compact">
+          <label for="lock-password">Password</label>
+          <input id="lock-password" type="password" autocomplete="current-password" placeholder="Your password" required autofocus>
+          <button class="button primary" type="submit">Unlock</button>
         </form>
+        <p id="lock-status" class="login-status small-copy" role="status" aria-live="polite" aria-atomic="true"></p>
       </section>
       <div class="gate-signal" aria-hidden="true"></div>
     </main>
@@ -303,7 +307,7 @@
         <button class="icon-button" type="button" data-close="source-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <p class="small-copy">Each selected chat becomes a playlist. Groups are intentionally left out.</p>
-      <div class="discover-tools"><label>Sort <select id="discover-sort"><option value="recent">Latest post</option><option value="count">Music files</option><option value="name">Name</option></select></label><span id="discover-progress" class="small-copy"></span></div>
+      <div class="discover-tools"><label>Sort <select id="discover-sort"><option value="recent">Latest post</option><option value="count">Music files</option><option value="name">Name</option></select></label><div class="discover-filters"><input id="discover-search" type="search" placeholder="Filter by name"><select id="discover-kind-filter"><option value="">All types</option><option value="channel">Channel</option><option value="bot">Bot</option><option value="private">Private chat</option><option value="saved">Saved Messages</option></select></div><span id="discover-progress" class="small-copy"></span></div>
       <div id="discover-list" class="discover-list"></div>
     </dialog>
 
@@ -364,7 +368,7 @@
         <div><p class="eyebrow">Player preferences</p><h2>Settings</h2></div>
         <button class="icon-button" type="button" data-close="settings-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
-      <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
+      <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="network">Network</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
       <section data-settings-pane="appearance">
       <fieldset class="choice-group first">
         <legend>Theme</legend>
@@ -395,6 +399,63 @@
         <a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">Read the MusicBrainz API guide ↗</a>
         <div class="setting-block"><label for="default-cover-quality"><strong>Default cover quality</strong></label><select id="default-cover-quality"><option value="500">Standard · 500 px</option><option value="1200">High · 1200 px</option><option value="original">Original</option></select></div>
         <div class="form-actions"><button class="button primary save-settings" type="button">Save metadata settings</button><button id="test-musicbrainz" class="button" type="button">Test connection</button></div>
+      </section>
+      <section data-settings-pane="network" hidden>
+        <fieldset class="choice-group first">
+          <legend>Who can reach this player</legend>
+          <div class="segmented" id="bind-host-options" data-bind-host>
+            <button type="button" data-value="127.0.0.1">This machine only</button><button type="button" data-value="0.0.0.0">Anyone on my network</button>
+          </div>
+          <p class="field-help" id="bind-host-help">Loopback keeps the player reachable only from this computer.</p>
+          <p id="bind-restart-notice" class="restart-notice" role="status" hidden></p>
+        </fieldset>
+
+        <fieldset class="choice-group">
+          <legend>Password</legend>
+          <div class="password-state">
+            <span id="password-state-label" class="small-copy">Checking…</span>
+            <span class="password-actions">
+              <button id="password-toggle" class="button" type="button" hidden></button>
+              <button id="password-remove" class="text-button danger" type="button" hidden>Remove</button>
+            </span>
+          </div>
+
+          <form id="password-form" class="stack compact password-form" hidden>
+            <div id="password-current-block" class="setting-block" hidden>
+              <label for="password-current"><strong>Current password</strong></label>
+              <input id="password-current" type="password" autocomplete="current-password" placeholder="Current password">
+            </div>
+            <div class="setting-block">
+              <label for="password-new"><strong>New password</strong><span>At least 8 characters. Saving signs out every other device.</span></label>
+              <input id="password-new" type="password" autocomplete="new-password" placeholder="New password" minlength="8">
+            </div>
+            <div class="setting-block">
+              <label for="password-confirm"><strong>Confirm new password</strong></label>
+              <input id="password-confirm" type="password" autocomplete="new-password" placeholder="Repeat new password" minlength="8">
+            </div>
+            <div class="form-actions">
+              <button class="button primary" type="submit">Save password</button>
+              <button id="password-cancel" class="text-button" type="button">Cancel</button>
+            </div>
+          </form>
+
+          <form id="password-disable-form" class="stack compact password-form" hidden>
+            <div class="setting-block">
+              <label for="password-disable-current"><strong>Confirm your password</strong><span>Removing the password lets anyone who can reach this player use it.</span></label>
+              <input id="password-disable-current" type="password" autocomplete="current-password" placeholder="Current password">
+            </div>
+            <div class="form-actions">
+              <button class="button danger" type="submit">Remove password</button>
+              <button id="password-disable-cancel" class="text-button" type="button">Cancel</button>
+            </div>
+          </form>
+
+          <p id="password-status" class="login-status small-copy" role="status" aria-live="polite" aria-atomic="true"></p>
+        </fieldset>
+
+        <div class="danger-zone">
+          <button id="sign-out" class="text-button" type="button" hidden>Sign out of this browser</button>
+        </div>
       </section>
       <section data-settings-pane="account" hidden>
       <div class="danger-zone">

@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
-import secrets
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -16,7 +12,7 @@ from urllib.parse import quote
 
 import httpx
 from cryptography.fernet import Fernet
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -25,12 +21,14 @@ from pydantic import BaseModel, Field
 from telethon.errors import RPCError
 
 from core import (
-    ByteRange,
+    BIND_HOSTS,
+    SESSION_TTL_SECONDS,
     Database,
     RangeNotSatisfiable,
     parse_range_header,
     safe_filename,
     split_track_key,
+    verify_password,
 )
 from external import ExternalServices
 from telegram_service import TelegramService
@@ -49,7 +47,6 @@ _DEFAULT_API_HASH = "7449770300bb823d8cc388103a973942"
 class Settings:
     api_id: int
     api_hash: str
-    app_password: str
     encryption_key: str
     data_directory: Path
     musicbrainz_contact: str
@@ -82,7 +79,6 @@ class Settings:
         return cls(
             api_id=api_id,
             api_hash=os.environ.get("TELEGRAM_API_HASH", _DEFAULT_API_HASH),
-            app_password=os.environ.get("APP_PASSWORD", ""),
             encryption_key=encryption_key,
             data_directory=data_directory,
             musicbrainz_contact=os.environ.get("MUSICBRAINZ_CONTACT", ""),
@@ -90,8 +86,28 @@ class Settings:
         )
 
 
-class PasswordBody(BaseModel):
+SESSION_COOKIE = "tt_session"
+
+# Endpoints reachable without a session: the gate itself, the health probe, and the
+# static shell that renders the login form.
+PUBLIC_PATHS = {"/", "/healthz", "/sw.js", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login"}
+
+
+class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
+
+
+class PasswordBody(BaseModel):
+    current: str = Field(default="", max_length=1024)
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class PasswordDisableBody(BaseModel):
+    current: str = Field(min_length=1, max_length=1024)
+
+
+class BindHostBody(BaseModel):
+    bindHost: str = Field(pattern=r"^(127\.0\.0\.1|0\.0\.0\.0)$")
 
 
 class PhoneBody(BaseModel):
@@ -114,6 +130,10 @@ class SourceBody(BaseModel):
 
 class SourceSelectionBody(BaseModel):
     selected: bool
+
+
+class SourcePinBody(BaseModel):
+    pinned: bool
 
 
 class BulkSourcesBody(BaseModel):
@@ -192,44 +212,38 @@ class PrefetchBody(BaseModel):
     keys: list[str] = Field(max_length=20)
 
 
-def _cookie_key(settings: Settings) -> bytes:
-    return hashlib.sha256(b"telegram-music-cookie\0" + settings.encryption_key.encode()).digest()
+# Login throttle: in-memory is correct here because sessions live in SQLite and a
+# restart clearing the counter only costs an attacker the restart itself.
+_LOGIN_WINDOW_SECONDS = 60
+_LOGIN_MAX_ATTEMPTS = 5
+_login_failures: dict[str, list[float]] = {}
 
 
-def _make_cookie(settings: Settings) -> str:
-    expires = int(time.time()) + 30 * 24 * 60 * 60
-    payload = f"{expires}.{secrets.token_urlsafe(24)}"
-    signature = hmac.new(_cookie_key(settings), payload.encode(), hashlib.sha256).digest()
-    return f"{payload}.{base64.urlsafe_b64encode(signature).decode().rstrip('=')}"
+def _login_allowed(client: str) -> bool:
+    cutoff = time.monotonic() - _LOGIN_WINDOW_SECONDS
+    recent = [stamp for stamp in _login_failures.get(client, []) if stamp > cutoff]
+    if recent:
+        _login_failures[client] = recent
+    else:
+        _login_failures.pop(client, None)
+    return len(recent) < _LOGIN_MAX_ATTEMPTS
 
 
-def _valid_cookie(settings: Settings, value: str | None) -> bool:
-    if not value:
-        return False
-    payload, separator, signature_b64 = value.rpartition(".")
-    if not separator or not signature_b64:
-        return False
-    expires_str, sep, token = payload.partition(".")
-    if not sep or not token or not expires_str:
-        return False
-    try:
-        expires = int(expires_str)
-    except ValueError:
-        return False
-    if expires < int(time.time()):
-        return False
-    try:
-        padding = "=" * (-len(signature_b64) % 4)
-        signature = base64.urlsafe_b64decode(signature_b64 + padding)
-        expected = hmac.new(_cookie_key(settings), payload.encode(), hashlib.sha256).digest()
-    except Exception:
-        return False
-    return hmac.compare_digest(signature, expected)
+def _record_login_failure(client: str) -> None:
+    _login_failures.setdefault(client, []).append(time.monotonic())
+    if len(_login_failures) > 1000:
+        cutoff = time.monotonic() - _LOGIN_WINDOW_SECONDS
+        for key, stamps in list(_login_failures.items()):
+            if not [stamp for stamp in stamps if stamp > cutoff]:
+                _login_failures.pop(key, None)
+
+
+def _clear_login_failures(client: str) -> None:
+    _login_failures.pop(client, None)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    login_attempts: dict[str, list[float]] = {}
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -268,10 +282,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Response:
-        if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path.startswith("/api/"):
+        path = request.url.path
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and path.startswith("/api/"):
+            # Fail closed: a cross-site request must prove same-origin intent. Browsers
+            # always send one of these on a state-changing fetch; an attacker page can
+            # set neither. A missing pair is treated as hostile, not as trusted.
+            fetch_site = request.headers.get("sec-fetch-site")
             origin = request.headers.get("origin")
-            if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
-                return JSONResponse({"detail": "Request origin is not allowed"}, status_code=403)
+            allowed_origin = str(request.base_url).rstrip("/")
+            if fetch_site is not None:
+                same_origin = fetch_site in {"same-origin", "none"}
+            elif origin is not None:
+                same_origin = origin.rstrip("/") == allowed_origin
+            else:
+                same_origin = False
+            if not same_origin:
+                return JSONResponse(
+                    {"error": {"code": "forbidden", "message": "Request origin is not allowed", "retryable": False}},
+                    status_code=403,
+                )
+
+        if path.startswith("/api/") and path not in PUBLIC_PATHS:
+            database_ = request.app.state.database
+            if database_.get_password_hash() and not database_.session_valid(
+                request.cookies.get(SESSION_COOKIE, "")
+            ):
+                return JSONResponse(
+                    {"error": {"code": "unauthorized", "message": "Sign in to continue", "retryable": False}},
+                    status_code=401,
+                )
+
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -282,30 +322,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        # ponytail: rotate the session cookie on each authenticated /api/ call so a leaked
-        # token stops being useful after the legitimate user's next request; skipped on
-        # static assets (path != /api/) and the logout endpoint (would re-issue what it
-        # just deleted)
-        if (
-            request.url.path.startswith("/api/")
-            and request.url.path != "/api/access/session"
-            and _valid_cookie(settings, request.cookies.get("tm_session"))
-        ):
-            response.set_cookie(
-                "tm_session",
-                _make_cookie(settings),
-                max_age=30 * 24 * 60 * 60,
-                httponly=True,
-                secure=settings.cookie_secure,
-                samesite="strict",
-                path="/",
-            )
         # ponytail: long cache on fingerprinted /assets/; safe because
         # index.html doesn't list the asset paths — the app fetches them by
         # name and content changes ship under a new filename. Upgrade path:
         # add ?v= or hashed names if the wiring ever changes.
         if request.url.path.startswith("/assets/") and response.status_code == 200:
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
     @application.exception_handler(KeyError)
@@ -357,10 +379,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=422,
         )
 
-    def require_access(request: Request) -> None:
-        if not _valid_cookie(settings, request.cookies.get("tm_session")):
-            raise HTTPException(status_code=401, detail="Unlock the app first")
-
     def database(request: Request) -> Database:
         return request.app.state.database
 
@@ -381,99 +399,183 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(ROOT / "static" / "index.html")
 
+    @application.get("/sw.js")
+    async def service_worker() -> FileResponse:
+        return FileResponse(
+            ROOT / "static" / "sw.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+        )
+
+    @application.get("/manifest.webmanifest")
+    async def manifest() -> FileResponse:
+        return FileResponse(
+            ROOT / "static" / "manifest.webmanifest",
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
     @application.get("/healthz")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health(request: Request) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "telegram": telegram(request).account_status()["linked"],
+            "database": database(request).ping(),
+        }
+
+    @application.get("/api/network")
+    async def network_get(request: Request) -> dict[str, Any]:
+        return {
+            "bindHost": str(database(request).get_settings()["bindHost"]),
+            "activeHost": os.environ.get("TURNTABLE_ACTIVE_HOST", ""),
+            "managed": os.environ.get("TURNTABLE_MANAGED") == "1",
+            "inDocker": Path("/.dockerenv").exists(),
+        }
+
+    @application.patch("/api/network")
+    async def network_save(request: Request, body: BindHostBody) -> dict[str, Any]:
+        store = database(request)
+        store.save_settings({"bindHost": body.bindHost})
+        return {
+            "bindHost": body.bindHost,
+            "activeHost": os.environ.get("TURNTABLE_ACTIVE_HOST", ""),
+            "managed": os.environ.get("TURNTABLE_MANAGED") == "1",
+            "inDocker": Path("/.dockerenv").exists(),
+            "restartRequired": body.bindHost != os.environ.get("TURNTABLE_ACTIVE_HOST", body.bindHost),
+        }
+
+    def _set_session_cookie(response: JSONResponse, token: str) -> None:
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=SESSION_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=settings.cookie_secure,
+            path="/",
+        )
+
+    @application.get("/api/auth/status")
+    async def auth_status(request: Request) -> dict[str, Any]:
+        store = database(request)
+        enabled = bool(store.get_password_hash())
+        return {
+            "passwordEnabled": enabled,
+            "authenticated": not enabled
+            or store.session_valid(request.cookies.get(SESSION_COOKIE, "")),
+        }
+
+    @application.post("/api/auth/login")
+    async def auth_login(request: Request, body: LoginBody) -> Response:
+        store = database(request)
+        encoded = store.get_password_hash()
+        if not encoded:
+            return JSONResponse({"ok": True, "passwordEnabled": False})
+        client = request.client.host if request.client else "unknown"
+        if not _login_allowed(client):
+            return JSONResponse(
+                {"error": {"code": "rate_limited", "message": "Too many attempts. Wait a minute and try again.", "retryable": True}},
+                status_code=429,
+            )
+        if not verify_password(body.password, encoded):
+            _record_login_failure(client)
+            LOGGER.warning("Failed sign-in attempt from %s", client)
+            return JSONResponse(
+                {"error": {"code": "unauthorized", "message": "That password is incorrect", "retryable": False}},
+                status_code=401,
+            )
+        _clear_login_failures(client)
+        response = JSONResponse({"ok": True, "passwordEnabled": True})
+        _set_session_cookie(response, store.create_session())
+        return response
+
+    @application.post("/api/auth/logout")
+    async def auth_logout(request: Request) -> Response:
+        database(request).delete_session(request.cookies.get(SESSION_COOKIE, ""))
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    @application.post("/api/auth/password")
+    async def auth_set_password(request: Request, body: PasswordBody) -> Response:
+        store = database(request)
+        existing = store.get_password_hash()
+        if existing and not verify_password(body.current, existing):
+            return JSONResponse(
+                {"error": {"code": "unauthorized", "message": "That current password is incorrect", "retryable": False}},
+                status_code=401,
+            )
+        store.set_password(body.password)
+        # set_password revokes every session, including this one; re-issue so the
+        # caller who just set the password is not immediately locked out.
+        response = JSONResponse({"ok": True, "passwordEnabled": True})
+        _set_session_cookie(response, store.create_session())
+        return response
+
+    @application.post("/api/auth/password/disable")
+    async def auth_disable_password(request: Request, body: PasswordDisableBody) -> Response:
+        store = database(request)
+        existing = store.get_password_hash()
+        if not existing:
+            return JSONResponse({"ok": True, "passwordEnabled": False})
+        if not verify_password(body.current, existing):
+            return JSONResponse(
+                {"error": {"code": "unauthorized", "message": "That password is incorrect", "retryable": False}},
+                status_code=401,
+            )
+        store.clear_password()
+        response = JSONResponse({"ok": True, "passwordEnabled": False})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
 
     @application.get("/api/status")
     async def status(request: Request) -> dict[str, Any]:
-        unlocked = _valid_cookie(settings, request.cookies.get("tm_session"))
-        account = telegram(request).account_status() if unlocked else {"linked": False}
+        account = telegram(request).account_status()
         return {
-            "unlocked": unlocked,
+            "unlocked": True,
             "telegram": account,
-            "startupError": request.app.state.startup_error if unlocked and not account["linked"] else None,
+            "startupError": request.app.state.startup_error if not account["linked"] else None,
         }
 
-    @application.post("/api/access/login")
-    async def access_login(request: Request, body: PasswordBody) -> Response:
-        client_ip = request.client.host if request.client else "unknown"
-        now = time.monotonic()
-        # ponytail: full sweep when dict exceeds 1000 entries; per-bucket pruning handles returning IPs
-        if len(login_attempts) > 1000:
-            for ip in list(login_attempts):
-                login_attempts[ip] = [t for t in login_attempts[ip] if now - t < 15 * 60]
-                if not login_attempts[ip]:
-                    del login_attempts[ip]
-        recent = [stamp for stamp in login_attempts.get(client_ip, []) if now - stamp < 15 * 60]
-        if len(recent) >= 5:
-            raise HTTPException(status_code=429, detail="Too many attempts; retry in 15 minutes")
-        if recent:
-            login_attempts[client_ip] = recent
-        else:
-            login_attempts.pop(client_ip, None)
-        if not hmac.compare_digest(body.password.encode(), settings.app_password.encode()):
-            recent.append(now)
-            login_attempts[client_ip] = recent
-            raise HTTPException(status_code=401, detail="The app password is incorrect")
-        login_attempts.pop(client_ip, None)
-        response = JSONResponse({"ok": True})
-        response.set_cookie(
-            "tm_session",
-            _make_cookie(settings),
-            max_age=30 * 24 * 60 * 60,
-            httponly=True,
-            secure=settings.cookie_secure,
-            samesite="strict",
-            path="/",
-        )
-        return response
-
-    @application.delete("/api/access/session", dependencies=[Depends(require_access)])
-    async def access_logout() -> Response:
-        response = JSONResponse({"ok": True})
-        response.delete_cookie("tm_session", path="/")
-        return response
-
-    @application.post("/api/telegram/qr", dependencies=[Depends(require_access)])
+    @application.post("/api/telegram/qr")
     async def telegram_qr(request: Request) -> dict[str, Any]:
         return await telegram(request).start_qr_login()
 
-    @application.get("/api/telegram/countries", dependencies=[Depends(require_access)])
+    @application.get("/api/telegram/countries")
     async def telegram_countries(request: Request) -> list[dict[str, str]]:
         return await telegram(request).countries()
 
-    @application.get("/api/telegram/flow/{flow_id}", dependencies=[Depends(require_access)])
+    @application.get("/api/telegram/flow/{flow_id}")
     async def telegram_flow(request: Request, flow_id: str) -> dict[str, Any]:
         return telegram(request).flow_status(flow_id)
 
-    @application.post("/api/telegram/phone", dependencies=[Depends(require_access)])
+    @application.post("/api/telegram/phone")
     async def telegram_phone(request: Request, body: PhoneBody) -> dict[str, Any]:
         return await telegram(request).start_phone_login(body.phone)
 
-    @application.post("/api/telegram/code", dependencies=[Depends(require_access)])
+    @application.post("/api/telegram/code")
     async def telegram_code(request: Request, body: CodeBody) -> dict[str, Any]:
         return await telegram(request).submit_phone_code(body.flowId, body.code)
 
-    @application.post("/api/telegram/password", dependencies=[Depends(require_access)])
+    @application.post("/api/telegram/password")
     async def telegram_password(request: Request, body: TelegramPasswordBody) -> dict[str, Any]:
         return await telegram(request).submit_password(body.flowId, body.password)
 
-    @application.delete("/api/telegram/session", dependencies=[Depends(require_access)])
+    @application.delete("/api/telegram/session")
     async def telegram_disconnect(request: Request) -> dict[str, bool]:
         await telegram(request).disconnect_account()
         return {"ok": True}
 
-    @application.get("/api/sources", dependencies=[Depends(require_access)])
+    @application.get("/api/sources")
     def sources(request: Request) -> list[dict[str, Any]]:
         return database(request).list_sources()
 
-    @application.patch("/api/sources/order", dependencies=[Depends(require_access)])
+    @application.patch("/api/sources/order")
     async def source_order(request: Request, body: SourceOrderBody) -> dict[str, bool]:
         database(request).set_source_order(body.chatIds)
         return {"ok": True}
 
-    @application.post("/api/sources/bulk-select", dependencies=[Depends(require_access)])
+    @application.post("/api/sources/bulk-select")
     async def source_bulk_select(request: Request, body: BulkSourcesBody) -> dict[str, bool]:
         database(request).set_sources_selected(body.chatIds, body.selected)
         if not body.selected:
@@ -481,61 +583,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await telegram(request).set_source_selected(chat_id, False)
         return {"ok": True}
 
-    @application.get("/api/sources/discover", dependencies=[Depends(require_access)])
+    @application.get("/api/sources/discover")
     async def discover(request: Request) -> list[dict[str, Any]]:
         return await telegram(request).discover_sources()
 
-    @application.post("/api/sources/discover/counts", dependencies=[Depends(require_access)])
+    @application.post("/api/sources/discover/counts")
     async def discover_counts(request: Request) -> dict[str, Any]:
         sources = await telegram(request).discover_sources()
         return telegram(request).start_source_counts(sources)
 
-    @application.post("/api/sources", dependencies=[Depends(require_access)])
+    @application.post("/api/sources")
     async def source_add(request: Request, body: SourceBody) -> dict[str, Any]:
         return await telegram(request).add_source(body.chatId)
 
-    @application.patch("/api/sources/{chat_id}", dependencies=[Depends(require_access)])
+    @application.patch("/api/sources/{chat_id}")
     async def source_select(
         request: Request, chat_id: str, body: SourceSelectionBody
     ) -> dict[str, Any]:
         return await telegram(request).set_source_selected(chat_id, body.selected)
 
-    @application.delete("/api/sources/{chat_id}", dependencies=[Depends(require_access)])
+    @application.patch("/api/sources/{chat_id}/pin")
+    def source_pin(request: Request, chat_id: str, body: SourcePinBody) -> dict[str, Any]:
+        database(request).set_source_pinned(chat_id, body.pinned)
+        return {"ok": True}
+
+    @application.delete("/api/sources/{chat_id}")
     async def source_remove(request: Request, chat_id: str) -> dict[str, bool]:
         if not database(request).get_source(chat_id):
             raise KeyError("Source not found")
         await telegram(request).set_source_selected(chat_id, False)
         return {"ok": True}
 
-    @application.post("/api/sources/{chat_id}/sync", dependencies=[Depends(require_access)])
+    @application.post("/api/sources/{chat_id}/sync")
     async def source_sync(request: Request, chat_id: str, body: SyncBody) -> dict[str, Any]:
         return telegram(request).start_sync(chat_id, full=body.full)
 
-    @application.post("/api/sources/sync-all", dependencies=[Depends(require_access)])
+    @application.post("/api/sources/sync-all")
     async def sources_sync_all(request: Request) -> dict[str, bool]:
         await telegram(request).sync_all()
         return {"ok": True}
 
-    @application.post("/api/sources/{chat_id}/preview", dependencies=[Depends(require_access)])
+    @application.post("/api/sources/{chat_id}/preview")
     async def source_preview(request: Request, chat_id: str) -> dict[str, Any]:
         return telegram(request).start_preview(chat_id)
 
-    @application.get("/api/jobs/{job_id}", dependencies=[Depends(require_access)])
+    @application.get("/api/jobs/{job_id}")
     async def job_status(request: Request, job_id: str) -> dict[str, Any]:
         return telegram(request).job_status(job_id)
 
-    @application.delete("/api/jobs/{job_id}", dependencies=[Depends(require_access)])
+    @application.delete("/api/jobs/{job_id}")
     async def job_cancel(request: Request, job_id: str) -> dict[str, Any]:
         return telegram(request).cancel_job(job_id)
 
-    @application.get("/api/sources/{chat_id}/avatar", dependencies=[Depends(require_access)])
+    @application.get("/api/sources/{chat_id}/avatar")
     async def source_avatar(request: Request, chat_id: str) -> Response:
         content = await telegram(request).avatar(chat_id)
         if not content:
             return Response(status_code=404, headers={"Cache-Control": "private, max-age=86400"})
         return Response(content, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
-    @application.get("/api/tracks", dependencies=[Depends(require_access)])
+    @application.get("/api/tracks")
     def tracks(
         request: Request,
         source: str | None = None,
@@ -549,19 +656,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source, q[:200], offset, limit, liked, temporary
         )
 
-    @application.post("/api/tracks/summaries", dependencies=[Depends(require_access)])
+    @application.post("/api/tracks/summaries")
     def track_summaries(request: Request, body: TrackKeysBody) -> dict[str, Any]:
         return {"items": database(request).track_summaries(body.keys)}
 
-    @application.get("/api/library/stats", dependencies=[Depends(require_access)])
+    @application.get("/api/library/stats")
     def library_stats(request: Request) -> dict[str, int]:
         return {"likedCount": database(request).liked_count()}
 
-    @application.post("/api/search/telegram", dependencies=[Depends(require_access)])
+    @application.post("/api/search/telegram")
     async def telegram_search(request: Request, body: TelegramSearchBody) -> dict[str, Any]:
         return await telegram(request).global_music_search(body.query, body.limit)
 
-    @application.get("/api/tracks/{key}/position", dependencies=[Depends(require_access)])
+    @application.get("/api/tracks/{key}/position")
     def track_position(
         request: Request,
         key: str,
@@ -576,24 +683,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         }
 
-    @application.get("/api/tracks/{key}", dependencies=[Depends(require_access)])
+    @application.get("/api/tracks/{key}")
     async def track_detail(request: Request, key: str) -> dict[str, Any]:
         return get_track(request, key)
 
-    @application.patch("/api/tracks/{key}/like", dependencies=[Depends(require_access)])
+    @application.patch("/api/tracks/{key}/like")
     def track_like(request: Request, key: str, body: LikeBody) -> dict[str, Any]:
         get_track(request, key)
         return database(request).set_liked(key, body.liked)
 
-    @application.get("/api/telegram/contacts", dependencies=[Depends(require_access)])
+    @application.get("/api/telegram/contacts")
     async def telegram_contacts(request: Request) -> list[dict[str, Any]]:
         return await telegram(request).contacts()
 
-    @application.post("/api/tracks/{key}/saved-messages", dependencies=[Depends(require_access)])
+    @application.post("/api/tracks/{key}/saved-messages")
     async def save_to_telegram(request: Request, key: str) -> dict[str, Any]:
         return await telegram(request).forward_track(get_track(request, key))
 
-    @application.post("/api/tracks/{key}/share", dependencies=[Depends(require_access)])
+    @application.post("/api/tracks/{key}/share")
     async def share_track(request: Request, key: str, body: ShareBody) -> dict[str, Any]:
         return await telegram(request).forward_track(get_track(request, key), body.recipientId)
 
@@ -659,12 +766,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.api_route(
-        "/api/tracks/{key}/audio", methods=["GET", "HEAD"], dependencies=[Depends(require_access)]
-    )
+        "/api/tracks/{key}/audio", methods=["GET", "HEAD"]    )
     async def audio(request: Request, key: str) -> Response:
         return await media_response(request, key)
 
-    @application.get("/api/tracks/{key}/download", dependencies=[Depends(require_access)])
+    @application.get("/api/tracks/{key}/download")
     async def download(request: Request, key: str) -> Response:
         item = get_track(request, key)
         if tagged := await telegram(request).tagged_download(item):
@@ -682,7 +788,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return await media_response(request, key, download=True)
 
-    @application.get("/api/tracks/{key}/cover", dependencies=[Depends(require_access)])
+    @application.get("/api/tracks/{key}/cover")
     async def cover(request: Request, key: str, quality: str = "default") -> Response:
         item = get_track(request, key)
         artwork = item["metadata"].get("artworkPath")
@@ -706,20 +812,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Cache-Control": "private, max-age=86400", "Content-Encoding": "identity"},
         )
 
-    @application.patch("/api/tracks/{key}/metadata", dependencies=[Depends(require_access)])
+    @application.patch("/api/tracks/{key}/metadata")
     async def metadata_patch(request: Request, key: str, body: MetadataPatchBody) -> dict[str, Any]:
         item = get_track(request, key)
         return database(request).save_metadata_patch(
             item["chatId"], item["messageId"], body.set, body.clear
         )
 
-    @application.post("/api/tracks/{key}/metadata/search", dependencies=[Depends(require_access)])
+    @application.post("/api/tracks/{key}/metadata/search")
     async def metadata_search(
         request: Request, key: str, body: MetadataSearchBody
     ) -> list[dict[str, Any]]:
         return await external(request).metadata_candidates(get_track(request, key), body.refresh)
 
-    @application.post("/api/tracks/{key}/metadata/apply", dependencies=[Depends(require_access)])
+    @application.post("/api/tracks/{key}/metadata/apply")
     async def metadata_apply(request: Request, key: str, body: CandidateBody) -> dict[str, Any]:
         return await external(request).apply_candidate(
             get_track(request, key),
@@ -730,7 +836,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get(
         "/api/tracks/{key}/metadata/candidates/{candidate_id}/cover",
-        dependencies=[Depends(require_access)],
     )
     async def metadata_candidate_cover(request: Request, key: str, candidate_id: str) -> Response:
         content, mime_type = await external(request).candidate_cover(
@@ -738,47 +843,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return Response(content, media_type=mime_type, headers={"Cache-Control": "private, max-age=3600"})
 
-    @application.get("/api/tracks/{key}/lyrics", dependencies=[Depends(require_access)])
+    @application.get("/api/tracks/{key}/lyrics")
     async def lyrics_get(request: Request, key: str, refresh: bool = False) -> dict[str, Any]:
         return await external(request).lyrics(get_track(request, key), refresh)
 
-    @application.put("/api/tracks/{key}/lyrics", dependencies=[Depends(require_access)])
+    @application.put("/api/tracks/{key}/lyrics")
     async def lyrics_save(request: Request, key: str, body: LyricsBody) -> dict[str, Any]:
         return external(request).save_manual_lyrics(get_track(request, key), body.text)
 
-    @application.delete("/api/tracks/{key}/lyrics", dependencies=[Depends(require_access)])
+    @application.delete("/api/tracks/{key}/lyrics")
     async def lyrics_reset(request: Request, key: str) -> dict[str, Any]:
         item = get_track(request, key)
         database(request).delete_lyrics(item["chatId"], item["messageId"])
         return await external(request).lyrics(item, refresh=True)
 
-    @application.get("/api/settings", dependencies=[Depends(require_access)])
+    @application.get("/api/settings")
     async def settings_get(request: Request) -> dict[str, Any]:
         return database(request).get_settings()
 
-    @application.patch("/api/settings", dependencies=[Depends(require_access)])
+    @application.patch("/api/settings")
     async def settings_save(request: Request, body: SettingsBody) -> dict[str, Any]:
         return database(request).save_settings(body.model_dump(exclude_none=True))
 
     @application.post(
-        "/api/settings/musicbrainz/test", dependencies=[Depends(require_access)]
-    )
+        "/api/settings/musicbrainz/test"    )
     async def settings_musicbrainz_test(request: Request) -> dict[str, bool]:
         return await external(request).test_musicbrainz()
 
-    @application.post("/api/playback/events", dependencies=[Depends(require_access)])
+    @application.post("/api/playback/events")
     async def playback_event(request: Request, body: PlaybackEventBody) -> dict[str, bool]:
         get_track(request, body.key)
         database(request).record_playback(body.key, body.event)
         return {"ok": True}
 
-    @application.post("/api/playback/shuffle", dependencies=[Depends(require_access)])
+    @application.post("/api/playback/shuffle")
     def playback_shuffle(request: Request, body: ShuffleBody) -> dict[str, Any]:
         return {
             "keys": database(request).shuffled_track_keys(body.source, body.currentKey),
         }
 
-    @application.post("/api/playback/queue", dependencies=[Depends(require_access)])
+    @application.post("/api/playback/queue")
     def playback_queue(request: Request, body: QueueBody) -> dict[str, Any]:
         return {
             "keys": database(request).playback_queue(
@@ -787,17 +891,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         }
 
-    @application.post("/api/playback/prefetch", dependencies=[Depends(require_access)])
+    @application.post("/api/playback/prefetch")
     async def playback_prefetch(request: Request, body: PrefetchBody) -> dict[str, Any]:
         for key in body.keys:
             get_track(request, key)
         return telegram(request).start_prefetch(body.keys)
 
-    @application.get("/api/cache/status", dependencies=[Depends(require_access)])
+    @application.get("/api/cache/status")
     async def cache_status(request: Request, keys: str = "") -> dict[str, Any]:
         return telegram(request).cache_status([value for value in keys.split(",") if value])
 
-    @application.delete("/api/cache", dependencies=[Depends(require_access)])
+    @application.delete("/api/cache")
     async def cache_clear(request: Request) -> dict[str, int]:
         return telegram(request).clear_media_cache()
 
