@@ -333,9 +333,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 @keyframes search-pulse { to { outline: 10px solid transparent; } }
 
 .brand-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 0 8px 30px; }
-.brand-logo { width: 44px; height: 44px; border-radius: 10px; object-fit: contain; flex: 0 0 auto; }
+.brand-logo { width: 52px; height: 52px; border-radius: 11px; object-fit: contain; flex: 0 0 auto; }
 [data-theme="dark"] .brand-logo { filter: invert(1); }
 @media (prefers-color-scheme: dark) { html[data-theme="system"] .brand-logo { filter: invert(1); } }
+.brand-group { display: flex; align-items: center; gap: 10px; }
+.brand-text { display: grid; gap: 0; }
+.brand-line { display: block; line-height: 1.2; }
+.brand-line:first-child { font-size: 13px; font-weight: 650; }
+.brand-line:last-child { font-size: 11px; color: var(--muted); }
 .source-rail nav { min-height: 0; flex: 1; overflow-y: auto; }
 
 .source-link {
@@ -855,7 +860,7 @@ img.source-avatar { object-fit: cover; }
 .app-shell.sidebar-collapsed.panel-open { grid-template-columns: 68px minmax(0, 1fr) var(--panel-width); }
 .sidebar-collapsed .source-rail { padding-inline: 11px; }
 .sidebar-collapsed .brand-row { justify-content: center; padding-inline: 0; }
-.sidebar-collapsed #account-name, .sidebar-collapsed .source-tools, .sidebar-collapsed .bulk-bar, .sidebar-collapsed .source-copy, .sidebar-collapsed .source-count, .sidebar-collapsed .source-actions, .sidebar-collapsed .add-source span, .sidebar-collapsed .rail-footer, .sidebar-collapsed .global-search-control input { display: none; }
+.sidebar-collapsed .brand-text, .sidebar-collapsed #account-name, .sidebar-collapsed .source-tools, .sidebar-collapsed .bulk-bar, .sidebar-collapsed .source-copy, .sidebar-collapsed .source-count, .sidebar-collapsed .source-actions, .sidebar-collapsed .add-source span, .sidebar-collapsed .rail-footer, .sidebar-collapsed .global-search-control input { display: none; }
 .sidebar-collapsed .global-search-wrap { width: 46px; margin-inline: auto; }
 .sidebar-collapsed .global-search-control { width: 46px; height: 46px; grid-template-columns: 1fr; justify-items: center; padding: 0; }
 .sidebar-collapsed .global-search-trigger { width: 46px; height: 46px; }
