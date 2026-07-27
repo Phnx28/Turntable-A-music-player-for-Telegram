@@ -25,7 +25,7 @@ class ExternalServices:
         self.art_directory = art_directory
         self.art_directory.mkdir(parents=True, exist_ok=True)
         self.default_musicbrainz_contact = musicbrainz_contact.strip()
-        self.http = httpx.AsyncClient(follow_redirects=True, timeout=15)
+        self.http = httpx.AsyncClient(follow_redirects=True, timeout=15, limits=httpx.Limits(max_connections=10, max_keepalive_connections=4))
         self.musicbrainz_lock = asyncio.Lock()
         self.last_musicbrainz_request = 0.0
 
