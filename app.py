@@ -651,9 +651,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = 100,
         liked: bool = False,
         temporary: bool = False,
+        total: int | None = None,
     ) -> dict[str, Any]:
+        # ponytail: the client already knows the total after the first page of a given filter
+        # and echoes it back, which lets us skip the COUNT(*) entirely while scrolling.
         return database(request).list_tracks(
-            source, q[:200], offset, limit, liked, temporary
+            source, q[:200], offset, limit, liked, temporary, total if total is not None and total >= 0 else None
         )
 
     @application.post("/api/tracks/summaries")

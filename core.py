@@ -887,6 +887,7 @@ class Database:
         limit: int = 100,
         liked: bool = False,
         include_unselected: bool = False,
+        total: int | None = None,
     ) -> dict[str, Any]:
         offset = max(0, int(offset))
         limit = max(25, min(int(limit), 200))
@@ -899,8 +900,7 @@ class Database:
                        t.file_size, t.duration_ms, t.telegram_title, t.telegram_artist,
                        t.sent_at, t.document_id, s.title AS source_title,
                        s.kind AS source_kind, s.selected AS source_selected,
-                       o.payload AS override_payload,
-                       COUNT(*) OVER() AS total_count
+                       o.payload AS override_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
@@ -911,7 +911,22 @@ class Database:
                 """,
                 (*parameters, limit, offset),
             ).fetchall()
-            count = rows[0]["total_count"] if rows else 0
+            # ponytail: COUNT(*) OVER() on this query cost ~200ms on a 55k library because the
+            # window function materializes every matching row before the LIMIT. A plain COUNT(*)
+            # never builds the rows and lands in single-digit ms, so ask for it separately and
+            # only when the caller cannot already know it.
+            if total is None:
+                count = self.connection.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM tracks t
+                    JOIN sources s ON s.chat_id = t.chat_id
+                    WHERE {where}
+                    """,
+                    parameters,
+                ).fetchone()[0]
+            else:
+                count = total
         return {
             "items": [self._track_summary(row) for row in rows],
             "offset": offset,

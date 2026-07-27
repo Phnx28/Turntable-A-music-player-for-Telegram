@@ -442,7 +442,10 @@ async function loadPage(offset, force = false, token = libraryRequest) {
   state.pageRequests.add(offset);
   const cacheKey = libraryParameters(offset);
   try {
-    const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}`, { signal: requestController.signal });
+    // The total only changes when the filter changes, and the cache key encodes the filter,
+    // so replaying it lets the server skip a COUNT(*) over the whole library on every page.
+    const known = offset > 0 && state.totalTracks > 0 ? `&total=${state.totalTracks}` : "";
+    const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}${known}`, { signal: requestController.signal });
     if (token !== libraryRequest) return;
     const page = normalizeTrackPage(raw);
     if (!state.libraryCache.has(cacheKey)) cacheSet(state.libraryCache, cacheKey, page, 8);
