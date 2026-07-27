@@ -1,0 +1,13 @@
+{
+  "name": "Telegram Turntable",
+  "short_name": "Turntable",
+  "description": "Web player for music in Telegram",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f7f7f4",
+  "theme_color": "#f7f7f4",
+  "icons": [
+    { "src": "/assets/logo-light.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
