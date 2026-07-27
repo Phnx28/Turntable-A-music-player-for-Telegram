@@ -112,6 +112,7 @@ class TelegramService:
         self.prefetch_order: list[str] = []
         self.document_cache: dict[str, tuple[float, str, Any, Any]] = {}
         self.discovery_cache: tuple[float, list[dict[str, Any]]] | None = None
+        self._watched_chat_ids: set[str] = set()
         self._countries: list[dict[str, str]] | None = None
         self._countries_updated: float = 0
         self._clean_partial_cache()
@@ -140,6 +141,7 @@ class TelegramService:
             self.database.clear_account()
             return
         self.client = client
+        self._refresh_watched_ids()
         self._install_handlers(client)
         self._spawn(self.sync_all())
 
@@ -229,6 +231,10 @@ class TelegramService:
         client.add_event_handler(self._on_edited_message, events.MessageEdited())
         client.add_event_handler(self._on_deleted_message, events.MessageDeleted())
 
+    def _refresh_watched_ids(self) -> None:
+        # ponytail: full rescan on change is fine; set is small (<10 chats), add per-source subscribe when this grows.
+        self._watched_chat_ids = {source["chatId"] for source in self.database.list_sources(False)}
+
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         await self._save_event_message(event)
 
@@ -237,6 +243,8 @@ class TelegramService:
 
     async def _save_event_message(self, event: Any) -> None:
         chat_id = str(event.chat_id or "")
+        if not chat_id or chat_id not in self._watched_chat_ids:
+            return
         source = self.database.get_source(chat_id) if chat_id else None
         if not source or (not source["selected"] and source["kind"] not in {"channel", "bot"}):
             return
@@ -248,6 +256,8 @@ class TelegramService:
 
     async def _on_deleted_message(self, event: events.MessageDeleted.Event) -> None:
         chat_id = str(event.chat_id or "")
+        if not chat_id or chat_id not in self._watched_chat_ids:
+            return
         source = self.database.get_source(chat_id) if chat_id else None
         if source and (source["selected"] or source["kind"] in {"channel", "bot"}):
             self.database.mark_unavailable(chat_id, [str(value) for value in event.deleted_ids])
@@ -373,6 +383,7 @@ class TelegramService:
         display_name = utils.get_display_name(user) or "Telegram account"
         self.database.set_account(str(user.id), display_name, encrypted)
         self.client = flow.client
+        self._refresh_watched_ids()
         self._install_handlers(flow.client)
         flow.error = ""
         flow.state = "ready"
@@ -461,7 +472,7 @@ class TelegramService:
         client = self.require_client()
         known = {source["chatId"]: source for source in self.database.list_sources(False)}
         discovered: list[dict[str, Any]] = []
-        async for dialog in client.iter_dialogs():
+        async for dialog in asyncio.wait_for(client.iter_dialogs(), timeout=60):
             kind = self.classify_entity(dialog.entity)
             if not kind:
                 continue
@@ -586,6 +597,7 @@ class TelegramService:
             raise KeyError("Eligible Telegram chat not found")
         source["selected"] = True
         self.database.upsert_source(source)
+        self._refresh_watched_ids()
         self.discovery_cache = None
         job = self.start_sync(chat_id, full=True)
         return {"source": self.database.get_source(chat_id) or source, "job": job}
@@ -597,6 +609,7 @@ class TelegramService:
         if not source:
             raise KeyError("Source not found")
         self.database.set_source_selected(chat_id, selected)
+        self._refresh_watched_ids()
         self.discovery_cache = None
         if not selected:
             for job in self.jobs.values():
@@ -653,7 +666,7 @@ class TelegramService:
                 try:
                     if job:
                         job.state = "running"
-                    entity = await client.get_entity(int(chat_id))
+                    entity = await asyncio.wait_for(client.get_entity(int(chat_id)), timeout=30)
                     minimum = 0 if full else int(source["lastMessageId"] or 0)
                     highest_scanned = minimum
                     seen: set[str] = set()
@@ -723,6 +736,8 @@ class TelegramService:
     def _friendly_sync_error(error: Exception) -> str:
         if isinstance(error, FloodWaitError):
             return f"Retry after {error.seconds} seconds"
+        if isinstance(error, asyncio.TimeoutError):
+            return "Telegram did not respond in time; check the connection and retry"
         if isinstance(error, RPCError):
             return "Telegram rejected this sync; open the chat in Telegram and retry"
         return "Sync failed; check the Telegram connection and retry"
@@ -844,7 +859,7 @@ class TelegramService:
             thumb_type = sizes[0][0] if sizes else -1
         else:
             thumb_type = -1
-        result = await client.download_media(message, thumb=thumb_type, file=bytes)
+        result = await asyncio.wait_for(client.download_media(message, thumb=thumb_type, file=bytes), timeout=30)
         if not result:
             missing.touch()
             return None
