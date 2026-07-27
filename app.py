@@ -262,7 +262,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telegram.stop()
         database.close()
 
-    application = FastAPI(title="Telegram Music", docs_url=None, redoc_url=None, lifespan=lifespan)
+    application = FastAPI(title="Telegram Turntable", docs_url=None, redoc_url=None, lifespan=lifespan)
     application.add_middleware(GZipMiddleware, minimum_size=1000)
     application.mount("/assets", StaticFiles(directory=ROOT / "static"), name="assets")
 

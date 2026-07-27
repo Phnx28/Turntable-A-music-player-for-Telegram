@@ -35,7 +35,7 @@ class ExternalServices:
     @property
     def user_agent(self) -> str:
         contact = self.musicbrainz_contact or "configure-MusicBrainz-contact"
-        return f"TelegramMusic/1.0 ({contact})"
+        return f"TelegramTurntable/1.0 ({contact})"
 
     @property
     def musicbrainz_contact(self) -> str:

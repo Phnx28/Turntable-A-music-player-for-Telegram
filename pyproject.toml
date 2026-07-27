@@ -1,5 +1,5 @@
 [project]
-name = "telegram-music-player"
+name = "telegram-turntable"
 version = "0.1.0"
 description = "A private web player for music stored in Telegram"
 requires-python = ">=3.12"

@@ -220,7 +220,7 @@ class TelegramService:
             connection_retries=5,
             request_retries=3,
             flood_sleep_threshold=30,
-            device_model="Telegram Music Web",
+            device_model="Telegram Turntable Web",
             app_version="1.0.0",
         )
 

@@ -1,4 +1,4 @@
-# Telegram Music
+# Telegram Turntable
 
 Web player for audio in your Telegram chats. Single-user, self-hosted.
 
