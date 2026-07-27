@@ -81,6 +81,7 @@ function confirmAction(title, message, accept = "Continue") {
 
 function icon(name) { return `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`; }
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML; }
+function escapeAttr(value) { return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/`/g, "&#96;"); }
 function mediaUrl(track, action = "cover") { return `/api/tracks/${encodeURIComponent(track.key)}/${action}`; }
 function initials(value) { return String(value || "?").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
 function cacheSet(cache, key, value, maximum) {
@@ -192,7 +193,7 @@ async function loadCountries() {
   const select = $("telegram-country");
   try {
     const countries = await api("/api/telegram/countries");
-    select.innerHTML = '<option value="">Choose a country</option>' + countries.map((country) => `<option value="${escapeHtml(country.dialCode)}" data-iso="${escapeHtml(country.iso2)}">${countryFlag(country.iso2)} ${escapeHtml(country.name)} (+${escapeHtml(country.dialCode)})</option>`).join("");
+    select.innerHTML = '<option value="">Choose a country</option>' + countries.map((country) => `<option value="${escapeAttr(country.dialCode)}" data-iso="${escapeAttr(country.iso2)}">${countryFlag(country.iso2)} ${escapeHtml(country.name)} (+${escapeHtml(country.dialCode)})</option>`).join("");
     const saved = localStorage.getItem("tm-country");
     let region = saved;
     if (!region) try { region = new Intl.Locale(navigator.language).region; } catch {}
@@ -302,7 +303,7 @@ function sourceSort(items) {
 }
 
 function avatarMarkup(source) {
-  return `<img class="source-avatar" src="/api/sources/${encodeURIComponent(source.chatId)}/avatar" data-avatar-fallback="${escapeHtml(initials(source.title))}" alt="" loading="lazy">`;
+  return `<img class="source-avatar" src="/api/sources/${encodeURIComponent(source.chatId)}/avatar" data-avatar-fallback="${escapeAttr(initials(source.title))}" alt="" loading="lazy">`;
 }
 
 function renderSources() {
@@ -328,7 +329,10 @@ function renderSources() {
   $("bulk-count").textContent = `${state.selectedSources.size} selected`;
   $("bulk-unselect").disabled = !state.selectedSources.size;
   $("sync-source").disabled = state.likedMode || Boolean(selected?.temporary);
-  document.querySelector('.source-entry.active')?.scrollIntoView({ block: 'nearest' });
+  if (state._sourceChangeScroll) {
+    document.querySelector('.source-entry.active')?.scrollIntoView({ block: 'nearest' });
+    state._sourceChangeScroll = false;
+  }
 }
 
 function renderTrackRow(track) {
@@ -456,6 +460,7 @@ async function loadLibrary(force = false) {
 
 async function selectSource(chatId) {
   if (chatId === state.source && !state.likedMode) return;
+  state._sourceChangeScroll = true;
   if (state.temporarySource && chatId !== state.temporarySource.chatId) {
     if (state.temporaryJob?.jobId) api(`/api/jobs/${encodeURIComponent(state.temporaryJob.jobId)}`, { method: "DELETE" }).catch(() => {});
     state.temporarySource = null; state.temporaryJob = null;
@@ -477,6 +482,7 @@ async function selectLiked() {
 
 async function selectTemporary() {
   if (!state.temporarySource) return;
+  state._sourceChangeScroll = true;
   state.source = state.temporarySource.chatId; state.likedMode = false;
   $("track-search").value = ""; $("library").scrollTop = 0; renderSources(); schedulePersist();
   await loadLibrary();
@@ -1343,7 +1349,6 @@ $("track-details").addEventListener("click", (event) => {
   }
 });
 $("progress").addEventListener("input", () => {
-  if (audio.duration) audio.currentTime = Number($("progress").value) / 1000 * audio.duration;
   const progress = $("progress"), tooltip = $("progress-tooltip");
   const max = Number(progress.max) || 1;
   const ratio = Math.min(1, Math.max(0, Number(progress.value) / max));
@@ -1360,7 +1365,10 @@ const hideProgressTooltip = () => {
   tooltip.classList.remove("is-visible");
   tooltip.setAttribute("aria-hidden", "true");
 };
-$("progress").addEventListener("change", hideProgressTooltip);
+$("progress").addEventListener("change", () => {
+  if (audio.duration) audio.currentTime = Number($("progress").value) / 1000 * audio.duration;
+  hideProgressTooltip();
+});
 $("progress").addEventListener("pointerup", hideProgressTooltip);
 $("progress").addEventListener("pointercancel", hideProgressTooltip);
 $("progress").addEventListener("blur", hideProgressTooltip);
@@ -1400,6 +1408,7 @@ document.addEventListener("error", (event) => { const image = event.target; if (
 $("context-menu").addEventListener("click", (event) => { const button = event.target.closest("[data-menu-index]"); if (button) { const action = $("context-menu")._actions[Number(button.dataset.menuIndex)]?.action; closeMenu(); action?.(); } }); document.addEventListener("pointerdown", (event) => { if (!event.target.closest("#context-menu") && !$("context-menu").hidden) closeMenu(); if (!event.target.closest(".global-search-wrap") && !$("global-results").hidden) closeGlobalSearch(); }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); closeGlobalSearch(); } });
 document.addEventListener("keydown", (event) => {
   if (event.target.matches("input, textarea, [contenteditable]")) return;
+  if (event.target.closest("button, a, [role='button'], select")) return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === " " || event.code === "Space") {
     event.preventDefault();

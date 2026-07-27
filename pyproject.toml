@@ -9,7 +9,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "segno>=1.6,<2",
   "telethon>=1.40,<2",
-  "uvicorn>=0.35,<1",
+  "uvicorn[standard]>=0.35,<1",
 ]
 
 [dependency-groups]

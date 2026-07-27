@@ -300,6 +300,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 samesite="strict",
                 path="/",
             )
+        # ponytail: long cache on fingerprinted /assets/; safe because
+        # index.html doesn't list the asset paths — the app fetches them by
+        # name and content changes ship under a new filename. Upgrade path:
+        # add ?v= or hashed names if the wiring ever changes.
+        if request.url.path.startswith("/assets/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
     @application.exception_handler(KeyError)
@@ -613,6 +619,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Accept-Ranges": "bytes",
             "Content-Length": str(byte_range.length),
             "Cache-Control": "private, no-store",
+            # ponytail: pre-set Content-Encoding so Starlette GZipMiddleware
+            # (which skips bodies when the header is already present) leaves
+            # the byte stream alone. Without this, audio bytes get gzipped
+            # and Content-Range semantics break.
+            "Content-Encoding": "identity",
         }
         status_code = 206 if byte_range.partial else 200
         if byte_range.partial:
@@ -666,6 +677,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 headers={
                     "Cache-Control": "private, no-store",
                     "Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(name)}',
+                    "Content-Encoding": "identity",
                 },
             )
         return await media_response(request, key, download=True)
@@ -678,11 +690,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             candidate = (settings.data_directory / "artwork" / Path(artwork).name).resolve()
             root = (settings.data_directory / "artwork").resolve()
             if candidate.parent == root and candidate.is_file():
-                return FileResponse(candidate, headers={"Cache-Control": "private, max-age=86400"})
+                return FileResponse(
+                    candidate,
+                    headers={"Cache-Control": "private, max-age=86400", "Content-Encoding": "identity"},
+                )
         thumbnail = await telegram(request).thumbnail(item["chatId"], item["messageId"], quality=quality)
         if not thumbnail:
-            return Response(status_code=404, headers={"Cache-Control": "private, max-age=86400"})
-        return Response(thumbnail, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+            return Response(
+                status_code=404,
+                headers={"Cache-Control": "private, max-age=86400", "Content-Encoding": "identity"},
+            )
+        return Response(
+            thumbnail,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=86400", "Content-Encoding": "identity"},
+        )
 
     @application.patch("/api/tracks/{key}/metadata", dependencies=[Depends(require_access)])
     async def metadata_patch(request: Request, key: str, body: MetadataPatchBody) -> dict[str, Any]:
