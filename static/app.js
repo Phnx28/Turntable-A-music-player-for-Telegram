@@ -1600,14 +1600,29 @@ function installResizer(id, side) {
   handle.addEventListener("keydown", (event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; const current = parseInt(getComputedStyle(document.documentElement).getPropertyValue(side === "left" ? "--rail-width" : "--panel-width")); resize(side === "left" ? current + (event.key === "ArrowRight" ? 10 : -10) : innerWidth - current + (event.key === "ArrowLeft" ? 10 : -10)); });
 }
 
+// The Account pane held nothing but a disconnect link, so it gave no reason to visit and no
+// confirmation of which account the library belongs to.
+function renderAccount(account) {
+  const linked = account && account.linked;
+  $("settings-account-name").textContent = linked ? (account.displayName || "Telegram account") : "Not connected";
+  const parts = [];
+  if (linked && account.userId) parts.push(`ID ${account.userId}`);
+  if (Array.isArray(state.sources)) {
+    const count = state.sources.length;
+    parts.push(`${count} ${count === 1 ? "source" : "sources"} indexed`);
+  }
+  $("settings-account-meta").textContent = parts.join(" · ");
+}
+
 async function openSettings() {
   $("settings-dialog").showModal();
   try {
     state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality;
     const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} cached · ${(cache.bytes / 1048576).toFixed(1)} MB`;
-    const [network, auth] = await Promise.all([api("/api/network"), api("/api/auth/status")]);
+    const [network, auth, status] = await Promise.all([api("/api/network"), api("/api/auth/status"), api("/api/status")]);
     state.network = network;
     state.passwordEnabled = auth.passwordEnabled;
+    renderAccount(status.telegram);
     renderNetwork();
     renderPasswordState();
     showPasswordForm(null);
@@ -1679,17 +1694,40 @@ async function setBindHost(value) {
   }
 }
 
-async function saveSettings(button) {
-  const pane = button.closest("[data-settings-pane]").dataset.settingsPane;
-  const values = pane === "playback" ? { prefetchCount: Number($("prefetch-count").value) } : { musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value };
-  const label = button.dataset.label ||= button.textContent;
+// Settings apply as you change them, the way Theme and Type always have. The three "Save"
+// buttons meant some settings took effect instantly and others waited for a click, with nothing
+// on screen saying which -- so a typed value could be silently discarded by closing the dialog.
+let settingsSaveTimer = null;
+async function commitSettings(values) {
   try {
-    button.textContent = label; button.setAttribute("aria-busy", "true");
     state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify(values) });
-    button.textContent = "Saved"; button.classList.add("saved"); clearTimeout(button._savedTimer); button._savedTimer = setTimeout(() => { button.textContent = label; button.classList.remove("saved"); }, 2000);
-    toast("Settings saved");
+  } catch (error) {
+    showError(error, () => commitSettings(values));
   }
-  catch (error) { showError(error, () => saveSettings(button)); } finally { button.removeAttribute("aria-busy"); }
+}
+
+// Text inputs save on a debounce so a PATCH is not issued per keystroke; selects and numbers
+// commit immediately on change.
+function saveSettingsSoon(values, delay = 600) {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(() => { settingsSaveTimer = null; commitSettings(values); }, delay);
+}
+
+// Only flush when a debounce is actually pending. Firing on every blur meant tabbing through the
+// contact field wrote to the database without the user changing anything.
+function flushSettings() {
+  if (settingsSaveTimer === null) return;
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = null;
+  commitSettings(currentSettingsValues());
+}
+
+function currentSettingsValues() {
+  return {
+    prefetchCount: Number($("prefetch-count").value),
+    musicbrainzContact: $("musicbrainz-contact").value.trim(),
+    coverQuality: $("default-cover-quality").value,
+  };
 }
 
 $("bind-host-options").addEventListener("click", (event) => {
@@ -1992,7 +2030,13 @@ for (const id of ["contact-list", "frequent-list"]) {
 }
 $("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata").addEventListener("click", resetMetadata); $("fetch-metadata").addEventListener("click", fetchMetadata); $("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); }); $("lyrics-form").addEventListener("submit", saveLyrics); $("reset-lyrics").addEventListener("click", async () => { if (await confirmAction("Fetch lyrics again?", "Saved lyrics will be replaced by a new internet lookup.", "Fetch again")) { try { $("lyrics-status").textContent = "Looking for lyrics…"; state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" }); renderLyrics(); $("lyrics-status").textContent = "Lyrics lookup finished."; } catch (error) { $("lyrics-status").textContent = error.message; } } });
 
-$("open-settings").addEventListener("click", openSettings); document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll("[data-settings-tab]").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll("[data-settings-pane]").forEach((pane) => { pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab; }); })); document.querySelectorAll(".save-settings").forEach((button) => button.addEventListener("click", () => saveSettings(button))); $("test-musicbrainz").addEventListener("click", async () => { try { state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value }) }); await api("/api/settings/musicbrainz/test", { method: "POST" }); toast("MusicBrainz connection works"); } catch (error) { showError(error, () => $("test-musicbrainz").click()); } });
+$("open-settings").addEventListener("click", openSettings); document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll("[data-settings-tab]").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll("[data-settings-pane]").forEach((pane) => { pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab; }); })); $("prefetch-count").addEventListener("change", () => commitSettings(currentSettingsValues()));
+$("default-cover-quality").addEventListener("change", () => commitSettings(currentSettingsValues()));
+$("musicbrainz-contact").addEventListener("input", () => saveSettingsSoon(currentSettingsValues()));
+// Leaving the field flushes the pending debounce, so closing the dialog straight after typing
+// cannot lose the value.
+$("musicbrainz-contact").addEventListener("blur", flushSettings);
+$("test-musicbrainz").addEventListener("click", async () => { try { state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value }) }); await api("/api/settings/musicbrainz/test", { method: "POST" }); toast("MusicBrainz connection works"); } catch (error) { showError(error, () => $("test-musicbrainz").click()); } });
 $("clear-cache").addEventListener("click", async () => { if (await confirmAction("Clear prefetched songs?", "Playback metadata and Telegram files will not be changed.", "Clear cache")) { try { await api("/api/cache", { method: "DELETE" }); $("cache-usage").textContent = "0 cached · 0 MB"; toast("Prefetched songs cleared"); } catch (error) { showError(error); } } });
 document.querySelectorAll("[data-setting] [data-value]").forEach((button) => button.addEventListener("click", () => { localStorage.setItem(`tm-${button.parentElement.dataset.setting}`, button.dataset.value); applyPreferences(); }));
 $("disconnect-telegram").addEventListener("click", async () => { if (await confirmAction("Disconnect Telegram?", "This signs out the stored Telegram session and clears the local library. It does not leave or delete any Telegram chats.", "Disconnect")) { try { await api("/api/telegram/session", { method: "DELETE" }); location.reload(); } catch (error) { showError(error); } } });
