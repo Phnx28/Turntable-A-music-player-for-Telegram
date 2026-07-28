@@ -2,6 +2,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@iconify-json/solar": "^1.2.5"
+    "ionicons": "^8.1.0"
   }
 }

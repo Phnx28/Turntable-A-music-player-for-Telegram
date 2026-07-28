@@ -118,6 +118,12 @@ button:active:not(:disabled) { transform: scale(.985); }
 
 .svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 svg { width: 19px; height: 19px; fill: currentColor; flex: 0 0 auto; }
+/* Ionicons draw outlines with a 32-unit stroke on a 512 viewBox, so the rendered width scales
+   with the icon: 0.75px at 12px but 1.62px at 26px. That reads as icons of differing weight and
+   goes sub-pixel (blurry, washed out) at the small end. non-scaling-stroke takes the stroke out
+   of the viewBox transform so it means CSS pixels, letting one value hold every icon to the same
+   visual weight at every size. 1.5px keeps the outline crisp without looking drawn-on. */
+svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-stroke, 1.5px); }
 
 .eyebrow,
 .utility {

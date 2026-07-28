@@ -559,7 +559,7 @@ function renderTrackRow(track) {
   const liked = Boolean(track.liked);
   return `<article class="track-row ${playing ? "current" : ""}" data-track-key="${escapeHtml(track.key)}" tabindex="-1">
     <button class="track-main" type="button" data-play-key="${escapeHtml(track.key)}">
-      <span class="mini-art-wrap"><img class="mini-art row-art" data-src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt=""><span class="art-placeholder mini"><span></span></span><span class="track-play-overlay">${icon(playing && !audio.paused ? "pause" : "play")}</span></span>
+      <span class="mini-art-wrap"><img class="mini-art row-art" data-src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt=""><span class="art-placeholder mini"><span></span></span><span class="track-play-overlay">${icon(playing && !audio.paused ? "pause" : "play-filled")}</span></span>
       <span class="track-copy"><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artist || "Unknown artist")}</small></span>
     </button>
     <span class="track-source">${escapeHtml(track.source.title)}</span>
@@ -914,7 +914,7 @@ function updateTransport() {
   const row = state.current && document.querySelector(`.track-row[data-track-key="${CSS.escape(state.current.key)}"]`);
   if (row) {
     row.classList.toggle("buffering", state.buffering);
-    row.querySelector(".track-play-overlay").innerHTML = icon(playing ? "pause" : "play");
+    row.querySelector(".track-play-overlay").innerHTML = icon(playing ? "pause" : "play-filled");
   }
 }
 

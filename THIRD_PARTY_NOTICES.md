@@ -2,15 +2,17 @@
 
 ## Icons
 
-Interface icons are derived from the [Solar](https://www.figma.com/community/file/1166831539721848736)
-icon set (bold-duotone weight) by 480 Design, licensed under
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Interface icons are [Ionicons](https://ionic.io/ionicons) by Ionic, licensed under the
+[MIT License](https://github.com/ionic-team/ionicons/blob/main/LICENSE) (outline weight, plus
+the filled `play` and `heart` for the primary transport button and the liked state).
 
-The icons are inlined as `<symbol>` elements in `static/index.html` rather than loaded from a
-package at runtime; `@iconify-json/solar` in `package.json` is the build-time source they were
-taken from. `#i-pin` is original work and not part of the set.
+They are inlined as `<symbol>` elements in `static/index.html` rather than loaded through
+Ionicons' web component: that component is an ESM bundle fetched from a CDN, which the app's
+`script-src 'self'` CSP blocks, and it would put a network dependency in front of the first
+paint of a local-first player. `ionicons` in `package.json` is a build-time source only —
+regenerate the sprite with `python3 tools/build_icons.py`.
 
-CC BY 4.0 requires attribution, so this notice must be kept if the icons are.
+Ionicons license: https://github.com/ionic-team/ionicons/blob/main/LICENSE
 
 ## Python dependencies
 
