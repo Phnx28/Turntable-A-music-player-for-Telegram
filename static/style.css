@@ -67,10 +67,6 @@ html[data-theme="dark"] {
 
 html[data-font="serif"] { --font-ui: var(--font-serif); }
 html[data-font="mono"] { --font-ui: var(--font-mono); }
-html[data-accent="mint"] { --accent: #a8ddb8; }
-html[data-accent="lilac"] { --accent: #cab8e8; }
-html[data-accent="peach"] { --accent: #f1bfa8; }
-html[data-accent="butter"] { --accent: #e7d58c; }
 
 * { box-sizing: border-box; }
 
@@ -780,13 +776,6 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
 .segmented button.active { background: var(--accent); color: var(--accent-ink); }
 .type-options button:nth-child(2) { font-family: var(--font-serif); }
 .type-options button:nth-child(3) { font-family: var(--font-mono); }
-.accent-options { display: flex; gap: 12px; }
-.accent-options button { width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 50%; background: #a8c7fa; cursor: pointer; transition: outline-offset var(--dur-1) var(--ease-out); }
-.accent-options button[data-value="mint"] { background: #a8ddb8; }
-.accent-options button[data-value="lilac"] { background: #cab8e8; }
-.accent-options button[data-value="peach"] { background: #f1bfa8; }
-.accent-options button[data-value="butter"] { background: #e7d58c; }
-.accent-options button.active { outline: 2px solid var(--ink); outline-offset: 3px; }
 .danger-zone { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); }
 
 .toast {

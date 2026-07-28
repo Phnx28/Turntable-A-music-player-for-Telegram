@@ -145,7 +145,12 @@ async function restorePlayerState(saved) {
 }
 
 function applyPreferences() {
-  for (const [name, fallback] of [["theme", "system"], ["font", "sans"], ["accent", "blue"]]) {
+  // The accent picker is gone, but a browser that used it still holds tm-accent and a
+  // data-accent attribute in the served markup would keep overriding --accent. Drop both once
+  // so an existing install lands on the single accent rather than whatever it last chose.
+  localStorage.removeItem("tm-accent");
+  delete document.documentElement.dataset.accent;
+  for (const [name, fallback] of [["theme", "system"], ["font", "sans"]]) {
     const value = localStorage.getItem(`tm-${name}`) || fallback;
     document.documentElement.dataset[name] = value;
     document.querySelectorAll(`[data-setting="${name}"] [data-value]`).forEach((button) => {
