@@ -6,7 +6,7 @@ Point it at the chats, channels and bots holding your audio and it indexes them 
 library with a player on top, streaming each file from Telegram on demand rather than keeping a
 second copy of your collection.
 
-A fun side project, not a product. Single user, single machine.
+A fun side project, not a product. Single user.
 
 ## What it does
 
