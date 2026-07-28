@@ -2,6 +2,9 @@
 name = "telegram-turntable"
 version = "0.1.0"
 description = "A private web player for music stored in Telegram"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   "cryptography>=45,<47",
