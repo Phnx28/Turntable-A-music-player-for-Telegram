@@ -862,6 +862,9 @@ function setTrackUi() {
   $("like-current").setAttribute("aria-pressed", String(Boolean(track.liked)));
   $("like-current").setAttribute("aria-label", track.liked ? "Unlike current track" : "Like current track");
   const detailRows = [["Source", track.source.title], ["Album", metadata.album], ["Album artist", metadata.albumArtist], ["Genre", metadata.genre], ["Year", metadata.year || ""], ["File", track.file.name], ["Size", track.file.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""]].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  // Removing the speed control took the only write of detailRows with it, so the Details tab
+  // rendered its action buttons over an empty <dl>. The rows are the tab's actual content.
+  $("track-details").innerHTML = detailRows;
   document.querySelector(".track-row.current")?.classList.remove("current");
   document.querySelector(`.track-row[data-track-key="${CSS.escape(track.key)}"]`)?.classList.add("current");
   if (changed && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
