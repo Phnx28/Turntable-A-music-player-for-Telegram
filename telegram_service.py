@@ -29,6 +29,64 @@ from core import Database, is_audio_file, normalize_text, track_key
 FLOW_TTL_SECONDS = 300
 MEDIA_CHUNK_SIZE = 512 * 1024
 PARTIAL_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+# Corner radius of each QR module, as a fraction of the module size. Kept well under .5 (a full
+# circle) so the modules stay square enough for scanners to read reliably.
+QR_MODULE_RADIUS = 0.28
+
+
+def render_qr_svg(payload: str) -> str:
+    """Render *payload* as a responsive SVG with softly rounded modules.
+
+    segno's own writers emit a fixed pixel width with no viewBox, so the markup cannot scale to
+    its container -- the artwork stays at its natural size and sits off-centre in a larger box.
+    Emitting our own path with a viewBox makes the code scale to whatever the stylesheet asks for
+    and land dead centre.
+
+    Each module is drawn as a square whose four corners are rounded only where both adjoining
+    neighbours are blank. Rounding every corner unconditionally would carve notches out of solid
+    regions like the finder squares; leaving shared edges square keeps runs looking welded.
+    """
+    # No explicit error level: segno picks the smallest version that fits, and forcing a higher
+    # level here would silently add modules (33 -> 37 for a login URL), shrinking each one.
+    matrix = segno.make(payload).matrix
+    size = len(matrix)
+    r = round(QR_MODULE_RADIUS, 4)
+
+    def dark(x: int, y: int) -> bool:
+        return 0 <= x < size and 0 <= y < size and bool(matrix[y][x])
+
+    parts: list[str] = []
+    for y in range(size):
+        for x in range(size):
+            if not matrix[y][x]:
+                continue
+            up, down = dark(x, y - 1), dark(x, y + 1)
+            left, right = dark(x - 1, y), dark(x + 1, y)
+            # Round a corner only where both of its adjoining neighbours are blank.
+            tl, tr = not (up or left), not (up or right)
+            br, bl = not (down or right), not (down or left)
+            right_edge = x + 1
+            parts.append(f"M{x + (r if tl else 0)} {y}")
+            parts.append(f"H{right_edge - r}" if tr else f"H{right_edge}")
+            if tr:
+                parts.append(f"A{r} {r} 0 0 1 {right_edge} {y + r}")
+            parts.append(f"V{y + 1 - r}" if br else f"V{y + 1}")
+            if br:
+                parts.append(f"A{r} {r} 0 0 1 {right_edge - r} {y + 1}")
+            parts.append(f"H{x + r}" if bl else f"H{x}")
+            if bl:
+                parts.append(f"A{r} {r} 0 0 1 {x} {y + 1 - r}")
+            parts.append(f"V{y + r}" if tl else f"V{y}")
+            if tl:
+                parts.append(f"A{r} {r} 0 0 1 {x + r} {y}")
+            parts.append("Z")
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
+        f'shape-rendering="geometricPrecision" role="img">'
+        f'<path fill="#fff" d="M0 0h{size}v{size}H0z"/>'
+        f'<path fill="#111111" d="{"".join(parts)}"/>'
+        "</svg>"
+    )
 
 
 @dataclass
@@ -280,8 +338,7 @@ class TelegramService:
         flow = LoginFlow(secrets.token_urlsafe(24), "qr", client, qr=qr)
         self.flows[flow.id] = flow
         flow.task = asyncio.create_task(self._wait_for_qr(flow))
-        code = segno.make(qr.url)
-        svg = code.svg_inline(scale=5, border=0, dark="#111111", light="#ffffff")
+        svg = render_qr_svg(qr.url)
         return {"flowId": flow.id, "svg": svg, "expiresAt": int(qr.expires.timestamp())}
 
     async def _wait_for_qr(self, flow: LoginFlow) -> None:

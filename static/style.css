@@ -1100,12 +1100,14 @@ dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
 .qr-loader { display: grid; place-items: center; gap: 13px; color: var(--muted); font-size: 11px; opacity: .75; }
 .qr-loader-mark { width: 30px; height: 30px; border: 1px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 .qr-inset, .qr-code { display: grid; place-items: center; }
-.qr-inset { padding: 14px; border-radius: var(--radius-control); background: #1a1b1d; box-shadow: inset 0 1px 0 rgb(255 255 255 / .04); }
+.qr-inset { width: min(252px, 100%); padding: 14px; border-radius: var(--radius-control); background: #1a1b1d; box-shadow: inset 0 1px 0 rgb(255 255 255 / .04); }
 .qr-inset:has(.qr-code:empty) { display: none; }
-.qr-code { min-height: 0; margin: 0; border: 0; background: transparent; transition: opacity var(--dur-2) var(--ease-out); }
+.qr-code { width: 100%; min-height: 0; margin: 0; border: 0; background: transparent; transition: opacity var(--dur-2) var(--ease-out); }
 .qr-code:empty { display: none; }
 .qr-code.is-exiting { opacity: 0; transition-duration: 150ms; }
-.qr-code svg { width: 218px; height: 218px; padding: 11px; border-radius: var(--radius-control); background: #fff; box-shadow: var(--elev-2); animation: qr-in var(--dur-2) var(--ease-out) both; }
+/* The SVG carries a viewBox, so it scales to this box and stays centred at any frame size.
+   Padding is the QR quiet zone -- scanners need that white margin around the modules. */
+.qr-code svg { display: block; width: 100%; height: auto; aspect-ratio: 1; padding: 11px; border-radius: var(--radius-control); background: #fff; box-shadow: var(--elev-2); animation: qr-in var(--dur-2) var(--ease-out) both; }
 .qr-stage[aria-busy="false"] .qr-loader { display: none; }
 .qr-stage.paused .qr-code { opacity: .22; filter: grayscale(1); }
 .qr-stage.paused::before { position: absolute; z-index: 1; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface); content: attr(data-pause-label); font-size: 10px; font-weight: 650; }
@@ -1143,7 +1145,6 @@ dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
   .login-method { min-height: 0; padding: 28px; }
   .login-method.ruled-left { padding: 28px; border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); border-left: 0; }
   .qr-stage { min-height: 238px; }
-  .qr-code svg { width: 218px; height: 218px; }
   .login-stages { min-height: 0; }
   .gate .button.primary { position: sticky; z-index: 1; bottom: 12px; }
 }
