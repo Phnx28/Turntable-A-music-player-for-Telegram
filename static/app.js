@@ -499,10 +499,17 @@ async function loadLibrary(force = false, keepVisible = false) {
 async function selectSource(chatId) {
   if (chatId === state.source && !state.likedMode) return;
   state._sourceChangeScroll = true;
-  if (state.temporarySource && chatId !== state.temporarySource.chatId) {
+  // The temporary entry belongs to the playing track, not to the browsing position, so
+  // browsing elsewhere must not drop it. Losing it here meant the pin vanished mid-song and
+  // coming back through the title re-previewed the whole channel from scratch.
+  if (state.temporarySource && chatId !== state.temporarySource.chatId
+      && state.current?.source?.chatId !== state.temporarySource.chatId) {
     if (state.temporaryJob?.jobId) api(`/api/jobs/${encodeURIComponent(state.temporaryJob.jobId)}`, { method: "DELETE" }).catch(() => {});
     state.temporarySource = null; state.temporaryJob = null;
   }
+  // A preview that is still running is deliberately left alone. Cancelling it here meant it
+  // never finished, so its lastMessageId was never recorded and the next visit rescanned the
+  // whole channel. Letting it finish in the background makes the return trip incremental.
   state.source = chatId; state.likedMode = false;
   $("track-search").value = "";
   $("library").scrollTop = 0;
@@ -524,6 +531,8 @@ async function selectTemporary() {
   state.source = state.temporarySource.chatId; state.likedMode = false;
   $("track-search").value = ""; $("library").scrollTop = 0; renderSources(); schedulePersist();
   await loadLibrary();
+  // The preview is incremental once the source has a cursor, so re-entering only scans new
+  // messages. Fire it either way, but do not block the list on it.
   state.temporaryJob = await api(`/api/sources/${encodeURIComponent(state.source)}/preview`, { method: "POST" });
   let visible = state.totalTracks;
   watchJob(state.temporaryJob, (job) => { if (job.found > visible && state.source === state.temporarySource?.chatId) { visible = job.found; loadLibrary(); } }, () => state.source === state.temporarySource?.chatId);

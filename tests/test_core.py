@@ -153,6 +153,26 @@ class FakeSearchClient:
             yield dialog
 
 
+class FakeCancellingSyncClient:
+    """Yields a few messages, then behaves as if the caller cancelled the scan."""
+
+    def __init__(self, messages, cancel_after):
+        self.messages = messages
+        self.cancel_after = cancel_after
+
+    def is_connected(self):
+        return True
+
+    async def get_entity(self, *_, **__):
+        return SimpleNamespace(title="Preview channel")
+
+    async def iter_messages(self, *_, **__):
+        for index, message in enumerate(self.messages):
+            if index == self.cancel_after:
+                raise asyncio.CancelledError()
+            yield message
+
+
 class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
     def service(self, directory: str) -> TelegramService:
         return TelegramService(
@@ -173,6 +193,41 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual("password_required", result["state"])
                 self.assertEqual("The Telegram 2FA password is incorrect", result["error"])
             self.assertEqual(2, client.password_attempts)
+            service.database.close()
+
+    async def test_cancelled_preview_saves_tracks_without_advancing_the_cursor(self):
+        # Browsing away cancels the preview job. Keep whatever was already read, but leave
+        # lastMessageId alone: iter_messages walks newest to oldest, so advancing it after a
+        # partial scan would make the next incremental sync skip every older message.
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.upsert_source({"chatId": "55", "kind": "channel", "title": "Preview"})
+            messages = [SimpleNamespace(id=index) for index in (40, 30, 20, 10)]
+            service.client = FakeCancellingSyncClient(messages, cancel_after=2)
+            service._message_to_track = lambda message, chat_id: {
+                "chatId": chat_id, "messageId": str(message.id),
+                "fileName": f"{message.id}.mp3", "mimeType": "audio/mpeg",
+            }
+            with self.assertRaises(asyncio.CancelledError):
+                await service.sync_source("55", full=True, temporary=True)
+            source = service.database.get_source("55")
+            self.assertEqual(0, int(source["lastMessageId"] or 0), "cursor must not advance")
+            self.assertEqual(2, service.database.list_tracks(chat_id="55")["total"])
+            service.database.close()
+
+    async def test_completed_sync_advances_the_cursor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.upsert_source({"chatId": "56", "kind": "channel", "title": "Done"})
+            messages = [SimpleNamespace(id=index) for index in (40, 30, 20, 10)]
+            service.client = FakeCancellingSyncClient(messages, cancel_after=None)
+            service._message_to_track = lambda message, chat_id: {
+                "chatId": chat_id, "messageId": str(message.id),
+                "fileName": f"{message.id}.mp3", "mimeType": "audio/mpeg",
+            }
+            await service.sync_source("56", full=True, temporary=True)
+            self.assertEqual(40, int(service.database.get_source("56")["lastMessageId"] or 0))
+            self.assertEqual(4, service.database.list_tracks(chat_id="56")["total"])
             service.database.close()
 
     async def test_replacing_login_disconnects_the_old_flow(self):

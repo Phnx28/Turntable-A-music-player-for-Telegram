@@ -580,7 +580,12 @@ class TelegramService:
 
     async def _run_preview(self, job: BackgroundJob) -> None:
         try:
-            await self.sync_source(job.chat_id, full=True, job=job, temporary=True)
+            # Only scan the whole history the first time. Once a preview has completed,
+            # lastMessageId is set and an incremental pass picks up just the new messages,
+            # so returning to a temporary source is fast instead of a full rescan.
+            source = self.database.get_source(job.chat_id)
+            first_visit = not int((source or {}).get("lastMessageId") or 0)
+            await self.sync_source(job.chat_id, full=first_visit, job=job, temporary=True)
             job.state = "complete"
         except asyncio.CancelledError:
             job.state = "cancelled"
@@ -661,16 +666,18 @@ class TelegramService:
         lock = self.sync_locks.get(chat_id)
         if lock is None:
             lock = self.sync_locks[chat_id] = asyncio.Lock()
+        # Bound before the try so the cancellation handler can still flush partial progress
+        # if we are cancelled during get_entity, before the scan loop assigns them.
+        minimum = 0 if full else int(source["lastMessageId"] or 0)
+        highest_scanned = minimum
+        seen: set[str] = set()
+        items: dict[str, dict[str, Any]] = {}
         async with self.sync_semaphore:
             async with lock:
                 try:
                     if job:
                         job.state = "running"
                     entity = await asyncio.wait_for(client.get_entity(int(chat_id)), timeout=30)
-                    minimum = 0 if full else int(source["lastMessageId"] or 0)
-                    highest_scanned = minimum
-                    seen: set[str] = set()
-                    items: dict[str, dict[str, Any]] = {}
                     for filter_type in (InputMessagesFilterMusic, InputMessagesFilterDocument):
                         async for message in client.iter_messages(
                             entity, filter=filter_type(), min_id=minimum
@@ -693,6 +700,13 @@ class TelegramService:
                     highest = max(highest_scanned, minimum)
                     self.database.finish_sync(chat_id, highest)
                     return self.database.get_source(chat_id) or source
+                except asyncio.CancelledError:
+                    # Keep the tracks we already read, but do NOT advance lastMessageId.
+                    # iter_messages walks newest to oldest, so highest_scanned is the newest
+                    # id after the very first message; persisting it here would make the next
+                    # incremental sync skip every older message we never got to.
+                    self.database.upsert_tracks(list(items.values()))
+                    raise
                 except Exception as error:
                     self.database.finish_sync(
                         chat_id, int(source["lastMessageId"] or 0), self._friendly_sync_error(error)
