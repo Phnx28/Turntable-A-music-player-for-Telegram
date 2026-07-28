@@ -546,10 +546,17 @@ async function selectTemporary() {
   watchJob(state.temporaryJob, (job) => { if (job.found > visible && state.source === state.temporarySource?.chatId) { visible = job.found; loadLibrary(); } }, () => state.source === state.temporarySource?.chatId);
 }
 
-function closeGlobalSearch() {
+function closeGlobalSearch({ clear = false } = {}) {
   $("global-results").hidden = true;
   $("global-search").setAttribute("aria-expanded", "false");
+  // A debounced search queued before the close would re-open the panel on its own, so drop
+  // the pending run as well as the in-flight request.
+  clearTimeout(globalSearchTimer);
   globalController?.abort();
+  if (clear) {
+    $("global-search").value = "";
+    state.globalTracks = []; state.globalSources = [];
+  }
 }
 
 function renderGlobalSearch(message = "") {
@@ -1459,8 +1466,11 @@ $("library").addEventListener("scroll", () => {
 addEventListener("resize", () => { state.windowStart = -1; renderTracks(true); });
 $("global-search").addEventListener("focus", () => renderGlobalSearch("Type a title, artist, or source name."));
 $("global-search").addEventListener("input", () => { clearTimeout(globalSearchTimer); globalSearchTimer = setTimeout(searchEverywhere, 280); });
+// Escape on a type=search input fires a native clear whose input event would re-open the
+// panel after the document handler closed it. Close on keyup instead, once that has settled.
+$("global-search").addEventListener("keyup", (event) => { if (event.key === "Escape") closeGlobalSearch({ clear: true }); });
 $("global-search-trigger").addEventListener("click", () => { if ($("app-shell").classList.contains("sidebar-collapsed")) { $("app-shell").classList.remove("sidebar-collapsed"); localStorage.setItem("tm-sidebar", "expanded"); } requestAnimationFrame(() => $("global-search").focus()); });
-$("close-global-search").addEventListener("click", closeGlobalSearch);
+$("close-global-search").addEventListener("click", () => closeGlobalSearch({ clear: true }));
 $("global-results").addEventListener("click", (event) => {
   const source = event.target.closest("[data-global-source]");
   const track = event.target.closest("[data-global-track]");
