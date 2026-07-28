@@ -370,7 +370,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .source-link:hover { background: var(--surface); }
-.source-link.active { border-left: 3px solid var(--accent); background: var(--surface); }
+/* Background only, no left bar. The bar also cost 3px of content width (the base rule sets
+   `border: 0`), so selecting a source nudged its label sideways; carrying the state purely in
+   the background keeps every row's text on one x.
+   It must NOT reuse --surface, which is exactly what :hover uses -- dropping the bar would have
+   made "selected" and "hovered" identical. An accent tint reads as chosen at any strength and
+   stays legible in both themes. */
+.source-link.active { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.source-link.active:hover { background: color-mix(in srgb, var(--accent) 42%, transparent); }
 .source-label { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .source-label span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-mark { width: 7px; height: 7px; border: 1px solid var(--muted); border-radius: 50%; }
@@ -481,7 +488,9 @@ body.resizing { cursor: col-resize; user-select: none; }
   text-align: left;
 }
 .track-row:hover { background: var(--surface); }
-.track-row.current { background: var(--surface); box-shadow: inset 3px 0 var(--accent); }
+/* Background only, matching .source-link.active: no left bar anywhere. An accent tint rather
+   than --surface, which :hover already uses. */
+.track-row.current { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .track-main { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .row-art { width: 43px; height: 43px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); object-fit: cover; }
 .track-copy, .player-copy { min-width: 0; }
