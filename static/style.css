@@ -333,8 +333,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 8px 30px; }
 .brand-logo { width: 44px; height: 44px; border-radius: 10px; object-fit: contain; flex: 0 0 auto; }
-[data-theme="dark"] .brand-logo { filter: invert(1); }
-@media (prefers-color-scheme: dark) { html[data-theme="system"] .brand-logo { filter: invert(1); } }
+/* Swap to the light-ink artwork rather than filtering. `filter: invert(1)` rotated the mark's
+   hue to its complement, which is why the logo read purple in light mode and green in dark. */
+[data-theme="dark"] .brand-logo { content: url("/assets/logo-dark.png"); }
+@media (prefers-color-scheme: dark) { html[data-theme="system"] .brand-logo { content: url("/assets/logo-dark.png"); } }
 /* min-width: 0 lets the flex children shrink instead of colliding: the brand block, the
    account name and the collapse button together overflowed the 223px rail and painted on
    top of each other. */
