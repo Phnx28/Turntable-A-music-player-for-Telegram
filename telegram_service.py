@@ -22,11 +22,15 @@ from telethon.tl.types import (
     InputMessagesFilterDocument,
     InputMessagesFilterMusic,
 )
+from telethon.tl.types import contacts as contacts_types
 
 from core import Database, is_audio_file, normalize_text, track_key
 
 
 FLOW_TTL_SECONDS = 300
+# How many frequent-forward peers to ask Telegram for. Only the handful that are also saved
+# contacts get shown, so this is deliberately larger than the row can hold.
+TOP_PEER_LIMIT = 20
 MEDIA_CHUNK_SIZE = 512 * 1024
 PARTIAL_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 # Corner radius of each QR module, as a fraction of the module size. Kept well under .5 (a full
@@ -792,17 +796,53 @@ class TelegramService:
                     )
                     raise
 
+    async def _forward_ranking(self) -> dict[str, float]:
+        """Map contact id -> Telegram's own "who you forward to" rating, best first.
+
+        Uses the forward_users category rather than correspondents: this dialog forwards a
+        track, and the two orderings really do differ (the account this was built against has
+        a #1 correspondent who is only its #2 forward target). Ratings decay over time, so
+        Telegram's numbers already reflect recency as well as volume.
+
+        Never raises. Top peers are a nicety, and the whole picker would be unusable if a
+        disabled-suggestions setting or a transient RPC error took it down.
+        """
+        try:
+            result = await self.require_client()(functions.contacts.GetTopPeersRequest(
+                offset=0, limit=TOP_PEER_LIMIT, hash=0, forward_users=True,
+            ))
+        except Exception:
+            # Includes TopPeersDisabled surfacing as an error, flood waits and offline blips.
+            return {}
+        if not isinstance(result, contacts_types.TopPeers):
+            # TopPeersDisabled: the user turned off "suggest frequent contacts" in Telegram.
+            # Respect that and show the plain alphabetical list.
+            return {}
+        ranking: dict[str, float] = {}
+        for category in result.categories:
+            for peer in category.peers:
+                user_id = getattr(peer.peer, "user_id", None)
+                if user_id is not None:
+                    ranking[str(user_id)] = peer.rating
+        return ranking
+
     async def contacts(self) -> list[dict[str, Any]]:
         result = await self.require_client()(functions.contacts.GetContactsRequest(hash=0))
+        ranking = await self._forward_ranking()
         contacts = []
         for user in result.users:
             if getattr(user, "deleted", False) or getattr(user, "bot", False) or getattr(user, "is_self", False):
                 continue
+            user_id = str(user.id)
             contacts.append({
-                "id": str(user.id),
+                "id": user_id,
                 "name": utils.get_display_name(user) or "Unnamed contact",
                 "username": getattr(user, "username", None),
                 "avatarUrl": f"/api/sources/{user.id}/avatar",
+                # Intersected with real contacts on purpose: top peers include bots and people
+                # who were never added, but forward_track() only accepts ids from this list, so
+                # ranking stays an ordering hint and never widens who can receive a track.
+                "forwardRank": ranking.get(user_id),
             })
         return sorted(contacts, key=lambda item: item["name"].casefold())
 

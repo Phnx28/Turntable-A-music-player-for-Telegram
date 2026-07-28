@@ -6,6 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from cryptography.fernet import Fernet
+from telethon.errors import RPCError
+from telethon.tl import functions
+from telethon.tl.types import User
+from telethon.tl.types import contacts as contacts_types
 
 from core import Database, RangeNotSatisfiable, now_ts, parse_lrc, parse_range_header, weighted_shuffle_tracks
 from telegram_service import QR_QUIET_MODULES, LoginFlow, MEDIA_CHUNK_SIZE, TelegramService, render_qr_svg
@@ -475,6 +479,72 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(asyncio.gather(t1, t2), 2)
             self.assertLessEqual(peak, 1, "per-source lock must serialize the same chat_id")
             service.database.close()
+
+
+class ContactRankingTests(unittest.IsolatedAsyncioTestCase):
+    """contacts() annotates saved contacts with Telegram's frequent-forward rating."""
+
+    def service(self, directory: str) -> TelegramService:
+        return TelegramService(
+            Database(Path(directory) / "library.sqlite3"),
+            api_id=1,
+            api_hash="test",
+            encryption_key=Fernet.generate_key().decode(),
+            data_directory=Path(directory),
+        )
+
+    @staticmethod
+    def _users():
+        # Real User instances: utils.get_display_name() type-checks its argument, so a
+        # SimpleNamespace silently degrades every name to "Unnamed contact".
+        return [
+            User(id=1, first_name="Ada", username="ada", bot=False, deleted=False, is_self=False),
+            User(id=2, first_name="Bo", bot=False, deleted=False, is_self=False),
+            User(id=3, first_name="Cy", bot=False, deleted=False, is_self=False),
+        ]
+
+    def _client(self, top_peers_result):
+        async def call(request):
+            if isinstance(request, functions.contacts.GetTopPeersRequest):
+                if isinstance(top_peers_result, Exception):
+                    raise top_peers_result
+                return top_peers_result
+            return SimpleNamespace(users=self._users())
+
+        return call
+
+    async def test_ranks_only_saved_contacts_and_keeps_alphabetical_order(self):
+        # Top peers include a bot (99) and a non-contact (42). Neither may appear: forward_track()
+        # validates the recipient against this same list, so ranking must not widen it.
+        peers = SimpleNamespace(peers=[
+            SimpleNamespace(peer=SimpleNamespace(user_id=3), rating=9.0),
+            SimpleNamespace(peer=SimpleNamespace(user_id=99), rating=8.0),
+            SimpleNamespace(peer=SimpleNamespace(user_id=1), rating=2.0),
+            SimpleNamespace(peer=SimpleNamespace(user_id=42), rating=1.0),
+        ])
+        result = contacts_types.TopPeers(
+            categories=[SimpleNamespace(category=None, peers=peers.peers)], chats=[], users=[])
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.require_client = lambda: self._client(result)
+            people = await service.contacts()
+            self.assertEqual(["Ada", "Bo", "Cy"], [item["name"] for item in people])
+            self.assertEqual({"Ada": 2.0, "Bo": None, "Cy": 9.0},
+                             {item["name"]: item["forwardRank"] for item in people})
+            service.database.close()
+
+    async def test_disabled_or_failing_top_peers_still_returns_contacts(self):
+        # Frequent contacts are a nicety. A user who turned off suggestions, or a flood wait,
+        # must not take down the whole share picker.
+        for outcome in (contacts_types.TopPeersDisabled(), RPCError("req", "FLOOD_WAIT_5", 420)):
+            with tempfile.TemporaryDirectory() as directory:
+                service = self.service(directory)
+                service.require_client = lambda: self._client(outcome)
+                people = await service.contacts()
+                self.assertEqual(["Ada", "Bo", "Cy"], [item["name"] for item in people])
+                self.assertTrue(all(item["forwardRank"] is None for item in people),
+                                f"{type(outcome).__name__} must degrade to an unranked list")
+                service.database.close()
 
 
 if __name__ == "__main__":

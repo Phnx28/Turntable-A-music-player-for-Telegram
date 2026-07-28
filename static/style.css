@@ -1072,6 +1072,20 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 #share-dialog .modal-header { margin-bottom: 16px; }
 #contact-search { margin-top: 8px; }
 #share-status { margin-top: 8px; }
+/* Frequent-forward shortcuts. A horizontal strip of avatars so it reads as a different kind of
+   thing than the alphabetical list below it, rather than as five more rows to scan. */
+.frequent-contacts { margin-top: 12px; }
+.frequent-title { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.frequent-row { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: 6px; }
+.frequent-contact { display: grid; padding: 9px 4px 8px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; justify-items: center; gap: 7px; }
+.frequent-contact:hover { background: var(--surface); }
+/* Bump the fallback initials with the circle: .source-avatar sets 11px for its 34px default,
+   which reads as a smudge at 46px. */
+.frequent-contact .source-avatar { width: 46px; height: 46px; font-size: 14px; }
+/* Two lines, broken on word boundaries, so "Mahdi Khan Mohammadi" keeps its given name instead
+   of clipping to "Mahdi Khan Mo..." mid-word. */
+.frequent-name { display: -webkit-box; max-width: 100%; overflow: hidden; color: var(--text); font-size: 11px; line-height: 1.25; text-align: center; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
 .contact-list { display: grid; margin-top: 8px; border-top: 1px solid var(--line); }
 .contact-row { display: grid; min-height: 58px; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 11px; padding: 6px 3px; border: 0; border-bottom: 1px solid var(--soft-line); background: transparent; cursor: pointer; text-align: left; }
 .contact-row:hover { background: var(--surface); }

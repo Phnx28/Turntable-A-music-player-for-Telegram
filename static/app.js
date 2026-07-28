@@ -1487,9 +1487,32 @@ async function saveCurrentToTelegram() {
   finally { button.disabled = false; button.removeAttribute("aria-busy"); }
 }
 
+// Telegram's frequent-forward peers, best first. Capped at 5: this is a single scannable row of
+// shortcuts, and a longer one would just be the full list again in a different order.
+const FREQUENT_LIMIT = 5;
+
+function frequentContacts() {
+  return state.contacts
+    .filter((contact) => typeof contact.forwardRank === "number")
+    .sort((a, b) => b.forwardRank - a.forwardRank)
+    .slice(0, FREQUENT_LIMIT);
+}
+
+function renderFrequentContacts() {
+  const searching = $("contact-search").value.trim() !== "";
+  const frequent = frequentContacts();
+  // Hide the shortcut row while searching: the filtered list below is the answer to the query,
+  // and keeping unrelated faces pinned above it competes with the actual results.
+  const show = frequent.length > 0 && !searching;
+  $("frequent-contacts").hidden = !show;
+  if (!show) { $("frequent-list").innerHTML = ""; return; }
+  $("frequent-list").innerHTML = frequent.map((contact) => `<button class="frequent-contact" type="button" data-contact="${contact.id}" title="${escapeHtml(contact.name)}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span class="frequent-name">${escapeHtml(contact.name)}</span></button>`).join("");
+}
+
 function renderContacts() {
   const query = $("contact-search").value.trim().toLocaleLowerCase();
   const contacts = state.contacts.filter((contact) => `${contact.name} ${contact.username || ""}`.toLocaleLowerCase().includes(query));
+  renderFrequentContacts();
   $("share-status").textContent = `${contacts.length} matching ${contacts.length === 1 ? "contact" : "contacts"}`;
   $("contact-list").innerHTML = contacts.map((contact) => `<button class="contact-row" type="button" data-contact="${contact.id}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span><strong>${escapeHtml(contact.name)}</strong><small>${contact.username ? `@${escapeHtml(contact.username)}` : "Telegram contact"}</small></span></button>`).join("") || '<p class="empty-copy">No matching contacts.</p>';
 }
@@ -1961,7 +1984,12 @@ $("now-panel").querySelector('[role="tablist"]').addEventListener("keydown", (e)
 $("lyrics-lines").addEventListener("click", (event) => { const line = event.target.closest("[data-lyric]"); if (line) { audio.currentTime = state.lyrics.lines[Number(line.dataset.lyric)].startMs / 1000; state.lyricsFollow = true; $("sync-lyrics").hidden = true; line.classList.remove("seek-pulse"); void line.offsetWidth; line.classList.add("seek-pulse"); } }); $("now-content").addEventListener("scroll", updateNowHeader, { passive: true });
 $("now-panel").addEventListener("wheel", stopFollowingLyrics, { passive: true }); $("now-panel").addEventListener("touchmove", stopFollowingLyrics, { passive: true }); $("sync-lyrics").addEventListener("click", () => { state.lyricsFollow = true; $("sync-lyrics").hidden = true; state.lyric = -2; updateLyric(); }); $("add-lyrics-empty").addEventListener("click", openLyricsEditor); $("edit-current").addEventListener("click", () => openMetadata()); $("edit-lyrics").addEventListener("click", openLyricsEditor);
 $("like-current").addEventListener("click", () => toggleLike().catch((error) => showError(error, toggleLike))); $("save-current-telegram").addEventListener("click", saveCurrentToTelegram); $("share-current").addEventListener("click", openShare); $("player-more").addEventListener("click", (event) => { if (!state.current) return; const rect = event.currentTarget.getBoundingClientRect(); trackMenu(state.current.key, rect.right, rect.top); });
-$("contact-search").addEventListener("input", renderContacts); $("contact-list").addEventListener("click", (event) => { const contact = event.target.closest("[data-contact]"); if (contact) queueShare(contact.dataset.contact); });
+$("contact-search").addEventListener("input", renderContacts);
+// Both lists share one handler: the shortcut row and the full list carry the same data-contact
+// contract, so a click means the same thing wherever it lands.
+for (const id of ["contact-list", "frequent-list"]) {
+  $(id).addEventListener("click", (event) => { const contact = event.target.closest("[data-contact]"); if (contact) queueShare(contact.dataset.contact); });
+}
 $("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata").addEventListener("click", resetMetadata); $("fetch-metadata").addEventListener("click", fetchMetadata); $("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); }); $("lyrics-form").addEventListener("submit", saveLyrics); $("reset-lyrics").addEventListener("click", async () => { if (await confirmAction("Fetch lyrics again?", "Saved lyrics will be replaced by a new internet lookup.", "Fetch again")) { try { $("lyrics-status").textContent = "Looking for lyrics…"; state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" }); renderLyrics(); $("lyrics-status").textContent = "Lyrics lookup finished."; } catch (error) { $("lyrics-status").textContent = error.message; } } });
 
 $("open-settings").addEventListener("click", openSettings); document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll("[data-settings-tab]").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll("[data-settings-pane]").forEach((pane) => { pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab; }); })); document.querySelectorAll(".save-settings").forEach((button) => button.addEventListener("click", () => saveSettings(button))); $("test-musicbrainz").addEventListener("click", async () => { try { state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value }) }); await api("/api/settings/musicbrainz/test", { method: "POST" }); toast("MusicBrainz connection works"); } catch (error) { showError(error, () => $("test-musicbrainz").click()); } });
