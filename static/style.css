@@ -506,8 +506,40 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-left: 1px solid var(--line);
   background: var(--surface);
 }
-.now-header { flex-shrink: 0; }
+/* The header is sticky so the tabs and the current track stay reachable, and it collapses
+   on scroll: expanded it ate 61-68% of the viewport, leaving 106px of content on a laptop
+   (6% of a lyric sheet). Collapsed it is ~170px, so content roughly triples.
+   JS toggles .is-compact from .now-content's scroll position; with JS off the header simply
+   stays expanded, which is the current behaviour. */
+.now-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  flex-shrink: 0;
+  background: var(--surface);
+}
 .now-content { overflow-y: auto; flex: 1; min-height: 0; }
+
+/* Collapsed: art shrinks and sits beside the title instead of above it. Transitions run on
+   the wrapper's width/height and the title's font-size, all cheap to animate. */
+.now-header.is-compact { display: grid; grid-template-areas: "art title" "tabs tabs"; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 14px; }
+.now-header.is-compact .panel-header { display: none; }
+.now-header.is-compact .large-art-wrap { width: 64px; margin: 8px 0; grid-area: art; }
+.now-header.is-compact .now-title { height: auto; grid-area: title; }
+.now-header.is-compact .now-title h2 { font-size: 17px; -webkit-line-clamp: 1; }
+.now-header.is-compact .now-title p { margin: 2px 0 0; font-size: 12px; }
+.now-header.is-compact .now-tabs { margin-top: 8px; grid-area: tabs; }
+/* Opaque and edge-to-edge, otherwise lines scrolling behind the sticky header show in the
+   panel's horizontal padding. */
+.now-header.is-compact { margin: 0 -24px; padding: 4px 24px 0; box-shadow: 0 6px 14px -12px rgb(0 0 0 / .45); }
+
+.large-art-wrap, .now-title h2, .now-title p {
+  transition: width var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out),
+    margin var(--dur-2) var(--ease-out), font-size var(--dur-2) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .large-art-wrap, .now-title h2, .now-title p { transition: none; }
+}
 
 .panel-header, .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .large-art-wrap {
@@ -790,6 +822,12 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
     border-left: 0;
   }
   .large-art-wrap { width: min(72vw, 360px); margin: 28px auto 22px; }
+  /* The panel is fixed at inset 0 and sits above the player (z 25 vs 10), so the last 44px
+     of every lyric sheet was unreachable behind the player bar. */
+  .now-content { padding-bottom: 84px; }
+  .now-header.is-compact .large-art-wrap { width: 56px; margin: 6px 0; }
+  /* Match the panel's own responsive side padding so the sticky bar stays edge-to-edge. */
+  .now-header.is-compact { margin: 0 calc(-1 * max(20px, (100vw - 580px) / 2)); padding: 4px max(20px, calc((100vw - 580px) / 2)) 0; }
   /* auto for the utilities column: a fixed 44px could not hold the track actions once the
      transport kept prev/next, so like/more overlapped the skip buttons by up to 21px. */
   .player-main { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; padding: 0 max(13px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(13px, env(safe-area-inset-left)); }

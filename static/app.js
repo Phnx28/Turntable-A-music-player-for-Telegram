@@ -1050,9 +1050,25 @@ function showPanel(tab = "lyrics", toggle = false) {
   for (const name of ["lyrics", "queue", "details"]) { const active = name === tab; $(`${name}-pane`).hidden = !active; $(`${name}-tab`).classList.toggle("active", active); $(`${name}-tab`).setAttribute("aria-selected", String(active)); }
   const pane = $(`${tab}-pane`); pane.classList.remove("pane-entering"); requestAnimationFrame(() => pane.classList.add("pane-entering"));
   if (tab === "queue") renderQueue();
+  // Switching tabs swaps the scroll container's content, so re-derive the header state from
+  // the new scrollTop instead of leaving it collapsed over a short pane.
+  updateNowHeader();
   schedulePersist();
 }
 function closePanel() { $("now-panel").hidden = true; $("app-shell").classList.remove("panel-open"); schedulePersist(); }
+
+// Collapse the now-playing header once you scroll into the content. Two thresholds rather
+// than one: a single boundary sits exactly where collapsing changes scrollHeight, so the
+// header would oscillate. Collapse at 48px, expand only back under 12px.
+function updateNowHeader() {
+  const header = document.querySelector(".now-header");
+  const content = $("now-content");
+  if (!header || !content) return;
+  const top = content.scrollTop;
+  const compact = header.classList.contains("is-compact");
+  if (!compact && top > 48) header.classList.add("is-compact");
+  else if (compact && top < 12) header.classList.remove("is-compact");
+}
 
 function openMenu(actions, x, y) {
   const menu = $("context-menu"); menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
@@ -1569,7 +1585,8 @@ $("now-panel").querySelector('[role="tablist"]').addEventListener("keydown", (e)
   if (e.key === "ArrowRight") { e.preventDefault(); tabs[(i + 1) % tabs.length].click(); tabs[(i + 1) % tabs.length].focus(); }
   if (e.key === "ArrowLeft") { e.preventDefault(); tabs[(i - 1 + tabs.length) % tabs.length].click(); tabs[(i - 1 + tabs.length) % tabs.length].focus(); }
 });
-$("lyrics-lines").addEventListener("click", (event) => { const line = event.target.closest("[data-lyric]"); if (line) { audio.currentTime = state.lyrics.lines[Number(line.dataset.lyric)].startMs / 1000; state.lyricsFollow = true; $("sync-lyrics").hidden = true; line.classList.remove("seek-pulse"); void line.offsetWidth; line.classList.add("seek-pulse"); } }); $("now-panel").addEventListener("wheel", stopFollowingLyrics, { passive: true }); $("now-panel").addEventListener("touchmove", stopFollowingLyrics, { passive: true }); $("sync-lyrics").addEventListener("click", () => { state.lyricsFollow = true; $("sync-lyrics").hidden = true; state.lyric = -2; updateLyric(); }); $("add-lyrics-empty").addEventListener("click", openLyricsEditor); $("edit-current").addEventListener("click", () => openMetadata()); $("edit-lyrics").addEventListener("click", openLyricsEditor);
+$("lyrics-lines").addEventListener("click", (event) => { const line = event.target.closest("[data-lyric]"); if (line) { audio.currentTime = state.lyrics.lines[Number(line.dataset.lyric)].startMs / 1000; state.lyricsFollow = true; $("sync-lyrics").hidden = true; line.classList.remove("seek-pulse"); void line.offsetWidth; line.classList.add("seek-pulse"); } }); $("now-content").addEventListener("scroll", updateNowHeader, { passive: true });
+$("now-panel").addEventListener("wheel", stopFollowingLyrics, { passive: true }); $("now-panel").addEventListener("touchmove", stopFollowingLyrics, { passive: true }); $("sync-lyrics").addEventListener("click", () => { state.lyricsFollow = true; $("sync-lyrics").hidden = true; state.lyric = -2; updateLyric(); }); $("add-lyrics-empty").addEventListener("click", openLyricsEditor); $("edit-current").addEventListener("click", () => openMetadata()); $("edit-lyrics").addEventListener("click", openLyricsEditor);
 $("like-current").addEventListener("click", () => toggleLike().catch((error) => showError(error, toggleLike))); $("save-current-telegram").addEventListener("click", saveCurrentToTelegram); $("share-current").addEventListener("click", openShare); $("player-more").addEventListener("click", (event) => { if (!state.current) return; const rect = event.currentTarget.getBoundingClientRect(); trackMenu(state.current.key, rect.right, rect.top); });
 $("contact-search").addEventListener("input", renderContacts); $("contact-list").addEventListener("click", (event) => { const contact = event.target.closest("[data-contact]"); if (contact) queueShare(contact.dataset.contact); });
 $("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata").addEventListener("click", resetMetadata); $("fetch-metadata").addEventListener("click", fetchMetadata); $("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); }); $("lyrics-form").addEventListener("submit", saveLyrics); $("reset-lyrics").addEventListener("click", async () => { if (await confirmAction("Fetch lyrics again?", "Saved lyrics will be replaced by a new internet lookup.", "Fetch again")) { try { $("lyrics-status").textContent = "Looking for lyrics…"; state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" }); renderLyrics(); $("lyrics-status").textContent = "Lyrics lookup finished."; } catch (error) { $("lyrics-status").textContent = error.message; } } });
