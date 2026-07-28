@@ -942,6 +942,24 @@ async function toggleSource(input) {
   } catch (error) { item.selected = !selected; item.pending = false; renderDiscovered(); showError(error, () => toggleSource(input)); }
 }
 
+async function pinSource(chatId) {
+  const source = state.sources.find((item) => item.chatId === chatId);
+  if (!source) return;
+  const pinned = !source.pinnedAt;
+  // Reorder straight away; the list order is derived from pinnedAt and the request is small.
+  const previous = source.pinnedAt;
+  source.pinnedAt = pinned ? Math.floor(Date.now() / 1000) : null;
+  renderSources();
+  try {
+    await api(`/api/sources/${encodeURIComponent(chatId)}/pin`, {
+      method: "PATCH", body: JSON.stringify({ pinned }),
+    });
+  } catch (error) {
+    source.pinnedAt = previous; renderSources();
+    showError(error, () => pinSource(chatId));
+  }
+}
+
 async function keepTemporarySource() {
   const chatId = state.temporarySource?.chatId;
   if (!chatId || state.keepingSource) return;
@@ -1395,8 +1413,10 @@ $("change-number").addEventListener("click", restartPhoneLogin);
 $("change-number-2fa").addEventListener("click", restartPhoneLogin);
 
 document.querySelector('[data-source=""]').addEventListener("click", () => selectSource(""));
-$("source-list").addEventListener("click", (event) => { const sync = event.target.closest("[data-sync-source]"); if (sync) return syncSource(sync.dataset.syncSource, sync.dataset.full === "true"); const checkbox = event.target.closest("[data-bulk-source]"); if (checkbox) { checkbox.checked ? state.selectedSources.add(checkbox.dataset.bulkSource) : state.selectedSources.delete(checkbox.dataset.bulkSource); return renderSources(); } const temporary = event.target.closest("[data-temporary-source]"); if (temporary && !state.bulk) return selectTemporary(); const row = event.target.closest("[data-source]"); if (row && !state.bulk) selectSource(row.dataset.source); });
-$("source-list").addEventListener("keydown", (event) => { const row = event.target.closest("[data-source]"); if (row && ["Enter", " "].includes(event.key)) { event.preventDefault(); selectSource(row.dataset.source); } });
+$("source-list").addEventListener("click", (event) => { const sync = event.target.closest("[data-sync-source]"); if (sync) return syncSource(sync.dataset.syncSource, sync.dataset.full === "true"); const pin = event.target.closest("[data-pin-source]"); if (pin) return pinSource(pin.dataset.pinSource); const checkbox = event.target.closest("[data-bulk-source]"); if (checkbox) { checkbox.checked ? state.selectedSources.add(checkbox.dataset.bulkSource) : state.selectedSources.delete(checkbox.dataset.bulkSource); return renderSources(); } const temporary = event.target.closest("[data-temporary-source]"); if (temporary && !state.bulk) return selectTemporary(); const row = event.target.closest("[data-source]"); if (row && !state.bulk) selectSource(row.dataset.source); });
+// The row is a keyboard target, but the buttons inside it are too. Let a focused button
+// handle its own Enter/Space instead of navigating to the source behind it.
+$("source-list").addEventListener("keydown", (event) => { if (event.target.closest("button")) return; const row = event.target.closest("[data-source]"); if (row && ["Enter", " "].includes(event.key)) { event.preventDefault(); selectSource(row.dataset.source); } });
 $("source-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-source]"); if (row) { event.preventDefault(); sourceMenu(row.dataset.source, event.clientX, event.clientY); } });
 function cleanupSourceDrag() {
   $("source-list").querySelectorAll(".source-entry.is-dragging, .source-entry.drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
