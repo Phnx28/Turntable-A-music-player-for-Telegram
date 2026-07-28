@@ -1384,16 +1384,27 @@ async function openShare() {
 function queueShare(recipientId) {
   const key = state.current?.key; if (!key) return;
   $("share-dialog").close();
-  if (pendingShare) clearTimeout(pendingShare.timer);
+  if (pendingShare) { clearTimeout(pendingShare.timer); clearInterval(pendingShare.tick); }
   const pending = { cancelled: false };
   pending.timer = setTimeout(async () => {
+    clearInterval(pending.tick);
     if (pending.cancelled) return;
     pendingShare = null;
     try { await api(`/api/tracks/${encodeURIComponent(key)}/share`, { method: "POST", body: JSON.stringify({ recipientId }) }); toast("Shared on Telegram"); }
     catch (error) { showError(error); }
   }, 5000);
   pendingShare = pending;
-  toast("Sharing in 5 seconds…", { label: "Undo", run: () => { pending.cancelled = true; clearTimeout(pending.timer); pendingShare = null; toast("Share cancelled"); } }, 5000);
+  // The label was a fixed string, so the undo window read "5 seconds" for its whole life while
+  // only the timer bar moved. Retitle it each second so the number matches the bar.
+  const deadline = Date.now() + 5000;
+  const undo = { label: "Undo", run: () => { pending.cancelled = true; clearTimeout(pending.timer); clearInterval(pending.tick); pendingShare = null; toast("Share cancelled"); } };
+  toast("Sharing in 5 seconds…", undo, 5000);
+  pending.tick = setInterval(() => {
+    const left = Math.round((deadline - Date.now()) / 1000);
+    // Stop if the toast was replaced by another message, so we never retitle someone else's.
+    if (pending.cancelled || left <= 0 || $("toast").hidden) return clearInterval(pending.tick);
+    $("toast-message").textContent = `Sharing in ${left} second${left === 1 ? "" : "s"}…`;
+  }, 250);
 }
 
 async function locateCurrent() {
