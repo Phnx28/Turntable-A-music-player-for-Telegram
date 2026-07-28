@@ -383,15 +383,13 @@
       </fieldset>
       </section>
       <section data-settings-pane="playback" hidden>
-        <div class="setting-block"><label for="prefetch-count"><strong>Songs to prefetch</strong><span>Cache upcoming tracks for gapless starts. Set 0 to disable.</span></label><input id="prefetch-count" type="number" min="0" max="20" value="1"></div>
+        <div class="setting-block narrow"><label for="prefetch-count"><strong>Songs to prefetch</strong><span>Cache upcoming tracks for gapless starts. Set 0 to disable.</span></label><input id="prefetch-count" type="number" min="0" max="20" value="1"></div>
         <div class="cache-row"><span id="cache-usage" class="small-copy">Checking cache…</span><button id="clear-cache" class="button" type="button">Clear prefetched songs</button></div>
-        <button class="button primary save-settings" type="button">Save playback settings</button>
       </section>
       <section data-settings-pane="metadata" hidden>
         <div class="setting-block"><label for="musicbrainz-contact"><strong>MusicBrainz contact</strong><span>MusicBrainz does not use an API key for lookups. Enter an email address or website for the required User-Agent.</span></label><input id="musicbrainz-contact" type="text" placeholder="you@example.com"></div>
-        <a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">Read the MusicBrainz API guide ↗</a>
-        <div class="setting-block"><label for="default-cover-quality"><strong>Default cover quality</strong></label><select id="default-cover-quality"><option value="500">Standard · 500 px</option><option value="1200">High · 1200 px</option><option value="original">Original</option></select></div>
-        <div class="form-actions"><button class="button primary save-settings" type="button">Save metadata settings</button><button id="test-musicbrainz" class="button" type="button">Test connection</button></div>
+        <div class="setting-block narrow"><label for="default-cover-quality"><strong>Default cover quality</strong></label><select id="default-cover-quality"><option value="500">Standard · 500 px</option><option value="1200">High · 1200 px</option><option value="original">Original</option></select></div>
+        <div class="form-actions"><button id="test-musicbrainz" class="button" type="button">Test connection</button><a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">MusicBrainz API guide ↗</a></div>
       </section>
       <section data-settings-pane="network" hidden>
         <fieldset class="choice-group first">
@@ -451,9 +449,18 @@
         </div>
       </section>
       <section data-settings-pane="account" hidden>
-      <div class="danger-zone">
-        <button id="disconnect-telegram" class="text-button danger" type="button">Disconnect Telegram and clear library</button>
-      </div>
+        <div class="account-summary">
+          <p class="field-label">Signed in as</p>
+          <p id="settings-account-name" class="account-name">Not connected</p>
+          <p id="settings-account-meta" class="small-copy"></p>
+        </div>
+        <div class="danger-zone">
+          <p class="field-label danger-title">Danger zone</p>
+          <div class="danger-row">
+            <span class="small-copy">Disconnecting signs out of Telegram and deletes the indexed library, likes, lyrics and metadata edits on this machine.</span>
+            <button id="disconnect-telegram" class="button danger" type="button">Disconnect</button>
+          </div>
+        </div>
       </section></div></div>
     </dialog>
 

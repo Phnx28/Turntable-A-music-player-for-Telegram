@@ -799,13 +799,19 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
 
 .choice-group { margin: 28px 0 0; padding: 0; border: 0; }
 .choice-group legend { margin-bottom: 9px; font-size: 12px; font-weight: 650; }
-.segmented { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }
+/* auto-flow column rather than repeat(3, 1fr): the hardcoded three tracks left the two-button
+   Network control filling only two thirds of its row, with a dead third column after it. */
+.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }
 .segmented button { min-height: 40px; border: 0; border-right: 1px solid var(--line); background: transparent; cursor: pointer; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
 .segmented button:last-child { border-right: 0; }
 .segmented button.active { background: var(--accent); color: var(--accent-ink); }
 .type-options button:nth-child(2) { font-family: var(--font-serif); }
 .type-options button:nth-child(3) { font-family: var(--font-mono); }
 .danger-zone { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); }
+/* The Network pane's danger zone holds only a sign-out button that is hidden unless a password
+   session exists, leaving a bare 21px rule floating under the pane. :has() collapses it when
+   nothing inside is showing. */
+.danger-zone:not(:has(> *:not([hidden]))) { margin-top: 0; padding-top: 0; border-top: 0; }
 
 .toast {
   position: fixed;
@@ -1125,13 +1131,41 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .discover-row.pending { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .discover-row input { accent-color: var(--accent); }
 
-.settings-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 28px; margin-top: 24px; }
-.settings-nav { display: grid; align-content: start; border-right: 1px solid var(--line); }
-.settings-nav button { min-height: 40px; padding: 0 12px; border: 0; border-right: 2px solid transparent; background: transparent; color: var(--muted); text-align: left; cursor: pointer; transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
-.settings-nav button.active { border-color: var(--accent); color: var(--ink); background: var(--paper); }
-.settings-content { min-width: 0; min-height: 300px; }
+/* The dialog is a fixed size so the nav never moves as you switch tabs; only the pane scrolls.
+   Every pane previously had to live inside the height of the shortest one, which left Network
+   clipped at the bottom and Account stranded in 300px of empty space. */
+.settings-layout { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 24px; margin-top: 22px; }
+.settings-nav { display: grid; align-content: start; gap: 2px; }
+.settings-nav button {
+  min-height: 38px; padding: 0 12px; border: 0; border-radius: var(--radius-control);
+  background: transparent; color: var(--muted); font-size: 14px; text-align: left; cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.settings-nav button:hover { background: var(--surface); color: var(--ink); }
+/* Tinted background rather than an accent bar, matching .source-link.active and .track-row.current.
+   A stronger mix on hover so a selected item still responds to the pointer. */
+.settings-nav button.active { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink); }
+.settings-nav button.active:hover { background: color-mix(in srgb, var(--accent) 42%, transparent); }
+.settings-content {
+  min-width: 0; height: 340px; overflow-y: auto; padding-right: 4px;
+  /* Gutter exists whether or not a pane overflows, so switching tabs cannot shift the
+     content sideways. */
+  scrollbar-gutter: stable;
+}
 .choice-group.first { margin-top: 0; }
 .setting-block { display: grid; gap: 9px; margin-bottom: 22px; }
+/* A 0-20 number and a three-option select do not need the full dialog width; a full-bleed input
+   implies free text and makes the value harder to read against its label. */
+.setting-block.narrow input, .setting-block.narrow select { max-width: 200px; }
+.field-label { margin: 0 0 6px; color: var(--muted); font-family: var(--font-mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.account-summary { margin-bottom: 26px; }
+.account-name { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+.danger-title { color: var(--danger); }
+/* The destructive action was a bare text link -- lighter than every ordinary button on the
+   screen. Boxed, labelled and paired with its consequence instead. */
+.danger-row { display: flex; align-items: center; gap: 16px; justify-content: space-between; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-radius: var(--radius-control); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.danger-row .small-copy { flex: 1 1 auto; }
+.danger-row .button { flex: 0 0 auto; }
 .setting-block label strong, .setting-block label span { display: block; }
 .setting-block label span { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .setting-block input, .setting-block select, .inline-choice select, .discover-tools select { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); }
@@ -1179,9 +1213,12 @@ dialog.modal[open]::backdrop { opacity: 1; }
 @media (max-width: 860px) {
   .desktop-only { display: none; }
   .app-shell.sidebar-collapsed, .app-shell.sidebar-collapsed.panel-open { grid-template-columns: minmax(0, 1fr); }
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-nav { grid-template-columns: repeat(4, 1fr); overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .settings-nav button { padding-inline: 8px; border-right: 0; border-bottom: 2px solid transparent; text-align: center; }
+  .settings-layout { grid-template-columns: 1fr; gap: 16px; }
+  /* auto-flow column, not repeat(4): there are five tabs, so a four-column track wrapped the
+     last one onto a second row. They scroll horizontally instead. */
+  .settings-nav { grid-auto-flow: column; grid-auto-columns: max-content; gap: 4px; overflow-x: auto; padding-bottom: 4px; }
+  .settings-nav button { padding-inline: 12px; text-align: center; }
+  .settings-content { height: auto; max-height: 52vh; }
   .now-panel { position: fixed; z-index: 25; inset: 0; }
   /* A full-screen sheet should rise from the edge it covers, not nudge in from the side. */
   .now-panel:not([hidden]) { animation-name: sheet-in; }
@@ -1360,7 +1397,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
 
 #bind-host-options button[aria-pressed="true"] { font-weight: 600; }
 
-.text-button.danger, .button.danger { color: var(--danger, #b3261e); }
+.text-button.danger, .button.danger { color: var(--danger); }
 .button.danger { border-color: currentColor; }
 
 /* Searching keeps the current rows on screen and fades them, so refining a query never
