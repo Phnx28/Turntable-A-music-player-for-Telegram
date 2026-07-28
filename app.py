@@ -322,12 +322,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        # ponytail: long cache on fingerprinted /assets/; safe because
-        # index.html doesn't list the asset paths — the app fetches them by
-        # name and content changes ship under a new filename. Upgrade path:
-        # add ?v= or hashed names if the wiring ever changes.
+        # Assets are NOT fingerprinted: index.html hard-codes /assets/app.js and
+        # /assets/style.css, so a long max-age served stale JS/CSS for up to an hour after a
+        # change (observed as a fixed edit "not taking effect"). Revalidate instead -- ETag makes
+        # the common case a cheap 304. Restore a long max-age only alongside hashed filenames.
         if request.url.path.startswith("/assets/") and response.status_code == 200:
-            response.headers["Cache-Control"] = "public, max-age=3600"
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     @application.exception_handler(KeyError)
