@@ -93,8 +93,6 @@ npm install                      # Ionicons, build-time only
 python3 tools/build_icons.py     # --check verifies without writing
 ```
 
-Agents and contributors: see [`memory.md`](memory.md) for accumulated gotchas.
-
 ## License
 
 MIT — see [LICENSE](LICENSE). Icons are [Ionicons](https://ionic.io/ionicons) (MIT); see
