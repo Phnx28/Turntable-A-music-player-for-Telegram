@@ -595,9 +595,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .lyric-line { min-width: 0; padding: 8px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1.35; text-align: start; overflow-wrap: anywhere; transition: color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); }
 .empty-copy { margin: 48px 0; color: var(--muted); font-size: 13px; }
 
+/* Reserve the scrollbar's width for the whole scroller rather than padding this pane: the
+   gutter then exists whether or not the content overflows, so switching tabs cannot shift the
+   layout sideways. `stable` only reserves it where a classic scrollbar actually takes space --
+   with overlay scrollbars (macOS, GNOME) nothing is reserved and nothing is wasted, which is
+   why the buttons appeared to sit *under* the bar rather than being pushed aside by it. */
+.now-content { padding-right: 12px; scrollbar-gutter: stable; }
 .details-pane { padding: 24px 0; }
-.details-pane dl { margin: 0; }
-.details-pane dl div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--soft-line); }
+/* The label column sizes to the longest label instead of a fixed 112px, which left ~90px of
+   dead space after a short one like "Year" and read as two unrelated columns.
+   The track is defined once on the <dl> and each row opts into it with subgrid, so every value
+   still starts on the same x -- sizing each row independently would align the gap but stagger
+   the values. Falls back to the old fixed column where subgrid is unsupported. */
+.details-pane dl { display: grid; grid-template-columns: 112px minmax(0, 1fr); margin: 0; }
+.details-pane dl div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 18px; padding: 10px 0; border-bottom: 1px solid var(--soft-line); }
+@supports (grid-template-columns: subgrid) {
+  .details-pane dl { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
+  .details-pane dl div { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
 .details-pane dt { color: var(--muted); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; }
 .details-pane dd { margin: 0; overflow-wrap: anywhere; }
 .detail-actions { display: grid; gap: 8px; margin-top: 24px; }
