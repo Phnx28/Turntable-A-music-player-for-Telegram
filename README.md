@@ -19,7 +19,6 @@ A fun side project, not a product. Single user, single machine.
   [LRCLIB](https://lrclib.net) — all editable and overridable by hand.
 - **Sends tracks back to Telegram**: to Saved Messages, or forwarded to a contact (frequent
   recipients first).
-- **Installable as a PWA**, with lock-screen controls and artwork via MediaSession.
 
 ## Requirements
 
