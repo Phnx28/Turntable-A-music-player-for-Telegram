@@ -1,16 +1,18 @@
+# Secrets and local configuration
 .env
+
+# Python
 .venv/
 __pycache__/
 *.pyc
+
+# Runtime data: Telegram session, library index, cached audio.
+# Never commit this — it authenticates as your Telegram account.
 data/
 library.sqlite3*
-.DS_Store
-# Personal working notes and audits — not project history
-TODO.md
-Kimi3thoughts.md
-AUDIT.md
-AUDIT-TODO.md
-memory.md
 
+# Build-time only, restored by npm install
 node_modules/
-.remember/
+
+# OS
+.DS_Store
