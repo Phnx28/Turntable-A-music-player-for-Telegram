@@ -64,10 +64,18 @@ function toast(message, action = null, duration = 3200) {
   $("toast-action").onclick = action?.run || null;
   const notice = $("toast");
   notice.style.setProperty("--toast-duration", `${duration}ms`);
-  notice.classList.remove("counting");
+  notice.classList.remove("counting", "is-leaving");
   notice.hidden = false;
   requestAnimationFrame(() => notice.classList.add("counting"));
-  toastTimer = setTimeout(() => { notice.hidden = true; notice.classList.remove("counting"); action?.expire?.(); }, duration);
+  // Fade out rather than blink off the screen at the end of the countdown. The class is
+  // cleared on the next toast, so a rapid sequence of messages cannot get stuck mid-exit.
+  const settle = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180;
+  toastTimer = setTimeout(() => {
+    notice.classList.add("is-leaving");
+    notice.classList.remove("counting");
+    toastTimer = setTimeout(() => { notice.hidden = true; notice.classList.remove("is-leaving"); }, settle);
+    action?.expire?.();
+  }, duration);
 }
 
 function showError(error, retry = null, title = "Couldn’t complete that") {
@@ -728,8 +736,16 @@ async function selectTemporary() {
   watchJob(state.temporaryJob, (job) => { if (job.found > visible && state.source === state.temporarySource?.chatId) { visible = job.found; loadLibrary(); } }, () => state.source === state.temporarySource?.chatId);
 }
 
+let globalResultsCloseTimer = 0;
 function closeGlobalSearch({ clear = false } = {}) {
-  $("global-results").hidden = true;
+  const results = $("global-results");
+  clearTimeout(globalResultsCloseTimer);
+  if (!results.hidden && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    results.classList.add("is-leaving");
+    globalResultsCloseTimer = setTimeout(() => { results.classList.remove("is-leaving"); results.hidden = true; }, 140);
+  } else {
+    results.hidden = true;
+  }
   $("global-search").setAttribute("aria-expanded", "false");
   // A debounced search queued before the close would re-open the panel on its own, so drop
   // the pending run as well as the in-flight request.
@@ -743,6 +759,8 @@ function closeGlobalSearch({ clear = false } = {}) {
 
 function renderGlobalSearch(message = "") {
   const panel = $("global-results");
+  // Typing again during the close fade must cancel it, or the results fade out as they arrive.
+  clearTimeout(globalResultsCloseTimer); panel.classList.remove("is-leaving");
   panel.hidden = false; $("global-search").setAttribute("aria-expanded", "true");
   $("global-results-title").textContent = $("global-search").value.trim() || "Search everywhere";
   $("global-source-results").innerHTML = state.globalSources.length
@@ -1231,36 +1249,135 @@ async function saveLyrics(event) { event.preventDefault(); try { state.lyrics = 
 
 function showPanel(tab = "lyrics", toggle = false) {
   if (toggle && !$("now-panel").hidden && document.querySelector(`#${tab}-tab.active`)) return closePanel();
-  $("now-panel").hidden = false; $("app-shell").classList.add("panel-open");
+  const switching = !document.querySelector(`#${tab}-tab.active`);
+  // Re-opening mid-close would otherwise keep the exit animation and fade straight back out.
+  clearTimeout(panelCloseTimer);
+  const panel = $("now-panel");
+  // "Was it visually absent" -- hidden, or still playing its exit. Not just .hidden, because
+  // closePanel only hides after the animation ends, so an interrupted close is still visible.
+  const wasAway = panel.hidden || panel.classList.contains("is-closing");
+  panel.classList.remove("is-closing");
+  panel.hidden = false; $("app-shell").classList.add("panel-open");
+  // Re-showing within the same frame does not restart the entry animation: the browser sees the
+  // same animation-name still applied and keeps the old clock, so interrupting a close reopened
+  // the panel already ~60% faded in. Removing the animation, flushing style, then letting it
+  // reapply is what actually rewinds it. Only when the panel was away -- a plain tab switch on
+  // an open panel must not replay the entrance.
+  if (wasAway) {
+    panel.classList.add("is-restarting");
+    void panel.offsetWidth;
+    panel.classList.remove("is-restarting");
+  }
   for (const name of ["lyrics", "queue", "details"]) { const active = name === tab; $(`${name}-pane`).hidden = !active; $(`${name}-tab`).classList.toggle("active", active); $(`${name}-tab`).setAttribute("aria-selected", String(active)); }
   const pane = $(`${tab}-pane`); pane.classList.remove("pane-entering"); requestAnimationFrame(() => pane.classList.add("pane-entering"));
   if (tab === "queue") renderQueue();
+  // All three panes share one scroll container, so a deep offset from a long lyric sheet
+  // carried over to a short Details pane and left it opened mid-scroll. Only on a real tab
+  // change, so re-opening the panel on the current tab keeps the lyric you were reading.
+  if (switching) $("now-content").scrollTop = 0;
   // Switching tabs swaps the scroll container's content, so re-derive the header state from
   // the new scrollTop instead of leaving it collapsed over a short pane.
   updateNowHeader();
   schedulePersist();
 }
-function closePanel() { $("now-panel").hidden = true; $("app-shell").classList.remove("panel-open"); schedulePersist(); }
+// Play the exit animation before hiding, so the panel leaves the way it arrived instead of
+// disappearing between frames. The grid column collapses at the same time, so the surface and
+// the layout move together. animationend can be missed (reduced motion, a backgrounded tab),
+// so a timeout guarantees the panel still ends up hidden.
+let panelCloseTimer = 0;
+function closePanel() {
+  const panel = $("now-panel");
+  if (panel.hidden) return;
+  $("app-shell").classList.remove("panel-open");
+  schedulePersist();
+  const finish = () => { clearTimeout(panelCloseTimer); panel.classList.remove("is-closing"); panel.hidden = true; };
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return finish();
+  panel.classList.add("is-closing");
+  panel.addEventListener("animationend", finish, { once: true });
+  clearTimeout(panelCloseTimer);
+  panelCloseTimer = setTimeout(finish, 400);
+}
 
 // Collapse the now-playing header once you scroll into the content. Two thresholds rather
 // than one: a single boundary sits exactly where collapsing changes scrollHeight, so the
 // header would oscillate. Collapse at 48px, expand only back under 12px.
+//
+// The thresholds alone are not enough. The header is a flex sibling of the scroller, so
+// collapsing it hands its freed height to .now-content: clientHeight grows and the maximum
+// scrollTop shrinks by the same amount. On a short pane (Details on a phone) that maximum
+// drops under 12px, the browser clamps scrollTop to it, and the clamp reads as "scrolled to
+// the top" -- so we expand, the pane becomes scrollable again, momentum pushes past 48 and
+// it collapses once more. That feedback loop is the juddering in the Details tab.
+//
+// So require the pane to still be scrollable after collapsing. We do not know the collapsed
+// header height before committing, but it is always positive, so the freed height is strictly
+// less than the current header height -- subtracting the whole header is a conservative bound
+// that cannot oscillate. Panes with real overflow (lyrics) clear it comfortably; panes that
+// already fit simply keep the full header, which is what you want when there is nothing to
+// scroll past.
 function updateNowHeader() {
   const header = document.querySelector(".now-header");
   const content = $("now-content");
   if (!header || !content) return;
   const top = content.scrollTop;
   const compact = header.classList.contains("is-compact");
-  if (!compact && top > 48) header.classList.add("is-compact");
-  else if (compact && top < 12) header.classList.remove("is-compact");
+  if (compact) {
+    if (top < 12) setNowHeaderCompact(header, false);
+    return;
+  }
+  const scrollable = content.scrollHeight - content.clientHeight - header.offsetHeight;
+  if (top > 48 && scrollable > 48) setNowHeaderCompact(header, true);
+}
+
+// The collapse switches the header between two grid layouts, so the art and the title land in
+// new places at new sizes. FLIP that: measure both elements, toggle the class, measure again,
+// then animate the delta with transform/scale so the art appears to glide beside the title
+// rather than cutting to it. Transform-only, so nothing reflows mid-animation.
+const NOW_HEADER_MORPH = [".large-art-wrap", ".now-title"];
+function setNowHeaderCompact(header, compact) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    header.classList.toggle("is-compact", compact);
+    return;
+  }
+  const targets = NOW_HEADER_MORPH.map((selector) => header.querySelector(selector)).filter(Boolean);
+  const before = targets.map((element) => element.getBoundingClientRect());
+  header.classList.toggle("is-compact", compact);
+  targets.forEach((element, index) => {
+    const first = before[index];
+    const last = element.getBoundingClientRect();
+    if (!first.width || !last.width || !first.height || !last.height) return;
+    const dx = first.left - last.left;
+    const dy = first.top - last.top;
+    const sx = first.width / last.width;
+    const sy = first.height / last.height;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
+    element.getAnimations().forEach((animation) => animation.cancel());
+    element.animate(
+      [{ transformOrigin: "top left", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+       { transformOrigin: "top left", transform: "none" }],
+      { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" },
+    );
+  });
 }
 
 function openMenu(actions, x, y) {
   const menu = $("context-menu"); menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
+  // Re-opening while the previous menu is still fading would inherit the exit state.
+  clearTimeout(menuCloseTimer); menu.classList.remove("is-leaving");
   menu.hidden = false; menu._actions = actions;
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`; menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`; menu.querySelector("button")?.focus();
 }
-function closeMenu() { $("context-menu").hidden = true; }
+// Popovers get a quick fade on the way out too, so dismissing does not blink. Kept short
+// (--dur-1) because a context menu should feel instant, not animated at.
+let menuCloseTimer = 0;
+function closeMenu() {
+  const menu = $("context-menu");
+  if (menu.hidden) return;
+  clearTimeout(menuCloseTimer);
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { menu.hidden = true; return; }
+  menu.classList.add("is-leaving");
+  menuCloseTimer = setTimeout(() => { menu.classList.remove("is-leaving"); menu.hidden = true; }, 120);
+}
 
 async function playFromLibrary(key) {
   const keys = await libraryQueue(false);

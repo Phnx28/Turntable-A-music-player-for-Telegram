@@ -302,6 +302,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   box-shadow: var(--elev-3);
   animation: surface-in var(--dur-2) var(--ease-out) both;
 }
+.global-results.is-leaving { animation: none; opacity: 0; transform: translateY(-4px); transition: opacity 140ms var(--ease-out), transform 140ms var(--ease-out); pointer-events: none; }
 .global-results-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .global-results-head strong { display: block; margin-top: 5px; font-size: 19px; letter-spacing: -.025em; }
 .global-search-signal { position: relative; display: flex; align-items: center; gap: 9px; min-height: 35px; overflow: hidden; color: var(--muted); }
@@ -812,7 +813,10 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
     transition: transform var(--dur-2) var(--ease-out);
   }
   .source-rail.open { transform: translateX(0); }
-.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-2) var(--ease-out); }
+  /* The drawer slides on a springy curve and over the scrim's window, so the sheet and its
+     dimming settle together instead of the scrim finishing first. */
+  .source-rail { transition: transform var(--dur-3) var(--ease-out); }
+.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-3) var(--ease-out); }
 .rail-scrim[hidden] { display: block !important; pointer-events: none; opacity: 0; }
   .library { grid-column: 1; padding: 0 20px; }
   .library-header { min-height: 112px; align-items: center; padding: 22px 0 18px; }
@@ -868,6 +872,9 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   .full-row { grid-column: auto; }
   #toast { left: 12px; right: 12px; max-width: none; }
   .modal { width: 100vw; max-width: none; max-height: 92vh; margin: auto 0 0; padding: 22px max(18px, env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); border-right: 0; border-bottom: 0; border-left: 0; border-radius: var(--radius-panel) var(--radius-panel) 0 0; }
+  /* Docked to the bottom edge here, so it should slide from it rather than scale in place. */
+  dialog.modal { transform: translateY(14px) scale(1); }
+  @starting-style { dialog.modal[open] { transform: translateY(14px) scale(1); } }
   .candidate-row { grid-template-columns: 52px minmax(0, 1fr); }
   .candidate-cover { width: 52px; height: 52px; }
   .candidate-row .button { grid-column: 1 / -1; }
@@ -970,12 +977,37 @@ img.source-avatar { object-fit: cover; }
 .library.is-scrolling .row-menu { opacity: 0; }
 .track-list.library-reveal { animation: library-in var(--dur-2) var(--ease-out) both; }
 @keyframes library-in { from { opacity: 0; transform: translateY(4px); } }
+/* A short stagger over the first rows only. The whole list already fades as one block, which
+   reads as a hard swap when you change source; letting the top rows arrive in sequence sells
+   it as content loading. Capped at 8 so a 5,000 row playlist never waits on a long chain, and
+   nth-child keeps it free of per-row inline delays (which the style-src CSP would block).
+   Rows are content-visibility: auto, so off-screen ones never run this at all. */
+.track-list.library-reveal .track-row { animation: row-in var(--dur-2) var(--ease-out) both; }
+.track-list.library-reveal .track-row:nth-child(1) { animation-delay: 0ms; }
+.track-list.library-reveal .track-row:nth-child(2) { animation-delay: 18ms; }
+.track-list.library-reveal .track-row:nth-child(3) { animation-delay: 36ms; }
+.track-list.library-reveal .track-row:nth-child(4) { animation-delay: 54ms; }
+.track-list.library-reveal .track-row:nth-child(5) { animation-delay: 72ms; }
+.track-list.library-reveal .track-row:nth-child(6) { animation-delay: 90ms; }
+.track-list.library-reveal .track-row:nth-child(7) { animation-delay: 108ms; }
+.track-list.library-reveal .track-row:nth-child(n+8) { animation-delay: 126ms; }
+@keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
 
 .mode-button { position: relative; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
 .mode-button.active { color: var(--accent-ink); background: var(--accent); }
 #repeat-badge { position: absolute; right: 5px; bottom: 4px; font-family: var(--font-mono); font-size: 8px; font-variant-numeric: tabular-nums; font-weight: 800; }
 
-.now-panel:not([hidden]) { box-shadow: var(--elev-2); animation: surface-in var(--dur-2) var(--ease-out) both; }
+/* Panel motion. The panel used to fade in with the generic surface-in and then vanish with
+   no exit at all, because closePanel just set [hidden] -- so opening was soft and closing
+   snapped. Both directions are explicit now: on desktop the surface slides in from the right
+   edge it is docked to, while .app-shell eases grid-template-columns over the same window so
+   the column and its contents arrive together. */
+.now-panel:not([hidden]) { box-shadow: var(--elev-2); animation: panel-in var(--dur-3) var(--ease-out) both; }
+/* Set for one forced reflow by showPanel to rewind the entry animation; see the comment there. */
+.now-panel.is-restarting { animation: none !important; }
+.now-panel.is-closing { animation: panel-out var(--dur-2) var(--ease-out) both; pointer-events: none; }
+@keyframes panel-in { from { opacity: 0; transform: translateX(18px); } }
+@keyframes panel-out { to { opacity: 0; transform: translateX(18px); } }
 .pane-entering { animation: pane-in var(--dur-2) var(--ease-out) both; }
 @keyframes pane-in { from { opacity: 0; transform: translateY(5px); } }
 .lyrics-pane { min-height: 300px; padding-top: 8px; }
@@ -1041,8 +1073,26 @@ img.source-avatar { object-fit: cover; }
 .guide-link { display: inline-block; margin: -10px 0 24px; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 .cache-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
 
-dialog[open] { animation: surface-in var(--dur-2) var(--ease-out); }
-dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
+/* Dialogs animated in but snapped out, because .close() flips display and an animation cannot
+   run on a removed box. Transitioning opacity/transform plus `display` and `overlay` with
+   allow-discrete keeps the dialog painted for the duration of the exit, and @starting-style
+   supplies the pre-open values so the same declarations drive both directions. All 8 dialogs
+   share this, so error/confirm/settings/share all leave the same way they arrive. */
+dialog.modal {
+  opacity: 0;
+  transform: translateY(8px) scale(.99);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out),
+    display var(--dur-2) allow-discrete, overlay var(--dur-2) allow-discrete;
+}
+dialog.modal[open] { opacity: 1; transform: none; }
+@starting-style { dialog.modal[open] { opacity: 0; transform: translateY(8px) scale(.99); } }
+dialog.modal::backdrop {
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out), display var(--dur-2) allow-discrete,
+    overlay var(--dur-2) allow-discrete;
+}
+dialog.modal[open]::backdrop { opacity: 1; }
+@starting-style { dialog.modal[open]::backdrop { opacity: 0; } }
 @keyframes fade-in { from { opacity: 0; } }
 .alert-modal { width: min(92vw, 420px); }
 .alert-modal h2 { margin: 10px 0 6px; font-size: 22px; }
@@ -1050,10 +1100,14 @@ dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
 .alert-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--danger); border-radius: 50%; color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 15%, transparent); font-weight: 800; }
 .context-menu { position: fixed; z-index: 100; width: 205px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 5px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--elev-3); animation: surface-in var(--dur-1) var(--ease-out); }
 .context-menu button { display: flex; width: 100%; min-height: 34px; align-items: center; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font-size: 12px; text-align: left; transition: background-color 80ms var(--ease-out), color 80ms var(--ease-out); }
+.context-menu.is-leaving { animation: none; opacity: 0; transform: translateY(-2px) scale(.99); transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); pointer-events: none; }
 .context-menu button:hover, .context-menu button:focus-visible { background: var(--paper); color: var(--ink); }
 .context-menu button.danger, .context-menu button.danger:hover, .context-menu button.danger:focus-visible { color: var(--danger); }
 .toast { animation: surface-in var(--dur-2) var(--ease-out); }
+.toast.is-leaving { animation: none; opacity: 0; transform: translateY(8px); transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out); }
 @keyframes surface-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(24px); } }
+@keyframes sheet-out { to { opacity: 0; transform: translateY(24px); } }
 
 @media (max-width: 860px) {
   .desktop-only { display: none; }
@@ -1062,6 +1116,9 @@ dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
   .settings-nav { grid-template-columns: repeat(4, 1fr); overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .settings-nav button { padding-inline: 8px; border-right: 0; border-bottom: 2px solid transparent; text-align: center; }
   .now-panel { position: fixed; z-index: 25; inset: 0; }
+  /* A full-screen sheet should rise from the edge it covers, not nudge in from the side. */
+  .now-panel:not([hidden]) { animation-name: sheet-in; }
+  .now-panel.is-closing { animation-name: sheet-out; }
   .global-results, .sidebar-collapsed .global-results { top: 62px; right: 12px; left: 12px; width: auto; max-height: calc(100vh - var(--player-height) - 78px); }
 }
 
