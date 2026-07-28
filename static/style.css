@@ -577,8 +577,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab.active { border-color: var(--accent); color: var(--ink); }
 
 .lyrics-pane { min-height: 300px; padding-top: 28px; }
-.lyrics-lines { display: grid; gap: 4px; padding: 20vh 0; }
-.lyric-line { padding: 8px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1.35; text-align: start; transition: color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); }
+/* min-width: 0 because a grid track defaults to min-width: auto, so it refuses to shrink
+   below its longest word and pushes the whole pane wide. One stored sheet here has a 78
+   character rule of hyphens, which overflowed the panel by 101px on mobile and 132px on a
+   laptop and left a horizontal scrollbar under the sync pill. */
+.lyrics-lines { display: grid; gap: 4px; padding: 20vh 0; grid-template-columns: minmax(0, 1fr); }
+.lyric-line { min-width: 0; padding: 8px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1.35; text-align: start; overflow-wrap: anywhere; transition: color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); }
 .empty-copy { margin: 48px 0; color: var(--muted); font-size: 13px; }
 
 .details-pane { padding: 24px 0; }
@@ -976,7 +980,7 @@ img.source-avatar { object-fit: cover; }
 @keyframes pane-in { from { opacity: 0; transform: translateY(5px); } }
 .lyrics-pane { min-height: 300px; padding-top: 8px; }
 .lyrics-lines { gap: 2px; padding: 4px 0 80px; font-family: var(--font-ui); }
-.lyrics-lines button, .lyric-line { width: 100%; padding: 8px 0; border: 0; border-radius: 3px; background: transparent; color: color-mix(in srgb, var(--muted) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 560; line-height: 1.42; text-align: left; }
+.lyrics-lines button, .lyric-line { width: 100%; min-width: 0; padding: 8px 0; border: 0; border-radius: 3px; background: transparent; color: color-mix(in srgb, var(--muted) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 560; line-height: 1.42; overflow-wrap: anywhere; text-align: left; }
 .lyrics-lines button:hover { color: var(--ink); transform: translateX(3px); }
 .lyrics-lines button.active { color: var(--ink); transform: translateX(5px); }
 .lyrics-lines button.seek-pulse { animation: lyric-seek 220ms var(--ease-out); }
