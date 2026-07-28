@@ -10,7 +10,7 @@ const state = {
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
   loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, windowStart: -1, libraryLoading: false,
   globalTracks: [], globalSources: [], summaryRequests: new Set(),
-  temporarySource: null, temporaryJob: null, likedCount: 0, historyVisible: 50,
+  temporarySource: null, temporaryJob: null, keepingSource: false, likedCount: 0, historyVisible: 50,
   lyricsFollow: true, lyricScrollTimer: 0, restored: false, contacts: [],
   bulk: false, selectedSources: new Set(),
   countriesLoaded: false,
@@ -345,6 +345,14 @@ function renderSources() {
   $("bulk-count").textContent = `${state.selectedSources.size} selected`;
   $("bulk-unselect").disabled = !state.selectedSources.size;
   $("sync-source").disabled = state.likedMode || Boolean(selected?.temporary);
+  // A temporary source is a dead end otherwise: it vanishes when the track stops and you
+  // would have to hunt it down again in Add source. Offer to keep it while you are in it.
+  const keep = $("keep-source");
+  keep.hidden = !selected?.temporary;
+  keep.disabled = Boolean(state.keepingSource);
+  keep.textContent = "";
+  keep.insertAdjacentHTML("beforeend", '<svg><use href="#i-plus"/></svg>');
+  keep.append(state.keepingSource ? "Adding\u2026" : "Add to library");
   if (state._sourceChangeScroll) {
     document.querySelector('.source-entry.active')?.scrollIntoView({ block: 'nearest' });
     state._sourceChangeScroll = false;
@@ -927,6 +935,34 @@ async function toggleSource(input) {
   } catch (error) { item.selected = !selected; item.pending = false; renderDiscovered(); showError(error, () => toggleSource(input)); }
 }
 
+async function keepTemporarySource() {
+  const chatId = state.temporarySource?.chatId;
+  if (!chatId || state.keepingSource) return;
+  state.keepingSource = true; renderSources();
+  try {
+    // The row already exists in the database, so selecting it keeps every track the preview
+    // already stored instead of starting over.
+    const result = await api(`/api/sources/${encodeURIComponent(chatId)}`, {
+      method: "PATCH", body: JSON.stringify({ selected: true }),
+    });
+    if (state.temporaryJob?.jobId && result.job?.jobId !== state.temporaryJob.jobId) {
+      api(`/api/jobs/${encodeURIComponent(state.temporaryJob.jobId)}`, { method: "DELETE" }).catch(() => {});
+    }
+    state.temporarySource = null; state.temporaryJob = null;
+    state.libraryCache.clear();
+    state.source = chatId; state.likedMode = false;
+    // force refetches the source list too, so the pin is replaced by the real entry.
+    await loadLibrary(true);
+    if (result.job) watchJob(result.job, () => loadLibrary(true), () => state.source === chatId);
+    schedulePersist();
+    toast("Added to your library");
+  } catch (error) {
+    showError(error, keepTemporarySource);
+  } finally {
+    state.keepingSource = false; renderSources();
+  }
+}
+
 async function unselectSources(ids) {
   if (!ids.length || !await confirmAction("Unselect sources?", "They’ll disappear from this player and stop syncing. Nothing will be deleted or left in Telegram.", "Unselect")) return;
   try {
@@ -1438,6 +1474,7 @@ $("global-results").addEventListener("click", (event) => {
 $("global-results").addEventListener("contextmenu", (event) => { const track = event.target.closest("[data-global-track]"); if (track) { event.preventDefault(); trackMenu(track.dataset.globalTrack, event.clientX, event.clientY); } });
 $("play-playlist").addEventListener("click", () => startPlaylist(false).catch(showError)); $("shuffle-playlist").addEventListener("click", () => startPlaylist(true).catch(showError));
 $("sync-source").addEventListener("click", () => state.source ? syncSource(state.source, false) : toast("Choose a source to sync"));
+$("keep-source").addEventListener("click", () => keepTemporarySource().catch(showError));
 $("add-source").addEventListener("click", openSources); document.querySelector('[data-action="add-source"]').addEventListener("click", openSources);
 $("sync-all-sources").addEventListener("click", () => syncAllSources().catch(showError));
 $("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", renderDiscovered);
