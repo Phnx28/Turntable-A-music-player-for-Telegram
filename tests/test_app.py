@@ -143,3 +143,115 @@ class PasswordGateTests(AppTestCase):
         self.database.set_password("correct horse battery")
         self.client.cookies.set(SESSION_COOKIE, "not-a-real-token")
         self.assertEqual(self.client.get("/api/settings").status_code, 401)
+
+    def test_logout_relocks_the_api(self) -> None:
+        self.database.set_password("correct horse battery")
+        self.client.post(
+            "/api/auth/login", json={"password": "correct horse battery"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(self.client.get("/api/settings").status_code, 200)
+        self.assertEqual(
+            self.client.post("/api/auth/logout", headers=self.SAME_ORIGIN).status_code, 200
+        )
+        self.assertEqual(self.client.get("/api/settings").status_code, 401)
+
+    def test_changing_the_password_signs_other_sessions_out(self) -> None:
+        # The README claims this; it happens via an inline DELETE in set_password.
+        self.database.set_password("first password")
+        self.client.post(
+            "/api/auth/login", json={"password": "first password"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(self.client.get("/api/settings").status_code, 200)
+        self.database.set_password("second password")
+        self.assertEqual(self.client.get("/api/settings").status_code, 401)
+
+
+class SettingsRouteTests(AppTestCase):
+    SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
+
+    def test_get_returns_defaults(self) -> None:
+        body = self.client.get("/api/settings").json()
+        self.assertIn("coverQuality", body)
+        self.assertIn("prefetchCount", body)
+
+    def test_patch_persists_and_round_trips(self) -> None:
+        self.client.patch(
+            "/api/settings", json={"coverQuality": "original"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(self.client.get("/api/settings").json()["coverQuality"], "original")
+
+    def test_patch_rejects_an_unknown_cover_quality(self) -> None:
+        response = self.client.patch(
+            "/api/settings", json={"coverQuality": "enormous"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_patch_rejects_an_out_of_range_prefetch_count(self) -> None:
+        response = self.client.patch(
+            "/api/settings", json={"prefetchCount": 999}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_omitted_fields_are_left_alone(self) -> None:
+        # exclude_none in the handler: a partial PATCH must not blank the other settings.
+        self.client.patch(
+            "/api/settings", json={"coverQuality": "500"}, headers=self.SAME_ORIGIN
+        )
+        self.client.patch(
+            "/api/settings", json={"prefetchCount": 2}, headers=self.SAME_ORIGIN
+        )
+        body = self.client.get("/api/settings").json()
+        self.assertEqual(body["coverQuality"], "500")
+        self.assertEqual(body["prefetchCount"], 2)
+
+
+class PasswordPolicyTests(AppTestCase):
+    SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
+
+    def test_a_short_password_is_rejected(self) -> None:
+        response = self.client.post(
+            "/api/auth/password", json={"password": "short"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertFalse(self.database.get_password_hash())
+
+    def test_setting_a_password_locks_the_api(self) -> None:
+        response = self.client.post(
+            "/api/auth/password",
+            json={"password": "long enough password"},
+            headers=self.SAME_ORIGIN,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.database.get_password_hash())
+
+    def test_changing_a_password_requires_the_current_one(self) -> None:
+        self.database.set_password("the current password")
+        self.client.post(
+            "/api/auth/login", json={"password": "the current password"}, headers=self.SAME_ORIGIN
+        )
+        response = self.client.post(
+            "/api/auth/password",
+            json={"current": "wrong", "password": "a brand new password"},
+            headers=self.SAME_ORIGIN,
+        )
+        self.assertEqual(response.status_code, 401)
+        # The change must not have taken effect: the old password still unlocks the app.
+        self.client.post("/api/auth/logout", headers=self.SAME_ORIGIN)
+        retry = self.client.post(
+            "/api/auth/login", json={"password": "the current password"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(retry.status_code, 200)
+
+    def test_a_correct_current_password_allows_the_change(self) -> None:
+        self.database.set_password("the current password")
+        self.client.post(
+            "/api/auth/login", json={"password": "the current password"}, headers=self.SAME_ORIGIN
+        )
+        response = self.client.post(
+            "/api/auth/password",
+            json={"current": "the current password", "password": "a brand new password"},
+            headers=self.SAME_ORIGIN,
+        )
+        self.assertEqual(response.status_code, 200)
+        # set_password revokes all sessions, so the handler re-issues one for this caller.
+        self.assertEqual(self.client.get("/api/settings").status_code, 200)
