@@ -630,7 +630,10 @@ body.resizing { cursor: col-resize; user-select: none; }
    still starts on the same x -- sizing each row independently would align the gap but stagger
    the values. Falls back to the old fixed column where subgrid is unsupported. */
 .details-pane dl { display: grid; grid-template-columns: 112px minmax(0, 1fr); margin: 0; }
-.details-pane dl div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 18px; padding: 10px 0; border-bottom: 1px solid var(--soft-line); }
+/* align-items: baseline, not the default stretch: the 10px mono label and the 15px value have
+   different font sizes, so equal-height boxes still put their text on baselines 7-8px apart and
+   the label read as floating above its value. Baseline alignment sits them on one line. */
+.details-pane dl div { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: baseline; gap: 18px; padding: 10px 0; border-bottom: 1px solid var(--soft-line); }
 @supports (grid-template-columns: subgrid) {
   .details-pane dl { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
   .details-pane dl div { grid-column: 1 / -1; grid-template-columns: subgrid; }
