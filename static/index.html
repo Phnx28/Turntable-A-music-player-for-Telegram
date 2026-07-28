@@ -6,6 +6,11 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f7f7f4">
     <link rel="manifest" href="/manifest.webmanifest">
+    <!-- Browsers request /favicon.ico by default, which 404s here because static files are
+         mounted under /assets. Point at the PWA icons already on disk. -->
+    <link rel="icon" href="/assets/icon-192.png" sizes="192x192" type="image/png">
+    <link rel="icon" href="/assets/icon-512.png" sizes="512x512" type="image/png">
+    <link rel="apple-touch-icon" href="/assets/icon-192.png">
     <title>Telegram Turntable</title>
     <link rel="stylesheet" href="/assets/style.css">
   </head>
