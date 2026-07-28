@@ -1,8 +1,34 @@
 # Telegram Turntable
 
-Web player for audio in your Telegram chats. Single-user, self-hosted.
+A self-hosted web music player for audio you already have in Telegram.
 
-## Quick start
+Telegram is a fine place to *store* music and a poor place to *listen* to it: no library, no
+queue, no shuffle, and no way to see an album's tracks together. Turntable points at the chats,
+channels and bots holding your audio, indexes them into a local library, and gives you a real
+player on top — streaming each file from Telegram on demand instead of downloading your
+collection twice.
+
+Single user, single machine. Your credentials and library never leave it.
+
+## What it does
+
+- **Indexes any chat, channel, bot or Saved Messages** you choose, and syncs new tracks
+  incrementally afterwards.
+- **Streams on demand** with seeking, plus a local cache so replays are instant.
+- **Library** with search, shuffle, a queue, likes and play-position memory.
+- **Fills in missing metadata** from [MusicBrainz](https://musicbrainz.org), cover art from
+  [Cover Art Archive](https://coverartarchive.org), and synced lyrics from
+  [LRCLIB](https://lrclib.net) — all editable and overridable by hand.
+- **Sends tracks back to Telegram**: to Saved Messages, or forwarded to a contact (frequent
+  recipients first).
+- **Installable as a PWA**, with lock-screen controls and artwork via MediaSession.
+
+## Requirements
+
+Python 3.12+ and [uv](https://docs.astral.sh/uv/). That is all — the frontend is plain
+JavaScript with no build step.
+
+## Install
 
 ```sh
 cp .env.example .env
@@ -10,35 +36,69 @@ uv sync
 uv run python run.py
 ```
 
-Open http://localhost:8000, connect Telegram via QR or phone.
+Open <http://localhost:8000> and link Telegram by scanning the QR code with your phone
+(Telegram → Settings → Devices → Link Desktop Device), or by phone number.
 
-Use `run.py` rather than calling uvicorn directly — it reads the bind address you
-chose in Settings → Network. Add `--reload` while developing.
+Edit `.env` and set `MUSICBRAINZ_CONTACT` to an email address you control — MusicBrainz rejects
+anonymous requests, so metadata lookups fail without it.
 
-## Access
+Run via `run.py`, not `uvicorn` directly: it reads the bind address you chose in Settings.
+Add `--reload` while developing.
 
-By default the player listens on `127.0.0.1`, so only this machine can reach it,
-and it has **no password**. Both are configurable in Settings → Network:
-
-- **Who can reach this player** — `127.0.0.1` (this machine only) or `0.0.0.0`
-  (anyone on your network). Takes effect after a restart.
-- **Password** — off by default. When on, the player asks for it before loading.
-  Sessions last 30 days; changing or removing the password signs out every
-  other browser.
-
-If you switch to `0.0.0.0`, anyone who can reach the port can read your library,
-see your contacts, and forward tracks as you. Set a password first.
-
-## Docker
+### Docker
 
 ```sh
 cp .env.example .env
 docker compose up -d --build
 ```
 
-## Checks
+## Security
+
+**By default the player binds to `127.0.0.1` and has no password**, which is safe on a personal
+machine. Both are in Settings → Network.
+
+Anyone who reaches this app is logged into your Telegram: they can read your library, see your
+contacts, and send messages as you. **Set a password before binding to `0.0.0.0`.** Sessions
+last 30 days; changing or removing the password signs every other browser out.
+
+There is no HTTPS here. Over anything other than localhost, put it behind a reverse proxy or a
+VPN — the session cookie is only marked `Secure` when the request already arrived over HTTPS.
+
+## Your data
+
+Everything lives in `DATA_DIR` (`./data` by default): the SQLite library, the media cache, and
+your encrypted Telegram session. The encryption key is generated on first run and stored
+alongside it — set `APP_ENCRYPTION_KEY` in `.env` to keep the key out of the directory it
+decrypts.
+
+**Back up `DATA_DIR`.** Likes, manual lyrics, metadata overrides and play positions exist
+nowhere else; tracks themselves are still safe in Telegram.
+
+## API credentials
+
+A Telegram API registration is built in, so the app works out of the box. Every install that
+uses it shares one `api_id`, which Telegram may rate-limit. To use your own, register at
+[my.telegram.org](https://my.telegram.org) and set `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`
+together in `.env` — half a pair is rejected at startup rather than silently mixed.
+
+## Development
 
 ```sh
-uv run python -m unittest discover -s tests
-node --test static/player-core.test.js
+uv run python -m unittest discover -s tests   # backend
+node --test static/player-core.test.js        # player logic
 ```
+
+The icon sprite in `static/index.html` is generated — edit `tools/build_icons.py` and rerun it,
+never the sprite by hand:
+
+```sh
+npm install                      # Ionicons, build-time only
+python3 tools/build_icons.py     # --check verifies without writing
+```
+
+Agents and contributors: see [`memory.md`](memory.md) for accumulated gotchas.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Icons are [Ionicons](https://ionic.io/ionicons) (MIT); see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
