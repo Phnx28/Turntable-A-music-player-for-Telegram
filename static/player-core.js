@@ -44,12 +44,15 @@ export function normalizeTrackPage(payload) {
 }
 
 export function normalizePlayerState(payload) {
-  if (!payload || payload.version !== 1) return null;
+  // v1 stored the entire queue; v2 stores only a window around the current track. Both are
+  // accepted so an existing session is not thrown away on upgrade -- a rejected snapshot loses
+  // the user's position silently.
+  if (!payload || (payload.version !== 1 && payload.version !== 2)) return null;
   const queue = Array.isArray(payload.queue)
     ? payload.queue.filter((key) => typeof key === "string").slice(0, 100_000)
     : [];
   return {
-    version: 1,
+    version: payload.version,
     queue,
     queueIndex: Math.max(-1, Math.min(Number(payload.queueIndex) || 0, queue.length - 1)),
     currentKey: typeof payload.currentKey === "string" ? payload.currentKey : "",
@@ -60,5 +63,7 @@ export function normalizePlayerState(payload) {
       ? payload.temporarySource : null,
     panel: ["lyrics", "queue", "details"].includes(payload.panel) ? payload.panel : "lyrics",
     panelOpen: Boolean(payload.panelOpen),
+    // Absent on v1, where queue held everything, so it falls back to the stored length.
+    queueTotal: Math.max(queue.length, Number(payload.queueTotal) || 0),
   };
 }
