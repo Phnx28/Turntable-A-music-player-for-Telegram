@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import math
+import os
 import random
 import re
 import secrets
@@ -282,11 +283,36 @@ def weighted_shuffle_tracks(
     return [str(item["key"]) for item in (*head, *tail)]
 
 
+def _restrict(target: Path, mode: int) -> None:
+    """chmod *target* to *mode*, ignoring a missing file or a filesystem that cannot.
+
+    Permissions are a hardening measure, not a correctness requirement: a database on a mount
+    without POSIX modes (a bind mount from a non-Unix host, some network shares) must still
+    open rather than refuse to start. Only narrows, never widens.
+    """
+    try:
+        current = target.stat().st_mode & 0o777
+        if current & ~mode:
+            os.chmod(target, current & mode)
+    except OSError:
+        pass
+
+
 class Database:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        # ponytail: the media cache, artwork and encryption.key are all written 0600, but the
+        # database was left at whatever umask gave it (0644 in practice) -- and it holds the
+        # Fernet-encrypted Telegram session, every chat title, and the whole library. Narrow the
+        # directory first so the files cannot be reached even during the moment before they are
+        # chmod'ed, then tighten the database itself.
+        _restrict(path.parent, 0o700)
         self.path = path
         self.connection = sqlite3.connect(path, check_same_thread=False)
+        # WAL keeps recently written pages in -wal and -shm sidecars, so leaving those readable
+        # would leak the same content the database itself no longer exposes. They are created by
+        # the journal_mode pragma below, so this runs again afterwards.
+        _restrict(path, 0o600)
         self.connection.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         # ponytail: WAL allows concurrent readers, but one shared connection behind one lock
@@ -302,6 +328,9 @@ class Database:
             self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA wal_autocheckpoint = 1000")
             self._migrate()
+        # Now that WAL has created them, tighten the sidecars too.
+        for suffix in ("-wal", "-shm"):
+            _restrict(path.with_name(path.name + suffix), 0o600)
 
     @property
     def reader(self) -> sqlite3.Connection:

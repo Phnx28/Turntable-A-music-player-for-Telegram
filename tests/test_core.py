@@ -26,6 +26,33 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([1500, 2000, 3000], [line["startMs"] for line in lines])
         self.assertEqual("Hello", lines[0]["text"])
 
+    def test_database_files_are_not_world_readable(self):
+        # The database holds the Fernet-encrypted Telegram session and every chat title, so it
+        # must not be left at the umask default. WAL sidecars carry the same pages.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "data" / "library.sqlite3"
+            database = Database(path)
+            database.list_sources(False)
+            try:
+                self.assertEqual(0o700, path.parent.stat().st_mode & 0o777)
+                for target in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+                    self.assertTrue(target.exists(), f"{target.name} missing")
+                    self.assertEqual(0, target.stat().st_mode & 0o077, f"{target.name} is group/world readable")
+            finally:
+                database.close()
+
+    def test_reopening_a_loose_database_tightens_it(self):
+        # Existing installs were created at 0644, so opening must repair them rather than only
+        # getting new databases right.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "data" / "library.sqlite3"
+            Database(path).close()
+            path.chmod(0o644)
+            path.parent.chmod(0o755)
+            Database(path).close()
+            self.assertEqual(0o600, path.stat().st_mode & 0o777)
+            self.assertEqual(0o700, path.parent.stat().st_mode & 0o777)
+
     def test_local_metadata_survives_telegram_resync(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
