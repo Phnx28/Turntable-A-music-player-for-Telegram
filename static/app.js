@@ -3,7 +3,7 @@ import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayer
 const $ = (id) => document.getElementById(id);
 const state = {
   sources: [], tracks: [], discovered: [], source: "", likedMode: false, current: null, editing: null,
-  lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1,
+  lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1, queueTruncated: false, queueTotal: 0,
   shuffle: localStorage.getItem("tm-shuffle") === "1",
   repeat: localStorage.getItem("tm-repeat") || "off",
   cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
@@ -104,9 +104,24 @@ function cacheSet(cache, key, value, maximum) {
   while (cache.size > maximum) cache.delete(cache.keys().next().value);
 }
 
+// A full-library queue is 54,660 keys -- a 1.2 MB snapshot, 23.6% of the 5 MB localStorage quota,
+// costing 4.2 ms of synchronous main-thread work on every play, pause and seek. Only a window
+// around the current track is worth restoring: the queue pane never draws more than
+// queueIndex+101, and prefetch reads a handful. Anything past this is rebuilt by the server on
+// demand, which is where the ordering came from in the first place.
+const PERSIST_BEHIND = 50;
+const PERSIST_AHEAD = 300;
+
 function playerSnapshot() {
+  const start = Math.max(0, state.queueIndex - PERSIST_BEHIND);
+  const queue = state.queue.slice(start, state.queueIndex + PERSIST_AHEAD);
   return {
-    version: 1, queue: state.queue, queueIndex: state.queueIndex,
+    version: 2, queue, queueIndex: Math.max(-1, state.queueIndex - start),
+    // Records how many tracks were really queued, so move() knows there is more to rebuild.
+    // When state.queue is itself a restored window, its length is NOT the real total -- taking it
+    // would collapse 54,660 to 300 on the first re-save and lose the rest of the library.
+    queueTotal: Math.max(state.queue.length, state.queueTruncated ? state.queueTotal || 0 : 0),
+    queueOffset: start,
     currentKey: state.current?.key || "", position: audio.currentTime || 0,
     source: state.source, liked: state.likedMode, temporarySource: state.temporarySource,
     panel: document.querySelector(".now-tabs .active")?.id?.replace("-tab", "") || "lyrics",
@@ -115,6 +130,11 @@ function playerSnapshot() {
 }
 
 function persistPlayerState() {
+  // Startup calls selectSource() -> schedulePersist() before restorePlayerState() has finished its
+  // awaits, so an empty snapshot was being written over the saved one. It went unnoticed while the
+  // whole queue was stored, because the clobber usually rewrote identical data; with only a window
+  // saved it destroys the position and the queueTotal that says more tracks exist.
+  if (!state.restored) return;
   try { localStorage.setItem("tm-player-state", JSON.stringify(playerSnapshot())); } catch {}
 }
 
@@ -126,6 +146,10 @@ function schedulePersist() {
 async function restorePlayerState(saved) {
   if (!saved) return;
   state.queue = saved.queue; state.queueIndex = saved.queueIndex;
+  // Marks that more tracks existed than were stored, so move() rebuilds instead of wrapping, and
+  // keeps the real total so re-persisting does not shrink it to the window size.
+  state.queueTruncated = saved.queueTotal > saved.queue.length;
+  state.queueTotal = saved.queueTotal;
   if (!saved.currentKey) { renderQueue(); return; }
   try {
     const track = await getTrack(saved.currentKey);
@@ -833,7 +857,9 @@ async function playKey(key, queue = null, explicitIndex = null) {
   }
   if (queue) { state.queue = queue; state.queueIndex = explicitIndex ?? Math.max(0, queue.indexOf(key)); }
   else if (Number.isInteger(explicitIndex)) state.queueIndex = explicitIndex;
-  else if (!state.queue.includes(key)) { state.queue = [key]; state.queueIndex = 0; }
+  // Playing a track that is not in the queue replaces the queue outright, so any restored window
+  // is gone and there is nothing left to rebuild.
+  else if (!state.queue.includes(key)) { state.queue = [key]; state.queueIndex = 0; state.queueTruncated = false; }
   else state.queueIndex = state.queue.indexOf(key);
   const track = await getTrack(key);
   if (state.current && state.current.key !== key && !state.current.qualified) api("/api/playback/events", { method: "POST", body: JSON.stringify({ key: state.current.key, event: "skipped" }) }).catch(() => {});
@@ -978,6 +1004,9 @@ async function libraryQueue(shuffle, currentKey = "") {
       temporary: Boolean(state.temporarySource?.chatId === state.source),
     }),
   });
+  // Every fresh queue comes from here and is complete by definition, so the truncated marker is
+  // cleared centrally rather than at each of the call sites that assign state.queue.
+  state.queueTruncated = false;
   return Array.isArray(result?.keys) ? result.keys.filter((key) => typeof key === "string") : [];
 }
 
@@ -1016,6 +1045,20 @@ async function move(direction, ended = false) {
   if (!state.queue.length) return;
   if (ended && state.repeat === "one") { audio.currentTime = 0; return startAudioPlayback(); }
   let next = state.queueIndex + direction;
+  // A restored session holds only a window of what was queued, so running past its end is not
+  // the end of the playlist. Rebuild from the server before deciding to stop or wrap, otherwise
+  // reopening the app would silently cut a 54,660-track queue down to the saved window.
+  if (next >= state.queue.length && state.queueTruncated) {
+    const keys = await libraryQueue(state.shuffle, state.current?.key || "");
+    const resumeAt = keys.indexOf(state.current?.key || "");
+    if (keys.length) {
+      state.queue = keys;
+      state.queueIndex = resumeAt >= 0 ? resumeAt : Math.min(state.queueIndex, keys.length - 1);
+      state.queueTruncated = false;
+      next = state.queueIndex + direction;
+      renderQueue();
+    }
+  }
   if (next >= state.queue.length) {
     if (state.repeat !== "all") return;
     if (state.shuffle) {
