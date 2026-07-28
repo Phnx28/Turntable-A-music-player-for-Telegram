@@ -50,7 +50,6 @@ class Settings:
     encryption_key: str
     data_directory: Path
     musicbrainz_contact: str
-    cookie_secure: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -82,7 +81,6 @@ class Settings:
             encryption_key=encryption_key,
             data_directory=data_directory,
             musicbrainz_contact=os.environ.get("MUSICBRAINZ_CONTACT", ""),
-            cookie_secure=os.environ.get("DEV_INSECURE_COOKIE") != "1",
         )
 
 
@@ -444,14 +442,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "restartRequired": body.bindHost != os.environ.get("TURNTABLE_ACTIVE_HOST", body.bindHost),
         }
 
-    def _set_session_cookie(response: JSONResponse, token: str) -> None:
+    def _set_session_cookie(response: JSONResponse, token: str, request: Request) -> None:
+        # Secure is derived from the actual scheme, not a setting. A hardcoded default of True
+        # meant a browser silently discarded the cookie over plain HTTP, so signing in from
+        # another machine returned 200 and left you on the lock screen anyway -- which is exactly
+        # the LAN/Tailscale case the password exists for. Behind the proxy-headers deployment
+        # this reads X-Forwarded-Proto, so HTTPS still gets the flag.
         response.set_cookie(
             SESSION_COOKIE,
             token,
             max_age=SESSION_TTL_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=settings.cookie_secure,
+            secure=request.url.scheme == "https",
             path="/",
         )
 
@@ -486,7 +489,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         _clear_login_failures(client)
         response = JSONResponse({"ok": True, "passwordEnabled": True})
-        _set_session_cookie(response, store.create_session())
+        _set_session_cookie(response, store.create_session(), request)
         return response
 
     @application.post("/api/auth/logout")
@@ -509,7 +512,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # set_password revokes every session, including this one; re-issue so the
         # caller who just set the password is not immediately locked out.
         response = JSONResponse({"ok": True, "passwordEnabled": True})
-        _set_session_cookie(response, store.create_session())
+        _set_session_cookie(response, store.create_session(), request)
         return response
 
     @application.post("/api/auth/password/disable")
