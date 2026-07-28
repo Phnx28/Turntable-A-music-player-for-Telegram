@@ -472,7 +472,13 @@ class TelegramService:
         client = self.require_client()
         known = {source["chatId"]: source for source in self.database.list_sources(False)}
         discovered: list[dict[str, Any]] = []
-        async for dialog in asyncio.wait_for(client.iter_dialogs(), timeout=60):
+        # asyncio.wait_for() takes an awaitable, but iter_dialogs() returns an async ITERATOR, so
+        # the old wrapping raised TypeError and broke discovery outright. Bound the whole walk with
+        # a deadline instead, which is what the 60s was for.
+        discovery_deadline = time.monotonic() + 60
+        async for dialog in client.iter_dialogs():
+            if time.monotonic() > discovery_deadline:
+                break
             kind = self.classify_entity(dialog.entity)
             if not kind:
                 continue
