@@ -1126,6 +1126,23 @@ dialog[open]::backdrop { animation: fade-in var(--dur-2) var(--ease-out); }
 .phone-field span { min-width: 48px; padding-left: 12px; border-right: 1px solid var(--line); color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
 .phone-field input, .phone-field input:focus-visible { height: 40px; border: 0; background: transparent; outline: 0; box-shadow: none; }
 .field-help { margin: -2px 0 5px; color: var(--muted); font-size: 10px; }
+
+.combo { position: relative; }
+.combo > input { padding-right: 34px; }
+.combo-clear { position: absolute; top: 50%; right: 6px; display: grid; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; place-items: center; transform: translateY(-50%); transition: color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out); }
+.combo-clear:hover { background: var(--paper-2, rgb(128 128 128 / .14)); color: var(--ink); }
+.combo-clear svg { width: 14px; height: 14px; }
+.combo-list { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; left: 0; max-height: 264px; margin: 0; padding: 5px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--elev-2); list-style: none; overscroll-behavior: contain; animation: combo-in var(--dur-1) var(--ease-out) both; }
+.combo-list.is-closing { animation: combo-out var(--dur-1) var(--ease-out) both; pointer-events: none; }
+.combo-option { display: grid; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 6px; grid-template-columns: 22px 1fr auto; cursor: pointer; font-size: 12px; }
+.combo-option.is-active { background: var(--accent); color: #14161a; }
+.combo-flag { font-size: 15px; line-height: 1; }
+.combo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-dial { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.combo-option.is-active .combo-dial { color: rgb(20 22 26 / .7); }
+.combo-empty { padding: 12px 10px; color: var(--muted); font-size: 11px; text-align: center; }
+@keyframes combo-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes combo-out { from { opacity: 1; } to { opacity: 0; } }
 .stage-kicker { margin: 0 0 5px; color: var(--muted); font-family: var(--font-mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
 .login-stage .text-button { justify-self: start; margin-top: 2px; }
 .login-status { min-height: 36px; margin: 12px 0 0; }

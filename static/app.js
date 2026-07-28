@@ -21,6 +21,8 @@ let searchTimer, globalSearchTimer, toastTimer, qrTimer, qrStatusTimer, requestC
 let libraryRequest = 0, globalRequest = 0, libraryFrame = 0, scrollIdleTimer = 0, retryAction = null, lyricsController;
 let confirmResolve = null, draggedSource = "", draggedQueue = -1, pendingShare = null;
 let lastUiTrackKey = "";
+let countryList = [], countryMatches = [], countryActive = -1, selectedCountry = null, countryCloseTimer;
+const COUNTRY_RESULT_LIMIT = 60;
 let lastAudibleVolume = .8;
 const pendingCovers = new Set();
 
@@ -152,7 +154,7 @@ function applyPreferences() {
 function setLoginStage(stage, message = "") {
   for (const name of ["phone", "code", "twofa"]) $(`${name}-form`).hidden = name !== stage;
   if (message) $("phone-status").textContent = message;
-  const field = { phone: "telegram-country", code: "telegram-code", twofa: "telegram-password" }[stage];
+  const field = { phone: "country-search", code: "telegram-code", twofa: "telegram-password" }[stage];
   requestAnimationFrame(() => $(field)?.focus());
 }
 
@@ -183,7 +185,9 @@ async function clearQr() {
 
 function phoneNumber() {
   const country = $("telegram-country").value;
-  const number = $("telegram-phone").value.replace(/\D/g, "");
+  // Trunk prefix: people type their number the way they dial it locally (e.g. 0151... in
+  // Germany), but the international form drops that leading zero. Telegram rejects it otherwise.
+  const number = $("telegram-phone").value.replace(/\D/g, "").replace(/^0+/, "");
   if (!country) throw new AppError("Choose your country first.");
   if (!number) throw new AppError("Enter your phone number.");
   return `+${country}${number}`;
@@ -195,29 +199,128 @@ function countryFlag(iso2) {
 
 async function loadCountries() {
   if (state.countriesLoaded) return;
-  const select = $("telegram-country");
+  const search = $("country-search");
   try {
-    const countries = await api("/api/telegram/countries");
-    select.innerHTML = '<option value="">Choose a country</option>' + countries.map((country) => `<option value="${escapeAttr(country.dialCode)}" data-iso="${escapeAttr(country.iso2)}">${countryFlag(country.iso2)} ${escapeHtml(country.name)} (+${escapeHtml(country.dialCode)})</option>`).join("");
+    countryList = await api("/api/telegram/countries");
+    // Fold accents once up front so "Cote" matches "C\u00f4te d'Ivoire" without work per keystroke.
+    for (const country of countryList) {
+      country.search = `${country.name} ${country.iso2}`.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+      country.flag = countryFlag(country.iso2);
+    }
+    search.disabled = false;
+    search.placeholder = "Search countries…";
+    state.countriesLoaded = true;
     const saved = localStorage.getItem("tm-country");
     let region = saved;
     if (!region) try { region = new Intl.Locale(navigator.language).region; } catch {}
-    const preferred = [...select.options].find((option) => option.dataset.iso === region);
-    if (preferred) preferred.selected = true;
-    select.disabled = false;
-    state.countriesLoaded = true;
-    select.dispatchEvent(new Event("change"));
+    const preferred = countryList.find((country) => country.iso2 === region);
+    if (preferred) selectCountry(preferred, { silent: true });
   } catch (error) {
-    select.innerHTML = '<option value="">Countries unavailable</option>';
+    search.placeholder = "Countries unavailable";
     showError(error, loadCountries);
   }
 }
 
-async function startQr() {
+// Ranked so exact and prefix matches beat mid-word ones: typing "in" should offer India before
+// Argentina. Dial-code digits are matched too, with or without a leading "+".
+function matchCountries(query) {
+  const term = query.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase();
+  if (!term) return countryList.slice(0, COUNTRY_RESULT_LIMIT);
+  const digits = term.replace(/[^\d]/g, "");
+  const scored = [];
+  for (const country of countryList) {
+    const name = country.search;
+    let score = -1;
+    if (name === term) score = 0;
+    else if (name.startsWith(term)) score = 1;
+    else if (name.includes(` ${term}`)) score = 2;
+    else if (name.includes(term)) score = 3;
+    if (digits && country.dialCode.startsWith(digits)) score = score === -1 ? 2 : Math.min(score, 2);
+    if (score !== -1) scored.push({ country, score });
+  }
+  scored.sort((a, b) => a.score - b.score || a.country.name.localeCompare(b.country.name));
+  return scored.slice(0, COUNTRY_RESULT_LIMIT).map((entry) => entry.country);
+}
+
+function renderCountryOptions(query) {
+  const list = $("country-listbox");
+  countryMatches = matchCountries(query);
+  countryActive = countryMatches.length ? 0 : -1;
+  if (!countryMatches.length) {
+    list.innerHTML = '<li class="combo-empty" role="presentation">No matching country</li>';
+  } else {
+    list.innerHTML = countryMatches.map((country, index) => `<li class="combo-option${index === 0 ? " is-active" : ""}" role="option" id="country-option-${index}" aria-selected="${index === 0}" data-index="${index}"><span class="combo-flag" aria-hidden="true">${country.flag}</span><span class="combo-name">${escapeHtml(country.name)}</span><span class="combo-dial">+${escapeHtml(country.dialCode)}</span></li>`).join("");
+  }
+  openCountryList();
+  syncCountryActive();
+}
+
+function openCountryList() {
+  const list = $("country-listbox");
+  if (!list.hidden) return;
+  clearTimeout(countryCloseTimer);
+  list.classList.remove("is-closing");
+  list.hidden = false;
+  $("country-search").setAttribute("aria-expanded", "true");
+}
+
+function closeCountryList() {
+  const list = $("country-listbox");
+  const search = $("country-search");
+  search.setAttribute("aria-expanded", "false");
+  search.removeAttribute("aria-activedescendant");
+  if (list.hidden) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { list.hidden = true; return; }
+  list.classList.add("is-closing");
+  clearTimeout(countryCloseTimer);
+  countryCloseTimer = setTimeout(() => { list.hidden = true; list.classList.remove("is-closing"); }, 140);
+}
+
+function syncCountryActive() {
+  const list = $("country-listbox");
+  for (const option of list.querySelectorAll(".combo-option")) {
+    const active = Number(option.dataset.index) === countryActive;
+    option.classList.toggle("is-active", active);
+    option.setAttribute("aria-selected", String(active));
+    if (active) {
+      option.scrollIntoView({ block: "nearest" });
+      $("country-search").setAttribute("aria-activedescendant", option.id);
+    }
+  }
+}
+
+function moveCountryActive(step) {
+  if (!countryMatches.length) return;
+  countryActive = (countryActive + step + countryMatches.length) % countryMatches.length;
+  syncCountryActive();
+}
+
+function selectCountry(country, { silent = false } = {}) {
+  selectedCountry = country;
+  $("telegram-country").value = country.dialCode;
+  $("country-search").value = `${country.flag} ${country.name}`;
+  $("dial-prefix").textContent = `+${country.dialCode}`;
+  $("country-clear").hidden = false;
+  localStorage.setItem("tm-country", country.iso2);
+  closeCountryList();
+  if (!silent) requestAnimationFrame(() => $("telegram-phone").focus());
+}
+
+function clearCountry({ focus = true } = {}) {
+  selectedCountry = null;
+  $("telegram-country").value = "";
+  $("country-search").value = "";
+  $("dial-prefix").textContent = "+";
+  $("country-clear").hidden = true;
+  closeCountryList();
+  if (focus) $("country-search").focus();
+}
+
+async function startQr(phoneMessage = "Choose your country to continue.") {
   clearTimeout(qrTimer);
   const qrExit = clearQr();
   state.flow = "";
-  setLoginStage("phone", "Choose your country to continue.");
+  setLoginStage("phone", phoneMessage);
   $("telegram-code").value = "";
   $("telegram-password").value = "";
   $("qr-stage").classList.remove("paused");
@@ -261,6 +364,85 @@ function pollQr(flowId) {
       pollQr(flowId);
     } catch (error) { showError(error, startQr); }
   }, 1500);
+}
+
+// The phone login markup and the /api/telegram/{phone,code,password} endpoints both existed, but
+// nothing ever bound #phone-form, so submitting fell through to the browser's default GET and
+// reloaded the page. These three handlers complete that flow.
+async function submitPhone(event) {
+  event.preventDefault();
+  const button = $("phone-form").querySelector('button[type="submit"]');
+  try {
+    const phone = phoneNumber();
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    // Stop the QR poller: both flows race to finish the same login otherwise.
+    clearTimeout(qrTimer);
+    pauseQr("Using phone login");
+    const flow = await api("/api/telegram/phone", { method: "POST", body: JSON.stringify({ phone }) });
+    state.flow = flow.flowId;
+    const via = { App: "Telegram app", Sms: "SMS", Call: "a phone call" }[flow.delivery] || "Telegram";
+    setLoginStage("code", `Code sent via ${via}. Enter it to continue.`);
+  } catch (error) {
+    showError(error);
+    $("phone-status").textContent = error.message || "Could not send the code.";
+  } finally {
+    button.removeAttribute("aria-busy");
+    button.disabled = false;
+  }
+}
+
+async function submitPhoneCode(event) {
+  event.preventDefault();
+  const button = $("code-form").querySelector('button[type="submit"]');
+  try {
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    const status = await api("/api/telegram/code", { method: "POST", body: JSON.stringify({ flowId: state.flow, code: $("telegram-code").value }) });
+    await applyPhoneStatus(status);
+  } catch (error) {
+    showError(error);
+    $("phone-status").textContent = error.message || "Could not verify the code.";
+  } finally {
+    button.removeAttribute("aria-busy");
+    button.disabled = false;
+  }
+}
+
+async function submitPhonePassword(event) {
+  event.preventDefault();
+  const button = $("twofa-form").querySelector('button[type="submit"]');
+  try {
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    const status = await api("/api/telegram/password", { method: "POST", body: JSON.stringify({ flowId: state.flow, password: $("telegram-password").value }) });
+    await applyPhoneStatus(status);
+  } catch (error) {
+    showError(error);
+    $("phone-status").textContent = error.message || "Could not verify the password.";
+  } finally {
+    button.removeAttribute("aria-busy");
+    button.disabled = false;
+  }
+}
+
+// Both the code and password steps return a flow status, so they share one interpreter.
+async function applyPhoneStatus(status) {
+  if (status.state === "ready") return boot();
+  if (status.state === "password_required") {
+    $("telegram-password").value = "";
+    return setLoginStage("twofa", "Enter your Telegram two-step verification password.");
+  }
+  if (status.state === "expired" || status.state === "error") {
+    const reason = status.error || "That login expired. Send a new code.";
+    state.flow = "";
+    // Pass the reason into startQr so it is shown from the first frame -- otherwise the user is
+    // bounced to step one under a generic "choose your country" with no idea why.
+    startQr(reason);
+    return;
+  }
+  // "waiting" means Telegram rejected this attempt but the flow is still open, so stay put.
+  $("phone-status").textContent = status.error || "That code was not accepted. Try again.";
 }
 
 function enterTelegramLogin() {
@@ -1424,7 +1606,60 @@ $("lock-form").addEventListener("submit", async (event) => {
   }
 });
 
-function restartPhoneLogin() { state.flow = ""; $("telegram-code").value = ""; $("telegram-password").value = ""; setLoginStage("phone", "Choose your country and send a new code."); }
+$("country-search").addEventListener("input", () => {
+  // Typing always reopens the list and re-filters, so the field never looks stuck after a pick.
+  if (selectedCountry) { selectedCountry = null; $("telegram-country").value = ""; $("dial-prefix").textContent = "+"; }
+  $("country-clear").hidden = !$("country-search").value;
+  renderCountryOptions($("country-search").value);
+});
+$("country-search").addEventListener("focus", () => { if (!state.countriesLoaded) return; renderCountryOptions(selectedCountry ? "" : $("country-search").value); });
+$("country-search").addEventListener("keydown", (event) => {
+  const open = !$("country-listbox").hidden;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (!open) return renderCountryOptions(selectedCountry ? "" : $("country-search").value);
+    return moveCountryActive(event.key === "ArrowDown" ? 1 : -1);
+  }
+  if (event.key === "Enter" && open && countryActive >= 0) {
+    // Only swallow Enter when a suggestion is highlighted, so the form can still submit.
+    event.preventDefault();
+    return selectCountry(countryMatches[countryActive]);
+  }
+  if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); return closeCountryList(); }
+  if (event.key === "Tab" && open && countryActive >= 0) selectCountry(countryMatches[countryActive], { silent: true });
+});
+$("country-search").addEventListener("blur", () => {
+  // Leaving a half-typed query in the box would imply a choice that was never made, so either
+  // restore the selected country's label or empty the field entirely.
+  setTimeout(() => {
+    if (document.activeElement?.closest("#country-combo")) return;
+    const typed = $("country-search").value.trim();
+    // A query that narrows to exactly one country is unambiguous, so commit it rather than
+    // discard what the user typed.
+    if (!selectedCountry && typed && countryMatches.length === 1) return selectCountry(countryMatches[0], { silent: true });
+    closeCountryList();
+    if (selectedCountry) $("country-search").value = `${selectedCountry.flag} ${selectedCountry.name}`;
+    else if (typed) clearCountry({ focus: false });
+  }, 0);
+});
+$("country-listbox").addEventListener("mousedown", (event) => {
+  const option = event.target.closest(".combo-option");
+  if (!option) return;
+  event.preventDefault(); // keep focus in the field so blur does not fight the selection
+  selectCountry(countryMatches[Number(option.dataset.index)]);
+});
+$("country-listbox").addEventListener("mousemove", (event) => {
+  const option = event.target.closest(".combo-option");
+  if (option && Number(option.dataset.index) !== countryActive) { countryActive = Number(option.dataset.index); syncCountryActive(); }
+});
+$("country-clear").addEventListener("click", () => clearCountry());
+
+$("phone-form").addEventListener("submit", submitPhone);
+$("code-form").addEventListener("submit", submitPhoneCode);
+$("twofa-form").addEventListener("submit", submitPhonePassword);
+
+// Re-arms the QR flow too, since abandoning a phone login leaves no active flow to poll.
+function restartPhoneLogin() { state.flow = ""; $("telegram-code").value = ""; $("telegram-password").value = ""; startQr("Choose your country and send a new code."); }
 $("change-number").addEventListener("click", restartPhoneLogin);
 $("change-number-2fa").addEventListener("click", restartPhoneLogin);
 

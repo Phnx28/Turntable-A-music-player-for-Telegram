@@ -80,8 +80,18 @@
             <div class="method-heading"><span class="method-mark">TEL</span><div><h2>Use your number</h2><p>Telegram sends the code inside the app.</p></div></div>
             <div class="login-stages" aria-live="polite">
             <form id="phone-form" class="stack compact login-stage">
-              <label for="telegram-country">Country</label>
-              <select id="telegram-country" required disabled><option value="">Loading countries…</option></select>
+              <label for="country-search">Country</label>
+              <div id="country-combo" class="combo">
+                <input id="country-search" type="text" role="combobox" autocomplete="off" spellcheck="false"
+                       aria-expanded="false" aria-controls="country-listbox" aria-autocomplete="list"
+                       aria-describedby="country-hint" placeholder="Loading countries…" disabled required>
+                <button id="country-clear" class="combo-clear" type="button" hidden aria-label="Clear country">
+                  <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+                </button>
+                <ul id="country-listbox" class="combo-list" role="listbox" aria-label="Countries" hidden></ul>
+              </div>
+              <p id="country-hint" class="field-help">Type to search, then pick from the list.</p>
+              <input id="telegram-country" type="hidden" value="">
               <label for="telegram-phone">Phone number</label>
               <div class="phone-field"><span id="dial-prefix">+</span><input id="telegram-phone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="Phone number" required></div>
               <p class="field-help">Enter the national number without its leading zero.</p>
