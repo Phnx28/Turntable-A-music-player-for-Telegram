@@ -535,12 +535,16 @@ body.resizing { cursor: col-resize; user-select: none; }
    panel's horizontal padding. */
 .now-header.is-compact { margin: 0 -24px; padding: 4px 24px 0; box-shadow: 0 6px 14px -12px rgb(0 0 0 / .45); }
 
-.large-art-wrap, .now-title h2, .now-title p {
-  transition: width var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out),
-    margin var(--dur-2) var(--ease-out), font-size var(--dur-2) var(--ease-out);
-}
+/* Geometry is animated by the FLIP pass in updateNowHeader, not by a CSS transition: the
+   expanded art has no explicit width, and a transition out of `auto` is not interpolable, so
+   the box used to jump to its collapsed size and only the font-size eased. FLIP measures the
+   real before/after rects and animates the difference with transform, which also keeps the
+   whole collapse on the compositor. Only font-size stays here -- it does not affect the
+   measured rects, so the two never fight. */
+.now-title h2, .now-title p { transition: font-size var(--dur-2) var(--ease-out); }
+.large-art-wrap, .now-title { will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
-  .large-art-wrap, .now-title h2, .now-title p { transition: none; }
+  .now-title h2, .now-title p { transition: none; }
 }
 
 .panel-header, .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
@@ -575,8 +579,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .now-title h2 { display: -webkit-box; margin: 0; overflow: hidden; font-size: 26px; font-weight: 680; letter-spacing: -.03em; line-height: 1.1; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .now-title p { margin: 4px 0 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-tabs { display: flex; border-bottom: 1px solid var(--line); }
-.tab { min-height: 39px; flex: 1; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer; color: var(--muted); font-size: 12px; transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
-.tab.active { border-color: var(--accent); color: var(--ink); }
+/* The underline is a pseudo-element that scales from the centre rather than a border colour
+   swap, so switching tabs reads as the indicator growing into place. */
+.tab { position: relative; min-height: 39px; flex: 1; padding: 0 12px; border: 0; background: transparent; cursor: pointer; color: var(--muted); font-size: 12px; transition: color var(--dur-2) var(--ease-out); }
+.tab::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ""; transform: scaleX(0); transition: transform var(--dur-2) var(--ease-out); }
+.tab.active { color: var(--ink); }
+.tab.active::after { transform: scaleX(1); }
 
 .lyrics-pane { min-height: 300px; padding-top: 28px; }
 /* min-width: 0 because a grid track defaults to min-width: auto, so it refuses to shrink
