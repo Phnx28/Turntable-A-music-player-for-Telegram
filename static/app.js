@@ -1489,7 +1489,9 @@ $("track-list").addEventListener("contextmenu", (event) => { const row = event.t
 $("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling?.classList.remove("is-covered"); } }, true);
 // The row may be replaced by an innerHTML re-render between load and the rAF
 // callback, which detaches the image and leaves nextElementSibling null.
-$("track-list").addEventListener("load", (event) => { if (event.target.matches(".row-art")) requestAnimationFrame(() => { event.target.classList.add("is-ready"); event.target.nextElementSibling?.classList.add("is-covered"); }); }, true);
+// Hold the image in a local: the browser clears event.target once dispatch finishes, so
+// reading it inside the rAF threw on every single thumbnail and the fade-in never ran.
+$("track-list").addEventListener("load", (event) => { const image = event.target; if (image.matches(".row-art")) requestAnimationFrame(() => { image.classList.add("is-ready"); image.nextElementSibling?.classList.add("is-covered"); }); }, true);
 $("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(false, true); }, 220); });
 $("empty-clear-search").addEventListener("click", () => { $("track-search").value = ""; $("library").scrollTop = 0; loadLibrary(); $("track-search").focus(); });
 $("library").addEventListener("scroll", () => {
