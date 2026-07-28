@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 from cryptography.fernet import Fernet
 
 from core import Database, RangeNotSatisfiable, now_ts, parse_lrc, parse_range_header, weighted_shuffle_tracks
-from telegram_service import LoginFlow, MEDIA_CHUNK_SIZE, TelegramService
+from telegram_service import QR_QUIET_MODULES, LoginFlow, MEDIA_CHUNK_SIZE, TelegramService, render_qr_svg
 
 
 class CoreTests(unittest.TestCase):
@@ -25,6 +25,27 @@ class CoreTests(unittest.TestCase):
         lines = parse_lrc("[00:02.00][00:01.50]Hello\n[00:03]World", 10_000)
         self.assertEqual([1500, 2000, 3000], [line["startMs"] for line in lines])
         self.assertEqual("Hello", lines[0]["text"])
+
+    def test_qr_svg_scales_and_keeps_a_quiet_zone(self):
+        import re
+
+        import segno
+
+        payload = "tg://login?token=AbCdEf0123456789"
+        svg = render_qr_svg(payload)
+        modules = len(segno.make(payload).matrix)
+        extent = modules + QR_QUIET_MODULES * 2
+        # A viewBox with no width/height is what lets the stylesheet size the code; segno's own
+        # writer emits fixed pixels instead, which is why this is rendered by hand.
+        self.assertIn(f'viewBox="0 0 {extent} {extent}"', svg)
+        self.assertNotRegex(svg, r"<svg[^>]*\swidth=")
+        # The quiet zone must be inside the artwork, so it cannot be lost by the surrounding CSS.
+        self.assertGreaterEqual(QR_QUIET_MODULES, 2, "below this the code stops decoding")
+        # Every drawn module must sit within the quiet margin on all four sides.
+        coordinates = [float(value) for value in re.findall(r"[MHV](-?\d+(?:\.\d+)?)", svg)]
+        drawn = [value for value in coordinates if value != 0.0]
+        self.assertGreater(min(drawn), 0, "a module touches the edge, leaving no quiet zone")
+        self.assertLessEqual(max(drawn), extent - QR_QUIET_MODULES)
 
     def test_database_files_are_not_world_readable(self):
         # The database holds the Fernet-encrypted Telegram session and every chat title, so it

@@ -32,6 +32,16 @@ PARTIAL_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 # Corner radius of each QR module, as a fraction of the module size. Kept well under .5 (a full
 # circle) so the modules stay square enough for scanners to read reliably.
 QR_MODULE_RADIUS = 0.28
+# Blank margin around the code, in modules. ISO/IEC 18004 asks for 4; measured against OpenCV,
+# 0 never decodes and 2 is already enough, so 3 sits comfortably above the floor while costing
+# less of a small box than 4 would.
+#
+# It belongs inside the viewBox rather than in CSS padding. A fixed 11px padding is a shrinking
+# share of the code as the box grows -- 1.42 modules at the rendered 224px, 0.46 at 700px -- so
+# the margin silently depended on the display size. Honest note: OpenCV still decoded the old
+# rendering at every size tested, including blurred, rotated and noisy variants, so this fixes a
+# latent fragility against stricter scanners rather than a reproduced failure.
+QR_QUIET_MODULES = 3
 
 
 def render_qr_svg(payload: str) -> str:
@@ -56,15 +66,18 @@ def render_qr_svg(payload: str) -> str:
         return 0 <= x < size and 0 <= y < size and bool(matrix[y][x])
 
     parts: list[str] = []
-    for y in range(size):
-        for x in range(size):
-            if not matrix[y][x]:
+    for row in range(size):
+        for column in range(size):
+            if not matrix[row][column]:
                 continue
-            up, down = dark(x, y - 1), dark(x, y + 1)
-            left, right = dark(x - 1, y), dark(x + 1, y)
+            up, down = dark(column, row - 1), dark(column, row + 1)
+            left, right = dark(column - 1, row), dark(column + 1, row)
             # Round a corner only where both of its adjoining neighbours are blank.
             tl, tr = not (up or left), not (up or right)
             br, bl = not (down or right), not (down or left)
+            # Neighbour lookups stay in matrix space; only the drawing origin shifts, so the
+            # quiet zone cannot affect which corners get rounded.
+            x, y = column + QR_QUIET_MODULES, row + QR_QUIET_MODULES
             right_edge = x + 1
             parts.append(f"M{x + (r if tl else 0)} {y}")
             parts.append(f"H{right_edge - r}" if tr else f"H{right_edge}")
@@ -80,10 +93,13 @@ def render_qr_svg(payload: str) -> str:
             if tl:
                 parts.append(f"A{r} {r} 0 0 1 {x + r} {y}")
             parts.append("Z")
+    # The white rect spans the padded box, so the quiet zone is part of the image and survives
+    # being placed on a dark surface.
+    extent = size + QR_QUIET_MODULES * 2
     return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {extent} {extent}" '
         f'shape-rendering="geometricPrecision" role="img">'
-        f'<path fill="#fff" d="M0 0h{size}v{size}H0z"/>'
+        f'<path fill="#fff" d="M0 0h{extent}v{extent}H0z"/>'
         f'<path fill="#111111" d="{"".join(parts)}"/>'
         "</svg>"
     )
