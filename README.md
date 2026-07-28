@@ -2,13 +2,11 @@
 
 A self-hosted web music player for audio you already have in Telegram.
 
-Telegram is a fine place to *store* music and a poor place to *listen* to it: no library, no
-queue, no shuffle, and no way to see an album's tracks together. Turntable points at the chats,
-channels and bots holding your audio, indexes them into a local library, and gives you a real
-player on top — streaming each file from Telegram on demand instead of downloading your
-collection twice.
+Point it at the chats, channels and bots holding your audio and it indexes them into a local
+library with a player on top, streaming each file from Telegram on demand rather than keeping a
+second copy of your collection.
 
-Single user, single machine. Your credentials and library never leave it.
+A fun side project, not a product. Single user, single machine.
 
 ## What it does
 
