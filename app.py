@@ -39,6 +39,8 @@ LOGGER = logging.getLogger(__name__)
 
 # Embedded Telegram API credentials — app registration identifier, not a secret.
 # Users authenticate with their own phone number; rate limits are per-account.
+# Deliberately kept as a working default so the app runs out of the box; override both
+# together via TELEGRAM_API_ID / TELEGRAM_API_HASH to use your own registration.
 _DEFAULT_API_ID = 30986221
 _DEFAULT_API_HASH = "7449770300bb823d8cc388103a973942"
 
@@ -53,9 +55,27 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        env_api_id = os.environ.get("TELEGRAM_API_ID")
-        api_id = int(env_api_id) if env_api_id else _DEFAULT_API_ID
-        api_hash = os.environ.get("TELEGRAM_API_HASH", _DEFAULT_API_HASH)
+        # An api_id is only valid with the api_hash issued alongside it, so the pair is resolved
+        # as a unit. Reading each independently meant setting just one (the natural mistake when
+        # following my.telegram.org, where the ID is the more memorable half) silently paired a
+        # user's ID with the embedded hash -- a combination Telegram rejects outright.
+        env_api_id = os.environ.get("TELEGRAM_API_ID", "").strip()
+        env_api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
+        if env_api_id and env_api_hash:
+            try:
+                api_id = int(env_api_id)
+            except ValueError:
+                raise RuntimeError(f"TELEGRAM_API_ID must be a number, got {env_api_id!r}") from None
+            api_hash = env_api_hash
+        elif env_api_id or env_api_hash:
+            missing = "TELEGRAM_API_HASH" if env_api_id else "TELEGRAM_API_ID"
+            raise RuntimeError(
+                f"{missing} is missing. Telegram issues api_id and api_hash as a pair and rejects "
+                "a mismatched combination, so set both or neither (leaving both unset uses the "
+                "built-in registration)."
+            )
+        else:
+            api_id, api_hash = _DEFAULT_API_ID, _DEFAULT_API_HASH
 
         data_directory = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 
@@ -77,7 +97,7 @@ class Settings:
 
         return cls(
             api_id=api_id,
-            api_hash=os.environ.get("TELEGRAM_API_HASH", _DEFAULT_API_HASH),
+            api_hash=api_hash,
             encryption_key=encryption_key,
             data_directory=data_directory,
             musicbrainz_contact=os.environ.get("MUSICBRAINZ_CONTACT", ""),
