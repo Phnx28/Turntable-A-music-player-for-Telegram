@@ -232,7 +232,6 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: .75; }
 .login-method h2 { margin: 0 0 10px; font-size: 20px; font-weight: 550; }
 .ruled-left { padding-left: 30px; border-left: 1px solid var(--line); }
 .qr-code { display: grid; min-height: 245px; margin-bottom: 14px; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-control); background: #f7f7f4; }
-.qr-code svg { width: 220px; height: 220px; }
 
 .app-shell {
   display: grid;
@@ -853,7 +852,6 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   .login-columns { grid-template-columns: 1fr; }
   .ruled-left { padding: 24px 0 0; border-top: 1px solid var(--line); border-left: 0; }
   .qr-code { min-height: 220px; }
-  .qr-code svg { width: 200px; height: 200px; }
   .library { padding: 0 13px; }
   .library-header { gap: 8px; }
   .header-actions { gap: 2px; }
