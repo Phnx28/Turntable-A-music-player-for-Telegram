@@ -52,8 +52,10 @@ ICONS: dict[str, str] = {
     "collapse": "chevron-back-outline",
     "heart": "heart-outline",
     "heart-filled": "heart",
+    # Saved Messages is a bookmark: the track goes onto your own shelf, nothing is sent to
+    # anyone. "send" (the paper plane) belongs on the contact-forwarding button, which does.
+    "bookmark": "bookmark-outline",
     "send": "send-outline",
-    "share": "share-social-outline",
     "locate": "locate-outline",
     "pin": "pin-outline",
 }
@@ -85,13 +87,17 @@ def build() -> str:
     return "".join(symbol(icon_id, source) for icon_id, source in ICONS.items())
 
 
-def audit_references() -> list[str]:
-    """Report icon ids referenced by the app but missing from the sprite.
+def audit_references() -> tuple[list[str], list[str]]:
+    """Compare what the app asks for against what the sprite defines, both directions.
 
-    Worth the effort because a missing id fails *silently*: <use> renders nothing and the button
-    stays clickable but empty. Dynamic references are the trap -- app.js builds some hrefs with
+    Missing ids matter because they fail *silently*: <use> renders nothing and the button stays
+    clickable but empty. Dynamic references are the trap -- app.js builds some hrefs with
     `icon(cond ? "pause" : "play-filled")`, so grepping for a literal `#i-play` finds nothing
     while 80 rows render blank at runtime. Collect literal ids and icon() arguments alike.
+
+    Unused ids are reported too, and only warned about, not failed: they cost bytes in every
+    page load and quietly accumulate whenever a button is rewired. Re-pointing one button at a
+    different glyph is exactly how #i-share was orphaned.
     """
     sources = [(ROOT / "static" / name).read_text() for name in ("index.html", "app.js")]
     referenced: set[str] = set()
@@ -100,7 +106,7 @@ def audit_references() -> list[str]:
         # icon("name") and both arms of icon(cond ? "a" : "b")
         for call in re.findall(r"\bicon\(([^)]*)\)", text):
             referenced.update(re.findall(r'"([a-z0-9-]+)"', call))
-    return sorted(referenced - set(ICONS))
+    return sorted(referenced - set(ICONS)), sorted(set(ICONS) - referenced)
 
 
 def main() -> None:
@@ -116,18 +122,23 @@ def main() -> None:
     sprite = build()
     updated = f"{before}{START}{sprite}{END}{after}"
 
+    def report() -> None:
+        missing, unused = audit_references()
+        if missing:
+            sys.exit("referenced but not in the sprite: "
+                     + ", ".join(f"i-{name}" for name in missing))
+        if unused:
+            print("warning: in the sprite but never referenced: "
+                  + ", ".join(f"i-{name}" for name in unused))
+
     if arguments.check:
         if updated != html:
             sys.exit("sprite in index.html is stale -- rerun tools/build_icons.py")
-        missing = audit_references()
-        if missing:
-            sys.exit("referenced but not in the sprite: " + ", ".join(f"i-{name}" for name in missing))
+        report()
         print(f"sprite matches the package ({len(ICONS)} icons), all references resolve")
         return
     INDEX.write_text(updated)
-    missing = audit_references()
-    if missing:
-        sys.exit("referenced but not in the sprite: " + ", ".join(f"i-{name}" for name in missing))
+    report()
     print(f"wrote {len(ICONS)} icons into {INDEX.relative_to(ROOT)}; all references resolve")
 
 
