@@ -344,6 +344,69 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("artist=Edited artist", commands[0])
             service.database.close()
 
+    async def test_tagged_download_reports_when_ffmpeg_is_missing(self):
+        # Docker images built from python:*-slim carry no ffmpeg, so this is the container default,
+        # not a rare edge case. The caller falls back to the untagged original either way; the
+        # point is that the reason is no longer swallowed.
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            original = Path(directory) / "original.audio"
+            original.write_bytes(b"original")
+            service.cache_media = AsyncMock(return_value=original)
+            track = {
+                "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
+                "file": {"name": "song.mp3", "size": 8},
+                "metadata": {"title": "Edited title"},
+                "overrides": {"title": "Edited title"},
+            }
+
+            async def missing_ffmpeg(*_command, **_kwargs):
+                raise FileNotFoundError(2, "No such file or directory", "ffmpeg")
+
+            with patch("asyncio.create_subprocess_exec", missing_ffmpeg):
+                with self.assertLogs("telegram_service", level="WARNING") as logs:
+                    result = await service.tagged_download(track)
+            self.assertIsNone(result)
+            self.assertEqual(b"original", original.read_bytes())
+            output = "\n".join(logs.output)
+            self.assertIn("ffmpeg", output)
+            self.assertIn("1:2", output)
+            service.database.close()
+
+    async def test_tagged_download_reports_ffmpeg_failure_and_removes_partial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            original = Path(directory) / "original.audio"
+            original.write_bytes(b"original")
+            service.cache_media = AsyncMock(return_value=original)
+            track = {
+                "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
+                "file": {"name": "song.mp3", "size": 8},
+                "metadata": {"title": "Edited title"},
+                "overrides": {"title": "Edited title"},
+            }
+            partials = []
+
+            async def failing_exec(*command, **_kwargs):
+                # ffmpeg can leave a half-written file behind when it fails partway.
+                Path(command[-1]).write_bytes(b"partial")
+                partials.append(Path(command[-1]))
+                return SimpleNamespace(
+                    returncode=1,
+                    communicate=AsyncMock(return_value=(b"", b"Invalid data found")),
+                )
+
+            with patch("asyncio.create_subprocess_exec", failing_exec):
+                with self.assertLogs("telegram_service", level="WARNING") as logs:
+                    result = await service.tagged_download(track)
+            self.assertIsNone(result)
+            self.assertEqual(b"original", original.read_bytes())
+            # The partial output must not be left lying around to be served later.
+            self.assertFalse(partials[0].exists())
+            # ffmpeg's own diagnosis is the useful part; it used to be captured and dropped.
+            self.assertIn("Invalid data found", "\n".join(logs.output))
+            service.database.close()
+
     async def test_media_cache_resumes_partial_and_separates_changed_documents(self):
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)

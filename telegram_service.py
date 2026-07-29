@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import secrets
@@ -25,6 +26,8 @@ from telethon.tl.types import (
 from telethon.tl.types import contacts as contacts_types
 
 from core import Database, is_audio_file, normalize_text, track_key
+
+LOGGER = logging.getLogger(__name__)
 
 
 FLOW_TTL_SECONDS = 300
@@ -1157,11 +1160,27 @@ class TelegramService:
             process = await asyncio.create_subprocess_exec(
                 *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
             )
-        except OSError:
+        except OSError as error:
+            # Almost always ffmpeg missing from PATH. The caller falls back to the untagged
+            # original, which is the right behaviour but indistinguishable from success unless it
+            # is said out loud -- edits appear to be silently discarded.
+            LOGGER.warning(
+                "Cannot tag %s for download: ffmpeg could not be run (%s). "
+                "Serving the original file, so edited metadata will be missing. "
+                "Install ffmpeg to include it.",
+                track["key"],
+                error,
+            )
             return None
         _, stderr = await process.communicate()
         if process.returncode:
             temporary.unlink(missing_ok=True)
+            LOGGER.warning(
+                "Cannot tag %s for download: ffmpeg exited %s. %s",
+                track["key"],
+                process.returncode,
+                stderr.decode("utf-8", "replace").strip() or "No error output.",
+            )
             return None
         temporary.replace(destination)
         os.chmod(destination, 0o600)
