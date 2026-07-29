@@ -1,6 +1,14 @@
-# Telegram Turntable
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="static/logo-light.png">
+    <img src="static/logo-light.png" alt="Telegram Turntable" width="96" height="96">
+  </picture>
+</p>
 
-A self-hosted web music player for audio you already have in Telegram.
+<h1 align="center">Telegram Turntable</h1>
+
+<p align="center">A self-hosted web music player for audio you already have in Telegram.</p>
 
 Point it at the chats, channels and bots holding your audio and it indexes them into a local
 library with a player on top, streaming each file from Telegram on demand rather than keeping a
