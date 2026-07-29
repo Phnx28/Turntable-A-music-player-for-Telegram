@@ -1,5 +1,11 @@
 FROM python:3.13-slim
 
+# ffmpeg writes edited metadata into downloaded files. python:*-slim does not ship it, so without
+# this the download endpoint quietly served the untagged original and edits appeared to vanish.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system app && adduser --system --ingroup app app
 WORKDIR /app
 COPY --chown=app:app pyproject.toml ./

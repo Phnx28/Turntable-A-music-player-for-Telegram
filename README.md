@@ -30,8 +30,13 @@ A fun side project, not a product. Single user.
 
 ## Requirements
 
-Python 3.12+ and [uv](https://docs.astral.sh/uv/). That is all — the frontend is plain
-JavaScript with no build step.
+Python 3.12+ and [uv](https://docs.astral.sh/uv/) — the frontend is plain JavaScript with no
+build step.
+
+[ffmpeg](https://ffmpeg.org) is optional, and only used to write edited metadata into downloaded
+files. Without it everything else works and downloads still succeed, they just carry the tags
+Telegram already had. The Docker image installs it. On Debian or Ubuntu:
+`sudo apt install ffmpeg`.
 
 ## Install
 
