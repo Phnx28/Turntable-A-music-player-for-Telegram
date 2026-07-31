@@ -522,6 +522,36 @@ class LayoutTests(unittest.TestCase):
         name = page.evaluate("() => getComputedStyle(document.querySelector('.large-art-wrap')).animationName")
         self.assertEqual("none", name, "reduced-motion users must never get a spinning disc")
 
+    def test_header_flip_does_not_cancel_playing_label_spin(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.evaluate("""() => {
+          const disc = document.querySelector('.label-disc');
+          disc.classList.add('is-playing');
+          const spacer = document.createElement('div');
+          spacer.style.height = '1000px';
+          document.getElementById('now-content').append(spacer);
+          const content = document.getElementById('now-content');
+          content.scrollTop = 100;
+          content.dispatchEvent(new Event('scroll'));
+        }""")
+        page.wait_for_function("() => document.querySelector('.now-header').classList.contains('is-compact')")
+        animations = page.evaluate("""() => {
+          const disc = document.querySelector('.label-disc');
+          const all = disc.getAnimations();
+          const spin = all.filter((animation) => animation.animationName === 'label-spin');
+          return {
+            compact: document.querySelector('.now-header').classList.contains('is-compact'),
+            flipCount: all.filter((animation) => animation.animationName !== 'label-spin').length,
+            spinCount: spin.length,
+            spinState: spin[0]?.playState ?? null,
+          };
+        }""")
+        self.assertTrue(animations["compact"], "the real scroll path must compact the now-playing header")
+        self.assertGreaterEqual(animations["flipCount"], 1, "compaction should start the header FLIP animation")
+        self.assertEqual(1, animations["spinCount"], "FLIP must not cancel the CSS label-spin animation")
+        self.assertEqual("running", animations["spinState"])
+
     def test_headlines_take_no_terminal_period(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(

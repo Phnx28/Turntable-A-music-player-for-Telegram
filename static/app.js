@@ -1452,6 +1452,7 @@ function updateNowHeader() {
 // then animate the delta with transform/scale so the art appears to glide beside the title
 // rather than cutting to it. Transform-only, so nothing reflows mid-animation.
 const NOW_HEADER_MORPH = [".large-art-wrap", ".now-title"];
+const NOW_HEADER_FLIP_ANIMATIONS = new WeakMap();
 function setNowHeaderCompact(header, compact) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
     header.classList.toggle("is-compact", compact);
@@ -1469,12 +1470,13 @@ function setNowHeaderCompact(header, compact) {
     const sx = first.width / last.width;
     const sy = first.height / last.height;
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
-    element.getAnimations().forEach((animation) => animation.cancel());
-    element.animate(
+    NOW_HEADER_FLIP_ANIMATIONS.get(element)?.cancel();
+    const flip = element.animate(
       [{ transformOrigin: "top left", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
        { transformOrigin: "top left", transform: "none" }],
       { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" },
     );
+    NOW_HEADER_FLIP_ANIMATIONS.set(element, flip);
   });
 }
 
