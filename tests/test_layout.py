@@ -206,3 +206,19 @@ class LayoutTests(unittest.TestCase):
         ]""")
         self.assertTrue(hidden, "candidate section stayed open after a failed lookup")
         self.assertNotIn("list-skeleton", markup, "the loading skeleton outlived the failure")
+
+    def test_phones_can_filter_the_open_playlist(self):
+        page = self.page(390, 844)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_timeout(150)
+        visible = page.evaluate("""() => {
+          const shown = (selector) => {
+            const element = document.querySelector(selector);
+            if (!element) return "missing";
+            const style = getComputedStyle(element);
+            return style.display !== "none" && style.visibility !== "hidden";
+          };
+          return { filter: shown(".search-control"), count: shown("#library-summary") };
+        }""")
+        self.assertIs(True, visible["filter"], "the playlist filter is hidden on a phone, so narrowing is impossible")
+        self.assertIs(True, visible["count"], "the track count is hidden on a phone")

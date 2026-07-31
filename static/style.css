@@ -871,7 +871,12 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   .library { grid-column: 1; padding: 0 20px; }
   .library-header { min-height: 112px; align-items: center; padding: 22px 0 18px; }
   .library-heading h1 { font-size: 32px; }
-  .library-heading .small-copy, .search-control { display: none; }
+  /* Spec 4.5: the filter and the count are the working parts of this header; the eyebrow is
+     decoration. Hiding .search-control removed the narrowing task from phones entirely --
+     global search is not a substitute, it searches all of Telegram rather than this playlist. */
+  .library-heading .eyebrow { display: none; }
+  .header-actions { flex-wrap: wrap; }
+  .search-control { flex: 1 1 100%; order: 10; }
   .now-panel {
     position: fixed;
     z-index: 20;
