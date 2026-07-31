@@ -1264,6 +1264,15 @@ function openMetadata(track = state.current) {
   if (!$("metadata-dialog").open) $("metadata-dialog").showModal();
 }
 
+// All four metadata handlers used to funnel error.message straight into the status line, and
+// fetchMetadata additionally left its skeleton and section up, so a rate-limited lookup showed
+// a loading animation and an error at the same time, forever.
+function metadataFailed(error) {
+  $("candidate-list").innerHTML = "";
+  $("candidate-section").hidden = true;
+  $("metadata-status").textContent = error.message;
+}
+
 async function saveMetadata(event) {
   event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget));
   for (const field of ["year", "trackNumber", "discNumber"]) values[field] = Number(values[field]) || 0;
@@ -1271,13 +1280,13 @@ async function saveMetadata(event) {
     const updated = await api(mediaUrl(state.editing, "metadata"), { method: "PATCH", body: JSON.stringify({ set: values, clear: [] }) });
     state.editing = updated; cacheSet(state.trackCache, updated.key, updated, 100); if (state.current?.key === updated.key) { state.current = { ...state.current, ...updated }; setTrackUi(); }
     state.libraryCache.clear(); await loadLibrary(true); $("metadata-status").textContent = "Saved locally. Downloads will use these tags.";
-  } catch (error) { $("metadata-status").textContent = error.message; }
+  } catch (error) { metadataFailed(error); }
 }
 
 async function resetMetadata() {
   if (!state.editing || !await confirmAction("Reset local metadata?", "Telegram’s original metadata will become visible again.", "Reset")) return;
   try { const updated = await api(mediaUrl(state.editing, "metadata"), { method: "PATCH", body: JSON.stringify({ set: {}, clear: Object.keys(state.editing.overrides) }) }); state.editing = updated; openMetadata(updated); state.libraryCache.clear(); await loadLibrary(true); }
-  catch (error) { $("metadata-status").textContent = error.message; }
+  catch (error) { metadataFailed(error); }
 }
 
 async function fetchMetadata() {
@@ -1288,7 +1297,7 @@ async function fetchMetadata() {
     const candidates = await api(`${mediaUrl(state.editing, "metadata")}/search`, { method: "POST", body: "{}" });
     $("candidate-list").innerHTML = candidates.map((item) => `<article class="candidate-row">${item.coverUrl ? `<img class="candidate-cover" src="${mediaUrl(state.editing, `metadata/candidates/${encodeURIComponent(item.id)}/cover`)}" alt="" loading="lazy">` : '<div class="candidate-cover art-placeholder"><span></span></div>'}<div class="candidate-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.artist)} · ${escapeHtml(item.album || "Single")} ${item.year || ""}</span></div><span class="utility">${item.score}%</span><button class="button" type="button" data-candidate="${escapeHtml(item.id)}">Use match</button></article>`).join("") || '<p class="small-copy">No close matches found.</p>';
     $("metadata-status").textContent = candidates.length ? `${candidates.length} matches found.` : "No close matches found.";
-  } catch (error) { $("metadata-status").textContent = error.message; }
+  } catch (error) { metadataFailed(error); }
   finally { button.disabled = false; button.removeAttribute("aria-busy"); }
 }
 
@@ -1297,7 +1306,7 @@ async function applyCandidate(id) {
     const updated = await api(`${mediaUrl(state.editing, "metadata")}/apply`, { method: "POST", body: JSON.stringify({ candidateId: id, coverQuality: $("cover-quality").value }) });
     state.editing = updated; cacheSet(state.trackCache, updated.key, updated, 100); if (state.current?.key === updated.key) { state.current = { ...state.current, ...updated }; setTrackUi(); }
     openMetadata(updated); state.libraryCache.clear(); await loadLibrary(true); $("metadata-status").textContent = "Internet metadata applied locally.";
-  } catch (error) { $("metadata-status").textContent = error.message; }
+  } catch (error) { metadataFailed(error); }
 }
 
 function openLyricsEditor() { if (!state.current) return; $("lyrics-text").value = state.lyrics?.syncedText || state.lyrics?.plainText || ""; $("lyrics-status").textContent = ""; if (!$("lyrics-dialog").open) $("lyrics-dialog").showModal(); }
