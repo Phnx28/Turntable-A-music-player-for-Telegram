@@ -1,6 +1,8 @@
 :root {
   color-scheme: light;
   --paper: #faf9f6;
+  /* :root -- 1.082 separation from --paper, graphite still 5.06:1 on it */
+  --rail: #f2f0ea;
   --surface: #ffffff;
   --surface-raised: #ffffff;
   --ink: #14110f;
@@ -47,6 +49,8 @@
 html[data-theme="dark"] {
   color-scheme: dark;
   --paper: #12100e;
+  /* both dark blocks -- 1.060 separation from --paper */
+  --rail: #080706;
   --surface: #1b1815;
   --surface-raised: color-mix(in srgb, var(--surface) 92%, var(--ink) 8%);
   --ink: #f2efe8;
@@ -65,6 +69,8 @@ html[data-theme="dark"] {
   html[data-theme="system"] {
     color-scheme: dark;
     --paper: #12100e;
+    /* both dark blocks -- 1.060 separation from --paper */
+    --rail: #080706;
     --surface: #1b1815;
     --surface-raised: color-mix(in srgb, var(--surface) 92%, var(--ink) 8%);
     --ink: #f2efe8;
@@ -79,6 +85,16 @@ html[data-theme="dark"] {
     --elev-3: 0 24px 80px rgb(0 0 0 / .4);
   }
 }
+
+/* Four of these can be on screen at once (rail, library, now-content, modal) and none were
+   styled, so they painted native chrome over the segmented control, the discover checkboxes
+   and the lyric text. scrollbar-color handles Firefox; the ::-webkit- rules handle the rest. */
+* { scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: var(--radius-pill); background: var(--rule); background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--graphite); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* Self-hosted: --font-ui named Inter with no @font-face anywhere, so the face carrying the
    identity silently became Segoe UI or a generic sans on most machines. One Archivo file
@@ -312,7 +328,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
   padding: 25px 18px 18px;
   border-right: 1px solid var(--rule);
-  background: var(--paper);
+  background: var(--rail);
 }
 
 .global-search-wrap { position: relative; margin: 0 0 12px; }
