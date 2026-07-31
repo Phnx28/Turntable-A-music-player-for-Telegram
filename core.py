@@ -36,6 +36,17 @@ AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav"}
 BIND_HOSTS = {"127.0.0.1", "0.0.0.0"}
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
+# The client sends a key, never SQL. An unknown key degrades to posted rather than erroring, so
+# a stale bookmark or a hand-edited URL cannot 500. Every fragment keeps t.rowid DESC as its
+# final tiebreak (added at the call site): without it, equal keys can order differently between
+# pages and a row shows up twice or disappears while scrolling.
+_TRACK_SORTS = {
+    "posted": "t.sent_at DESC",
+    "title": "COALESCE(NULLIF(json_extract(o.payload,'$.title'),''), NULLIF(t.telegram_title,''), t.file_name) COLLATE NOCASE ASC",
+    "artist": "COALESCE(NULLIF(json_extract(o.payload,'$.artist'),''), NULLIF(t.telegram_artist,''), 'Unknown artist') COLLATE NOCASE ASC",
+    "duration": "t.duration_ms DESC",
+}
+
 # scrypt cost: ~16 MB and ~100 ms per attempt, which makes offline cracking of a
 # stolen hash expensive while staying imperceptible on a single interactive login.
 _SCRYPT_N = 2 ** 14
@@ -940,9 +951,11 @@ class Database:
         liked: bool = False,
         include_unselected: bool = False,
         total: int | None = None,
+        sort: str = "posted",
     ) -> dict[str, Any]:
         offset = max(0, int(offset))
         limit = max(25, min(int(limit), 200))
+        order = _TRACK_SORTS.get(sort or "posted", _TRACK_SORTS["posted"])
         clauses, parameters = self._library_filter(chat_id, query, liked, include_unselected)
         where = " AND ".join(clauses)
         # _library_filter already flushed any pending FTS writes above, so this is now a pure
@@ -960,7 +973,7 @@ class Database:
             LEFT JOIN metadata_overrides o
                 ON o.chat_id = t.chat_id AND o.message_id = t.message_id
             WHERE {where}
-            ORDER BY t.sent_at DESC, t.rowid DESC
+            ORDER BY {order}, t.rowid DESC
             LIMIT ? OFFSET ?
             """,
             (*parameters, limit, offset),

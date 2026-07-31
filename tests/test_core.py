@@ -157,6 +157,37 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(expected, len(page["items"]), f"query={query!r}")
             database.close()
 
+    def test_track_sort_uses_an_allowlist_and_matches_what_is_displayed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "z.mp3", "mimeType": "audio/mpeg",
+                 "title": "Zebra", "artist": "Beta", "durationMs": 300_000, "sentAt": 300},
+                {"chatId": "1", "messageId": "2", "fileName": "a.mp3", "mimeType": "audio/mpeg",
+                 "title": "apple", "artist": "Alpha", "durationMs": 100_000, "sentAt": 200},
+                {"chatId": "1", "messageId": "3", "fileName": "m.mp3", "mimeType": "audio/mpeg",
+                 "title": "Mango", "artist": "Gamma", "durationMs": 200_000, "sentAt": 100},
+            ])
+            # The displayed title wins over the Telegram one, so sorting must follow the override.
+            database.save_metadata_patch("1", "1", {"title": "Aardvark override"}, [])
+
+            def keys(sort):
+                return [item["key"] for item in database.list_tracks(sort=sort)["items"]]
+
+            self.assertEqual(["1:1", "1:2", "1:3"], keys("posted"))
+            # Aardvark override first, then apple -- COLLATE NOCASE, or "apple" would follow "Mango".
+            self.assertEqual(["1:1", "1:2", "1:3"], keys("title"))
+            self.assertEqual(["1:2", "1:1", "1:3"], keys("artist"))
+            self.assertEqual(["1:1", "1:3", "1:2"], keys("duration"))
+
+            # Anything not on the allowlist degrades to posted rather than reaching SQL.
+            for hostile in ["title; DROP TABLE tracks", "t.sent_at ASC", "", "nonsense", None]:
+                self.assertEqual(keys("posted"), keys(hostile), f"{hostile!r} was not rejected")
+            # And the table is still there.
+            self.assertEqual(3, database.list_tracks()["total"])
+            database.close()
+
     def test_unselected_source_still_lists_its_own_tracks(self):
         # Clicking the player title to locate a track asks for one chat_id. That is an explicit
         # choice, so the source must list its tracks even while unselected -- it used to come
