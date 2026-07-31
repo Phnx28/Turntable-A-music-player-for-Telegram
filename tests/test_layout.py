@@ -258,6 +258,27 @@ class LayoutTests(unittest.TestCase):
         within = page.evaluate("() => getComputedStyle(document.querySelector('.track-source')).display")
         self.assertEqual("none", within, "the source column repeats the page title inside a single source")
 
+    def test_responsive_rows_keep_head_compatible_at_800px(self):
+        page = self.page(800, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        shape = page.evaluate("""() => {
+          const visible = (element) => [...element.children]
+            .filter((child) => getComputedStyle(child).display !== 'none');
+          const head = document.querySelector('.track-head');
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          return {
+            headCells: visible(head).length,
+            rowCells: visible(row).length,
+            headRows: getComputedStyle(head).gridTemplateRows.trim().split(/\\s+/).filter(Boolean).length,
+            rowRows: getComputedStyle(row).gridTemplateRows.trim().split(/\\s+/).filter(Boolean).length,
+          };
+        }""")
+        self.assertEqual(6, shape["headCells"], "Source is hidden at 800px, leaving six visible head cells")
+        self.assertEqual(shape["headCells"], shape["rowCells"], "head and row must expose the same visible cells")
+        self.assertEqual(1, shape["headRows"], "the column head must stay a single grid row")
+        self.assertEqual(1, shape["rowRows"], "a row cell wrapped into an implicit second grid row")
+
     def test_zero_results_drop_the_column_head_and_disable_play(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(

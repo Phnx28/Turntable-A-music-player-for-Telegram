@@ -929,7 +929,8 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
 .rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-3) var(--ease-out); }
 .rail-scrim[hidden] { display: block !important; pointer-events: none; opacity: 0; }
   .library { grid-column: 1; padding: 0 20px; }
-  .track-row { grid-template-columns: 34px minmax(0, 1fr) 64px 36px 36px; height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
+  .track-head, .track-row { grid-template-columns: 34px minmax(0, 1fr) 64px 36px 36px 36px; }
+  .track-row { height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
   .library-header { min-height: 112px; align-items: center; padding: 22px 0 18px; }
   .library-heading h1 { font-size: 32px; }
   /* Spec 4.5: the filter and the count are the working parts of this header; the eyebrow is
@@ -984,7 +985,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   .library-header { gap: 8px; }
   .header-actions { gap: 2px; }
   .track-head { display: none; }
-  .track-row { grid-template-columns: 34px minmax(0, 1fr) 64px 36px 36px; height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
+  .track-row { grid-template-columns: 34px minmax(0, 1fr) 64px 36px 36px 36px; height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
   .row-art { width: var(--art-row); height: var(--art-row); }
   .track-duration { text-align: right; }
   .row-menu, .track-row-actions { opacity: 1; }
