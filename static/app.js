@@ -24,6 +24,7 @@ let confirmResolve = null, draggedSource = "", draggedQueue = -1, pendingShare =
 let lastUiTrackKey = "";
 let countryList = [], countryMatches = [], countryActive = -1, selectedCountry = null, countryCloseTimer;
 const COUNTRY_RESULT_LIMIT = 60;
+const GLOBAL_SEARCH_LIMIT = 30;
 let lastAudibleVolume = .8;
 const pendingCovers = new Set();
 
@@ -812,11 +813,15 @@ function renderGlobalSearch(message = "") {
   clearTimeout(globalResultsCloseTimer); panel.classList.remove("is-leaving");
   panel.hidden = false; $("global-search").setAttribute("aria-expanded", "true");
   $("global-results-title").textContent = $("global-search").value.trim() || "Search everywhere";
+  const found = state.globalTracks.length + state.globalSources.length;
+  $("global-results-count").textContent = message ? "" : found === GLOBAL_SEARCH_LIMIT
+    ? `First ${found} results`
+    : `${found} ${found === 1 ? "result" : "results"}`;
   $("global-source-results").innerHTML = state.globalSources.length
-    ? `<h3>Telegram sources</h3>${state.globalSources.map((source) => `<button class="global-result" type="button" data-global-source="${source.chatId}"><span><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${source.trackCount ? ` · ${source.trackCount.toLocaleString()} known tracks` : ""}</small></span><span class="global-result-mark">${source.selected ? "Open" : "Preview"}</span></button>`).join("")}`
+    ? `<h3>Telegram sources</h3>${state.globalSources.map((source) => `<button class="global-result" type="button" data-global-source="${source.chatId}"><span class="result-art-wrap">${avatarMarkup(source)}</span><span class="track-copy"><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${source.trackCount ? ` · ${source.trackCount.toLocaleString()} known tracks` : ""}</small></span><span class="result-provenance">${source.selected ? "In your library" : "On Telegram"}</span><span class="track-duration utility"></span></button>`).join("")}`
     : "";
   $("global-track-results").innerHTML = state.globalTracks.length
-    ? `<h3>Tracks</h3>${state.globalTracks.map((track) => `<button class="global-result" type="button" data-global-track="${escapeHtml(track.key)}"><span><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artist)} · ${escapeHtml(track.source.title)}</small></span><span class="global-result-mark">${track.source.selected ? formatTime(track.durationMs / 1000) : "Telegram"}</span></button>`).join("")}`
+    ? `<h3>Tracks</h3>${state.globalTracks.map((track) => `<button class="global-result" type="button" data-global-track="${escapeHtml(track.key)}"><span class="result-art-wrap"><img class="row-art" src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt="" loading="lazy"></span><span class="track-copy"><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artist || "Unknown artist")} · ${escapeHtml(track.source.title)}</small></span><span class="result-provenance">${track.source.selected ? "In your library" : "On Telegram"}</span><span class="track-duration utility">${formatTime(track.durationMs / 1000)}</span></button>`).join("")}`
     : "";
   const empty = $("global-search-empty");
   empty.hidden = Boolean(state.globalTracks.length || state.globalSources.length) && !message;
@@ -833,7 +838,7 @@ async function searchEverywhere() {
   renderGlobalSearch("Searching Telegram…");
   try {
     $("global-search-signal").hidden = false;
-    const remote = await api("/api/search/telegram", { method: "POST", signal: globalController.signal, body: JSON.stringify({ query, limit: 30 }) });
+    const remote = await api("/api/search/telegram", { method: "POST", signal: globalController.signal, body: JSON.stringify({ query, limit: GLOBAL_SEARCH_LIMIT }) });
     if (token !== globalRequest) return;
     state.globalTracks = Array.isArray(remote?.tracks) ? remote.tracks : [];
     state.globalSources = Array.isArray(remote?.sources) ? remote.sources : [];

@@ -321,6 +321,83 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(any("sort=title" in url for url in requested),
                         f"returning to Title did not refetch the cached sort key: {requested}")
 
+    def test_search_results_reuse_the_library_row_system(self):
+        page = self.page(1440, 900)
+        requested = []
+
+        def search(route):
+            payload = json.loads(route.request.post_data or "{}")
+            requested.append(payload)
+            if payload.get("query") == "cap":
+                tracks = _tracks(30)
+                sources = []
+            else:
+                sources = [{
+                    "chatId": "-1005", "kind": "bot", "title": "@deepcuts_bot", "username": "deepcuts_bot",
+                    "selected": True, "trackCount": 31,
+                }]
+                tracks = [{
+                    "key": "-1009:77", "title": "Burial", "artist": "Burial", "durationMs": 242000,
+                    "artworkVersion": "search-v1", "source": {
+                        "chatId": "-1009", "title": "Telegram Vault", "kind": "channel", "selected": False,
+                    },
+                }]
+            return route.fulfill(status=200, content_type="application/json",
+                                 body=json.dumps({"sources": sources, "tracks": tracks}))
+
+        # This route must be registered before filling the input: the generic fallback in _stub
+        # returns {}, which would exercise the empty state rather than either result template.
+        page.route("**/api/search/telegram", search)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.fill("#global-search", "burial")
+        page.wait_for_selector("[data-global-track]")
+        page.wait_for_function("""() => {
+          const image = document.querySelector('[data-global-track] .row-art');
+          return image?.complete && image.naturalWidth > 0;
+        }""")
+        shape = page.evaluate("""() => {
+          const source = document.querySelector('[data-global-source]');
+          const track = document.querySelector('[data-global-track]');
+          const art = track?.querySelector('.row-art');
+          const sourceAvatar = source?.querySelector('.source-avatar');
+          return {
+            trackArt: art ? Math.round(art.getBoundingClientRect().width) : 0,
+            trackSrc: art?.getAttribute('src') ?? null,
+            trackDataSrc: art?.getAttribute('data-src') ?? null,
+            trackLoading: art?.getAttribute('loading') ?? null,
+            trackNaturalWidth: art?.naturalWidth ?? 0,
+            titlePx: track ? getComputedStyle(track.querySelector('strong')).fontSize : null,
+            trackProvenance: track?.querySelector('.result-provenance')?.textContent.trim() ?? null,
+            sourceProvenance: source?.querySelector('.result-provenance')?.textContent.trim() ?? null,
+            sourceKind: source?.querySelector('.track-copy small')?.textContent.trim() ?? null,
+            sourceAvatarRadius: sourceAvatar ? getComputedStyle(sourceAvatar).borderRadius : null,
+            sourceDurationCell: source?.querySelector('.track-duration')?.textContent.trim() ?? null,
+            trackDuration: track?.querySelector('.track-duration')?.textContent.trim() ?? null,
+            marks: document.querySelectorAll('.global-result-mark').length,
+            count: document.getElementById('global-results-count')?.textContent.trim() ?? null,
+          };
+        }""")
+        self.assertEqual(40, shape["trackArt"], "the track result must use the library's 40px artwork")
+        self.assertTrue(shape["trackSrc"], "track result artwork must use src so it can load in the dropdown")
+        self.assertIsNone(shape["trackDataSrc"], "dropdown artwork must not depend on the library-only observer")
+        self.assertEqual("lazy", shape["trackLoading"])
+        self.assertGreater(shape["trackNaturalWidth"], 0, "the track cover did not load")
+        self.assertEqual("15px", shape["titlePx"], "result titles should match library rows (--text-body)")
+        self.assertEqual("In your library", shape["sourceProvenance"])
+        self.assertEqual("On Telegram", shape["trackProvenance"])
+        self.assertEqual("Bot · 31 known tracks", shape["sourceKind"], "source kind should use sourceKindLabel")
+        self.assertEqual("50%", shape["sourceAvatarRadius"], "source results retain circular avatars")
+        self.assertEqual("", shape["sourceDurationCell"], "source results keep an empty duration cell")
+        self.assertEqual("4:02", shape["trackDuration"])
+        self.assertEqual(0, shape["marks"], "the four-meaning 8px mark column still exists")
+        self.assertEqual("2 results", shape["count"])
+
+        page.fill("#global-search", "cap")
+        page.wait_for_function("() => document.getElementById('global-results-count')?.textContent.trim() === 'First 30 results'")
+        self.assertTrue(requested, "the search route was not called")
+        self.assertTrue(all(request.get("limit") == 30 for request in requested),
+                        f"search requests drifted from the server cap: {requested}")
+
     def test_zero_results_drop_the_column_head_and_disable_play(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(

@@ -373,8 +373,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-result {
   display: grid;
   width: 100%;
-  min-height: 52px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: var(--row-height);
+  grid-template-columns: var(--art-row) minmax(0, 1fr) auto 64px;
   align-items: center;
   gap: 12px;
   padding: 7px 5px;
@@ -384,11 +384,14 @@ body.resizing { cursor: col-resize; user-select: none; }
   cursor: pointer;
   text-align: left;
 }
-.global-result:hover, .global-result:focus-visible { background: var(--paper); }
+.global-result:hover, .global-result:focus-visible { background: var(--surface); }
 .global-result strong, .global-result small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.global-result strong { font-size: 13px; }
-.global-result small { margin-top: 3px; color: var(--graphite); font-size: var(--text-micro); }
-.global-result-mark { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); letter-spacing: .04em; text-transform: uppercase; }
+.global-result strong { font-size: var(--text-body); }
+.global-result small { margin-top: 3px; color: var(--graphite); font-size: var(--text-small); }
+.global-result .track-copy strong { font-size: var(--text-body); }
+.global-result .track-copy small { font-size: var(--text-small); }
+.result-art-wrap { width: var(--art-row); height: var(--art-row); }
+.result-provenance { color: var(--graphite); font-size: var(--text-micro); white-space: nowrap; }
 .global-results .empty-copy { margin: 18px 0 5px; }
 @keyframes search-pulse { to { outline: 10px solid transparent; } }
 
