@@ -456,3 +456,16 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("none", state["head"], "the TRACK/SOURCE/TIME head sits above an empty list")
         self.assertIs(True, state["play"], "Play is enabled with nothing to play")
         self.assertIs(True, state["shuffle"], "Shuffle is enabled with nothing to shuffle")
+
+    def test_headlines_take_no_terminal_period(self):
+        page = self.page(1440, 900)
+        page.route("**/api/tracks*", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"items": [], "offset": 0, "total": 0}'))
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.fill("#track-search", "qqqqq")
+        page.wait_for_selector("#empty-library:not([hidden])")
+        headline = page.text_content("#empty-title")
+        self.assertFalse(headline.rstrip().endswith("."), f"headline carries a terminal period: {headline!r}")
+        # The best-written state in the app (audit F): it must still name the query.
+        self.assertIn("qqqqq", headline)

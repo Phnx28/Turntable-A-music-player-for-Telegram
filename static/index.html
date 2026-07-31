@@ -26,7 +26,6 @@
     <main id="lock-view" class="gate" hidden>
       <section class="gate-panel login-panel lock-panel" aria-labelledby="lock-title">
         <header class="login-heading">
-          <p class="eyebrow">Locked</p>
           <h1 id="lock-title">Enter your password</h1>
           <p class="gate-copy">This player is password protected.</p>
         </header>
@@ -43,7 +42,6 @@
     <main id="telegram-view" class="gate" hidden>
       <section class="gate-panel wide login-panel" aria-labelledby="telegram-title">
         <header class="login-heading">
-          <p class="eyebrow">One-time connection</p>
           <h1 id="telegram-title">Link Telegram</h1>
           <p class="gate-copy">Choose either secure method. Your Telegram password and login codes are never stored.</p>
         </header>
@@ -128,7 +126,7 @@
           </div>
           <section id="global-results" class="global-results" aria-label="Telegram search results" hidden>
             <header class="global-results-head">
-              <div><p class="eyebrow">Library lens</p><strong id="global-results-title">Search everywhere</strong><span id="global-results-count" class="small-copy"></span></div>
+              <strong id="global-results-title">Search everywhere</strong><span id="global-results-count" class="small-copy"></span>
               <button id="close-global-search" class="icon-button" type="button" aria-label="Close global search" title="Close global search"><svg><use href="#i-close"/></svg></button>
             </header>
             <div id="global-search-signal" class="global-search-signal" hidden><span></span><small>Checking Telegram channels and bots…</small></div>
@@ -213,7 +211,7 @@
         <div id="track-list" class="track-list"></div>
         <section id="empty-library" class="empty-state" hidden>
           <p class="eyebrow" id="empty-eyebrow">No tracks here</p>
-          <h2 id="empty-title">Add a channel, bot, or private chat.</h2>
+          <h2 id="empty-title">Add a channel, bot, or private chat</h2>
           <p id="empty-body">The app will find its audio and keep the playlist in sync.</p>
           <button class="button primary" type="button" data-action="add-source" id="empty-add">Choose a source</button>
           <button class="button" type="button" id="empty-clear-search" hidden>Clear search</button>
@@ -314,7 +312,7 @@
 
     <dialog id="source-dialog" class="modal wide-modal">
       <header class="modal-header">
-        <div><p class="eyebrow">Telegram library</p><h2>Choose sources</h2></div>
+        <h2>Choose sources</h2>
         <button class="icon-button" type="button" data-close="source-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <p class="small-copy">Each selected chat becomes a playlist. Groups are intentionally left out.</p>
@@ -324,7 +322,7 @@
 
     <dialog id="metadata-dialog" class="modal wide-modal">
       <header class="modal-header">
-        <div><p class="eyebrow">Local metadata layer</p><h2>Edit track</h2></div>
+        <h2>Edit track</h2>
         <button class="icon-button" type="button" data-close="metadata-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <form id="metadata-form" class="metadata-form">
@@ -352,7 +350,7 @@
 
     <dialog id="lyrics-dialog" class="modal">
       <header class="modal-header">
-        <div><p class="eyebrow">Plain or LRC</p><h2>Edit lyrics</h2></div>
+        <h2>Edit lyrics</h2>
         <button class="icon-button" type="button" data-close="lyrics-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <form id="lyrics-form" class="stack">
@@ -367,7 +365,7 @@
     </dialog>
 
     <dialog id="share-dialog" class="modal">
-      <header class="modal-header"><div><p class="eyebrow">Telegram contacts</p><h2>Share track</h2></div><button class="icon-button" type="button" data-close="share-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button></header>
+      <header class="modal-header"><h2>Share track</h2><button class="icon-button" type="button" data-close="share-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button></header>
       <label for="contact-search">Find a contact</label>
       <input id="contact-search" type="search" placeholder="Name or username" autocomplete="off">
       <p id="share-status" class="dialog-status" role="status" aria-live="polite"></p>
@@ -380,7 +378,7 @@
 
     <dialog id="settings-dialog" class="modal settings-modal wide-modal">
       <header class="modal-header">
-        <div><p class="eyebrow">Player preferences</p><h2>Settings</h2></div>
+        <h2>Settings</h2>
         <button class="icon-button" type="button" data-close="settings-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="network">Network</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
@@ -413,7 +411,7 @@
           <div class="segmented" id="bind-host-options" data-bind-host>
             <button type="button" data-value="127.0.0.1">This machine only</button><button type="button" data-value="0.0.0.0">Anyone on my network</button>
           </div>
-          <p class="field-help" id="bind-host-help">Loopback keeps the player reachable only from this computer.</p>
+          <p class="field-help" id="bind-host-help">This machine only keeps the player private. Anyone on my network lets other devices reach it — including anyone else on the same Wi-Fi.</p>
           <p id="bind-restart-notice" class="restart-notice" role="status" hidden></p>
         </fieldset>
 

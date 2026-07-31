@@ -654,7 +654,7 @@ function renderTracks(force = false) {
     $("shuffle-playlist").disabled = true;
     const query = $("track-search").value.trim();
     $("empty-eyebrow").textContent = query ? "No matches" : "No tracks here";
-    $("empty-title").textContent = query ? `Nothing matches "${query}".` : "Add a channel, bot, or private chat.";
+    $("empty-title").textContent = query ? `Nothing matches "${query}"` : "Add a channel, bot, or private chat";
     $("empty-body").textContent = query
       ? "Try fewer words, or search every chat with the search box in the sidebar."
       : "The app will find its audio and keep the playlist in sync.";
@@ -825,7 +825,7 @@ function renderGlobalSearch(message = "") {
     : "";
   const empty = $("global-search-empty");
   empty.hidden = Boolean(state.globalTracks.length || state.globalSources.length) && !message;
-  empty.textContent = message || "No matches yet.";
+  empty.textContent = message || "Nothing matches that search";
 }
 
 async function searchEverywhere() {
@@ -1232,7 +1232,11 @@ function renderDiscovered() {
   for (const item of state.discovered) groups.get(item.selected ? "selected" : item.kind)?.push(item);
   $("discover-list").innerHTML = order.map((group) => {
     const items = groups.get(group).sort(compare); if (!items.length) return "";
-    return `<section class="discover-group"><h3>${labels[group]}</h3>${items.map((item) => `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${item.musicFileCount ?? item.trackCount ?? "…"} music files</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`).join("")}</section>`;
+    return `<section class="discover-group"><h3>${labels[group]}</h3>${items.map((item) => {
+      const counted = item.musicFileCount ?? (item.trackCount > 0 ? item.trackCount : null);
+      // ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
+      return `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`;
+    }).join("")}</section>`;
   }).join("") || '<p class="small-copy">No supported chats found.</p>';
 }
 
@@ -1620,8 +1624,9 @@ function renderContacts() {
   const query = $("contact-search").value.trim().toLocaleLowerCase();
   const contacts = state.contacts.filter((contact) => `${contact.name} ${contact.username || ""}`.toLocaleLowerCase().includes(query));
   renderFrequentContacts();
-  $("share-status").textContent = `${contacts.length} matching ${contacts.length === 1 ? "contact" : "contacts"}`;
-  $("contact-list").innerHTML = contacts.map((contact) => `<button class="contact-row" type="button" data-contact="${contact.id}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span><strong>${escapeHtml(contact.name)}</strong><small>${contact.username ? `@${escapeHtml(contact.username)}` : "Telegram contact"}</small></span></button>`).join("") || '<p class="empty-copy">No matching contacts.</p>';
+  const typed = $("contact-search").value.trim();
+  $("share-status").textContent = typed ? `${contacts.length} ${contacts.length === 1 ? "match" : "matches"}` : "";
+  $("contact-list").innerHTML = contacts.map((contact) => `<button class="contact-row" type="button" data-contact="${contact.id}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span><strong>${escapeHtml(contact.name)}</strong><small>${contact.username ? `@${escapeHtml(contact.username)}` : "Your cloud storage"}</small></span></button>`).join("") || '<p class="empty-copy">No contacts found.</p>';
 }
 
 async function openShare() {
@@ -1725,7 +1730,7 @@ async function openSettings() {
   $("settings-dialog").showModal();
   try {
     state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality;
-    const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} cached · ${(cache.bytes / 1048576).toFixed(1)} MB`;
+    const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} songs cached · ${(cache.bytes / 1048576).toFixed(1)} MB`;
     const [network, auth, status] = await Promise.all([api("/api/network"), api("/api/auth/status"), api("/api/status")]);
     state.network = network;
     state.passwordEnabled = auth.passwordEnabled;
@@ -1743,9 +1748,7 @@ function renderNetwork() {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   }
-  $("bind-host-help").textContent = bindHost === "0.0.0.0"
-    ? "Anyone on your network can open this player. Set a password below."
-    : "Loopback keeps the player reachable only from this computer.";
+  $("bind-host-help").textContent = "This machine only keeps the player private. Anyone on my network lets other devices reach it — including anyone else on the same Wi-Fi.";
 
   const notice = $("bind-restart-notice");
   if (inDocker) {
@@ -1758,7 +1761,7 @@ function renderNetwork() {
     notice.textContent = `Saved. Currently still serving on ${activeHost} \u2014 restart to apply.`;
   } else if (!managed) {
     notice.hidden = false;
-    notice.textContent = "Started without run.py, so this setting is not applied. Restart with: uv run python run.py";
+    notice.textContent = "This setting needs a restart to take effect.";
   } else {
     notice.hidden = true;
   }
@@ -2175,7 +2178,7 @@ $("musicbrainz-contact").addEventListener("input", () => saveSettingsSoon(curren
 // cannot lose the value.
 $("musicbrainz-contact").addEventListener("blur", flushSettings);
 $("test-musicbrainz").addEventListener("click", async () => { try { state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value }) }); await api("/api/settings/musicbrainz/test", { method: "POST" }); toast("MusicBrainz connection works"); } catch (error) { showError(error, () => $("test-musicbrainz").click()); } });
-$("clear-cache").addEventListener("click", async () => { if (await confirmAction("Clear prefetched songs?", "Playback metadata and Telegram files will not be changed.", "Clear cache")) { try { await api("/api/cache", { method: "DELETE" }); $("cache-usage").textContent = "0 cached · 0 MB"; toast("Prefetched songs cleared"); } catch (error) { showError(error); } } });
+$("clear-cache").addEventListener("click", async () => { if (await confirmAction("Clear prefetched songs?", "Playback metadata and Telegram files will not be changed.", "Clear cache")) { try { await api("/api/cache", { method: "DELETE" }); $("cache-usage").textContent = "0 songs cached · 0 MB"; toast("Prefetched songs cleared"); } catch (error) { showError(error); } } });
 document.querySelectorAll("[data-setting] [data-value]").forEach((button) => button.addEventListener("click", () => { localStorage.setItem(`tm-${button.parentElement.dataset.setting}`, button.dataset.value); applyPreferences(); }));
 $("disconnect-telegram").addEventListener("click", async () => { if (await confirmAction("Disconnect Telegram?", "This signs out the stored Telegram session and clears the local library. It does not leave or delete any Telegram chats.", "Disconnect")) { try { await api("/api/telegram/session", { method: "DELETE" }); location.reload(); } catch (error) { showError(error); } } });
 
