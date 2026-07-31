@@ -457,6 +457,71 @@ class LayoutTests(unittest.TestCase):
         self.assertIs(True, state["play"], "Play is enabled with nothing to play")
         self.assertIs(True, state["shuffle"], "Shuffle is enabled with nothing to shuffle")
 
+    def test_label_disc_holds_while_paused_and_rotates_only_while_playing(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        paused = page.evaluate("""() => {
+          const disc = document.querySelector('.large-art-wrap');
+          const style = getComputedStyle(disc);
+          const ring = getComputedStyle(disc, '::before');
+          const probe = document.createElement('span');
+          probe.style.borderTop = '1px solid var(--rule)';
+          document.body.append(probe);
+          const ruleColor = getComputedStyle(probe).borderTopColor;
+          probe.remove();
+          return {
+            classes: disc.className,
+            radius: style.borderRadius,
+            square: Math.abs(disc.getBoundingClientRect().width - disc.getBoundingClientRect().height) < 1,
+            name: style.animationName,
+            duration: style.animationDuration,
+            playState: style.animationPlayState,
+            ringColor: ring.borderTopColor,
+            ruleColor,
+          };
+        }""")
+        self.assertIn("label-disc", paused["classes"])
+        self.assertTrue(paused["square"], "a label must be a circle, so the box has to be square")
+        self.assertEqual("50%", paused["radius"])
+        self.assertEqual("label-spin", paused["name"])
+        self.assertEqual("20s", paused["duration"])
+        self.assertEqual("paused", paused["playState"], "a paused disc must hold its current angle")
+        self.assertEqual(paused["ruleColor"], paused["ringColor"], "the paused ring must use --rule")
+
+        page.evaluate("() => document.querySelector('.label-disc').classList.add('is-playing')")
+        playing = page.evaluate("""() => {
+          const disc = document.querySelector('.label-disc');
+          const style = getComputedStyle(disc);
+          const ring = getComputedStyle(disc, '::before');
+          const probe = document.createElement('span');
+          probe.style.borderTop = '1px solid var(--stamp)';
+          document.body.append(probe);
+          const stampColor = getComputedStyle(probe).borderTopColor;
+          probe.remove();
+          return {
+            name: style.animationName,
+            duration: style.animationDuration,
+            playState: style.animationPlayState,
+            ringColor: ring.borderTopColor,
+            stampColor,
+          };
+        }""")
+        self.assertEqual("label-spin", playing["name"])
+        self.assertEqual("20s", playing["duration"])
+        self.assertEqual("running", playing["playState"])
+        self.assertEqual(playing["stampColor"], playing["ringColor"], "the playing ring must use --stamp")
+
+    def test_label_disc_is_static_for_reduced_motion(self):
+        page = self.browser.new_page(viewport={"width": 1440, "height": 900}, reduced_motion="reduce")
+        page.route("**/api/**", self._stub)
+        page.goto(f"http://127.0.0.1:{self.port}/index.html", wait_until="load")
+        self.addCleanup(page.close)
+        self.open_now_panel(page)
+        self.assertIn("label-disc", page.locator(".large-art-wrap").get_attribute("class"))
+        page.evaluate("() => document.querySelector('.large-art-wrap').classList.add('is-playing')")
+        name = page.evaluate("() => getComputedStyle(document.querySelector('.large-art-wrap')).animationName")
+        self.assertEqual("none", name, "reduced-motion users must never get a spinning disc")
+
     def test_headlines_take_no_terminal_period(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(

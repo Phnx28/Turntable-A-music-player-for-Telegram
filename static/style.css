@@ -657,8 +657,45 @@ body.resizing { cursor: col-resize; user-select: none; }
 #large-art-placeholder { transition: opacity 200ms var(--ease-out); }
 #large-art-placeholder.is-covered { opacity: 0; }
 
+/* A dubplate: circular crop, a printed ring at the label edge, and a real spindle hole. */
+.label-disc {
+  border-radius: 50%;
+  animation: label-spin 20s linear infinite;
+  animation-play-state: paused;
+}
+.label-disc > .large-art, .label-disc > .art-placeholder { border-radius: 50%; }
+.label-disc::before {
+  position: absolute;
+  z-index: 3;
+  inset: 6%;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+.label-disc.is-playing::before { border-color: var(--stamp); }
+.label-disc::after {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  width: 7%;
+  height: 7%;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / .45);
+  content: "";
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.label-disc.is-playing { animation-play-state: running; }
+@keyframes label-spin { to { rotate: 1turn; } }
+@media (prefers-reduced-motion: reduce) {
+  .label-disc { animation: none; }
+}
+
 .art-placeholder { position: relative; overflow: hidden; background: var(--paper); transition: opacity var(--dur-2) var(--ease-out); }
-.art-placeholder::before, .art-placeholder::after, .art-placeholder span {
+.art-placeholder::before, .art-placeholder::after, .art-placeholder span:not(.label-stamp) {
   position: absolute;
   border: 1px solid var(--rule);
   border-radius: 50%;
@@ -666,8 +703,30 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .art-placeholder::before { inset: 17%; }
 .art-placeholder::after { inset: 35%; background: var(--rule-soft); opacity: .75; }
-.art-placeholder span { inset: 46%; background: var(--ink); }
+.art-placeholder span:not(.label-stamp) { inset: 46%; background: var(--ink); }
 .art-placeholder.mini { width: 48px; height: 48px; border-radius: 3px; }
+.white-label { display: grid; place-items: center; padding: 22%; background: var(--paper); }
+.white-label::before, .white-label::after { display: none; }
+.label-stamp {
+  position: static;
+  inset: auto;
+  display: -webkit-box;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: clamp(11px, 2.2vw, 20px);
+  font-stretch: 62%;
+  font-weight: 620;
+  letter-spacing: .06em;
+  line-height: 1.15;
+  text-align: center;
+  text-transform: uppercase;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
 
 .now-title { height: 104px; overflow: hidden; }
 .now-title h2 { display: -webkit-box; margin: 0; overflow: hidden; font-size: 26px; font-weight: 680; letter-spacing: -.03em; line-height: 1.1; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }

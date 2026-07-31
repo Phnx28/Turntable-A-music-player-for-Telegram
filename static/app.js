@@ -929,13 +929,14 @@ function setTrackUi() {
   const track = state.current;
   if (!track) { $("progress").disabled = true; return; }
   $("progress").disabled = false;
-  const metadata = track.metadata;
+  const metadata = track.metadata || {};
   const changed = lastUiTrackKey !== track.key;
   lastUiTrackKey = track.key;
-  const title = metadata.title || track.file.name;
+  const title = metadata?.title || track.file?.name || "Untitled";
   const artist = metadata.artist || "Unknown artist";
   for (const id of ["player-title", "now-title"]) $(id).textContent = title;
   for (const id of ["player-artist", "now-artist"]) $(id).textContent = artist;
+  $("label-stamp").textContent = title;
   if (changed) $("playback-status").textContent = `Now playing ${title} by ${artist}.`;
   for (const id of ["mini-art", "large-art"]) {
     const image = $(id); const placeholder = $(`${id}-placeholder`);
@@ -981,6 +982,7 @@ function setTrackUi() {
 
 function updateTransport() {
   const playing = state.buffering || !audio.paused;
+  document.querySelector(".label-disc")?.classList.toggle("is-playing", playing);
   $("play").classList.toggle("playing", playing);
   $("play").setAttribute("aria-busy", String(state.buffering));
   $("play").setAttribute("aria-pressed", String(playing));
