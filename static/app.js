@@ -902,6 +902,29 @@ async function playKey(key, queue = null, explicitIndex = null) {
   try { await startAudioPlayback(); } catch (error) { showError(error, () => startAudioPlayback().catch(() => {}), "Couldn’t play this track"); }
 }
 
+function detailRowsFor(track) {
+  const metadata = track.metadata || {};
+  const now = Math.floor(Date.now() / 1000);
+  const disc = Number(metadata.discNumber) || 0;
+  const number = Number(metadata.trackNumber) || 0;
+  return [
+    ["Source", track.source?.title],
+    ["Album", metadata.album],
+    ["Album artist", metadata.albumArtist],
+    ["Genre", metadata.genre],
+    ["Year", metadata.year || ""],
+    ["Duration", track.durationMs ? formatTime(track.durationMs / 1000) : ""],
+    ["Posted", track.sentAt ? formatPostedDate(track.sentAt, now) : ""],
+    ["Track", number ? String(number) : ""],
+    ["Disc", disc ? String(disc) : ""],
+    ["Format", (track.file?.mimeType || "").replace(/^audio\//, "").toUpperCase()],
+    ["File", track.file?.name],
+    ["Size", track.file?.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""],
+  ].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+}
+
+window.__renderDetailsForTest = (track) => { $("track-details").innerHTML = detailRowsFor(track); };
+
 function setTrackUi() {
   const track = state.current;
   if (!track) { $("progress").disabled = true; return; }
@@ -935,7 +958,7 @@ function setTrackUi() {
   $("like-current").querySelector("use").setAttribute("href", track.liked ? "#i-heart-filled" : "#i-heart");
   $("like-current").setAttribute("aria-pressed", String(Boolean(track.liked)));
   $("like-current").setAttribute("aria-label", track.liked ? "Unlike current track" : "Like current track");
-  const detailRows = [["Source", track.source.title], ["Album", metadata.album], ["Album artist", metadata.albumArtist], ["Genre", metadata.genre], ["Year", metadata.year || ""], ["File", track.file.name], ["Size", track.file.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""]].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  const detailRows = detailRowsFor(track);
   // Removing the speed control took the only write of detailRows with it, so the Details tab
   // rendered its action buttons over an empty <dl>. The rows are the tab's actual content.
   $("track-details").innerHTML = detailRows;

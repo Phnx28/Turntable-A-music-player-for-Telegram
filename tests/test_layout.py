@@ -152,6 +152,48 @@ class LayoutTests(unittest.TestCase):
         }""")
         page.wait_for_timeout(400)
 
+    def test_details_tab_shows_everything_already_indexed(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.evaluate("""() => {
+          document.getElementById('details-pane').hidden = false;
+          document.getElementById('track-details').innerHTML = '';
+        }""")
+        # Drive the real render path rather than asserting on hand-written markup.
+        page.evaluate("""() => window.__renderDetailsForTest({
+          key: '-1001:1000', source: { title: 'Hyperdub' },
+          metadata: { album: 'Rival Dealer', albumArtist: 'Burial', genre: 'Bass',
+                      year: 2013, trackNumber: 2, discNumber: 1 },
+          file: { name: 'rival-dealer.mp3', mimeType: 'audio/mpeg', size: 14_680_064 },
+          durationMs: 602_000, sentAt: 1753800000,
+        })""")
+        labels = page.evaluate("() => [...document.querySelectorAll('#track-details dt')].map((d) => d.textContent)")
+        for expected in ["Duration", "Posted", "Track", "Disc", "Format"]:
+            self.assertIn(expected, labels, f"{expected} is indexed but not shown: {labels}")
+        values = page.evaluate("() => [...document.querySelectorAll('#track-details dd')].map((d) => d.textContent)")
+        self.assertIn("10:02", values, f"duration not formatted: {values}")
+        self.assertIn("MPEG", values, f"audio mime type not formatted: {values}")
+        self.assertIn("14.0 MB", values, f"file size not formatted: {values}")
+
+        # Actions must be reachable without scrolling the pane: DOCUMENT_POSITION_FOLLOWING (4)
+        # means the list comes after the actions.
+        position = page.evaluate("""() => document.querySelector('.detail-actions')
+          .compareDocumentPosition(document.getElementById('track-details'))""")
+        self.assertEqual(4, position & 4, "the action buttons must precede the detail list")
+
+        page.evaluate("""() => window.__renderDetailsForTest({
+          key: '-1001:1001', source: { title: 'Hyperdub' },
+          metadata: {}, file: { name: 'untitled.mp3', size: 0 },
+        })""")
+        sparse = page.evaluate("""() => ({
+          labels: [...document.querySelectorAll('#track-details dt')].map((d) => d.textContent),
+          values: [...document.querySelectorAll('#track-details dd')].map((d) => d.textContent),
+        })""")
+        for absent in ["Album", "Year", "Duration", "Posted", "Track", "Disc", "Format", "Size"]:
+            self.assertNotIn(absent, sparse["labels"], f"sparse track rendered absent row: {sparse}")
+        self.assertNotIn("0", sparse["values"], f"sparse track rendered a zero value: {sparse}")
+        self.assertTrue(all(value for value in sparse["values"]), f"sparse track rendered an empty dd: {sparse}")
+
     def test_now_playing_does_not_cover_the_transport_on_a_phone(self):
         page = self.page(390, 844)
         self.open_now_panel(page)

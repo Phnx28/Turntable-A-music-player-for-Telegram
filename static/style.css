@@ -712,7 +712,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .details-pane dt { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); text-transform: uppercase; }
 .details-pane dd { margin: 0; overflow-wrap: anywhere; }
-.detail-actions { display: grid; gap: 8px; margin-top: 24px; }
+.detail-actions { display: grid; gap: 8px; margin-bottom: 24px; }
 .detail-actions .button { width: 100%; justify-content: flex-start; }
 
 .player {
