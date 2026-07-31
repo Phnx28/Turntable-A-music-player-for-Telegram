@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView } from "./player-core.js";
 
 test("player helpers", () => {
   assert.equal(formatTime(65.9), "1:05");
@@ -38,4 +38,37 @@ test("saved queues survive the v1 to v2 windowing change", () => {
   assert.equal(normalizePlayerState({ version: 2, queue: ["1:2", "1:3"], queueTotal: 1 }).queueTotal, 2);
   // queueIndex is always clamped into the stored window.
   assert.equal(normalizePlayerState({ version: 2, queue: ["1:2"], queueIndex: 500 }).queueIndex, 0);
+});
+
+test("the queue summary counts the whole queue, and empty means empty", () => {
+  // The regression: one track playing, nothing after it. The old summary counted only what
+  // followed the cursor, so the header said "empty" above a row that said "PLAYING".
+  const single = queueView(["1:2"], 0);
+  assert.equal(single.isEmpty, false);
+  assert.equal(single.total, 1);
+  assert.equal(single.upcoming, 0);
+  assert.equal(single.summary, "1 in queue · last track");
+
+  const middle = queueView(["1:2", "1:3", "1:4"], 0);
+  assert.equal(middle.total, 3);
+  assert.equal(middle.upcoming, 2);
+  assert.equal(middle.summary, "3 in queue · 2 up next");
+
+  // Nothing has been played yet: the cursor sits before the first item.
+  assert.equal(queueView(["1:2", "1:3", "1:4"], -1).upcoming, 3);
+  assert.equal(queueView(["1:2", "1:3", "1:4"], -1).summary, "3 in queue · 3 up next");
+
+  // A cursor past the end is a stale index, not negative upcoming.
+  assert.equal(queueView(["1:2", "1:3", "1:4"], 99).upcoming, 0);
+  assert.equal(queueView(["1:2", "1:3", "1:4"], 99).summary, "3 in queue · last track");
+
+  // Genuinely empty, and the non-array case an unparsed snapshot can produce.
+  assert.equal(queueView([], 0).isEmpty, true);
+  assert.equal(queueView([], 0).summary, "Your queue is empty");
+  assert.equal(queueView(null, 0).isEmpty, true);
+  assert.equal(queueView(undefined, undefined).summary, "Your queue is empty");
+
+  // Thousands separators, matching the .toLocaleString() the summary already used.
+  assert.equal(queueView(Array.from({ length: 54660 }, (_, index) => String(index)), 0).summary,
+    "54,660 in queue · 54,659 up next");
 });

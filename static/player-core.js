@@ -67,3 +67,13 @@ export function normalizePlayerState(payload) {
     queueTotal: Math.max(queue.length, Number(payload.queueTotal) || 0),
   };
 }
+
+export function queueView(queue, queueIndex) {
+  const total = Array.isArray(queue) ? queue.length : 0;
+  const cursor = Math.max(-1, Math.min(Number.isFinite(queueIndex) ? queueIndex : -1, total - 1));
+  const upcoming = Math.max(0, total - cursor - 1);
+  const summary = !total ? "Your queue is empty"
+    : upcoming ? `${total.toLocaleString()} in queue · ${upcoming.toLocaleString()} up next`
+    : `${total.toLocaleString()} in queue · last track`;
+  return { total, upcoming, isEmpty: total === 0, summary };
+}

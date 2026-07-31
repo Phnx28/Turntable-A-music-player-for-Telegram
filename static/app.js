@@ -1,4 +1,4 @@
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView } from "./player-core.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -1081,12 +1081,14 @@ async function ensureSummaries(keys) {
   finally { missing.forEach((key) => state.summaryRequests.delete(key)); }
 }
 
+const QUEUE_EMPTY = '<div class="queue-empty"><strong>Your queue is empty</strong><span>Choose a track or add one from its more menu.</span><button class="button" type="button" data-queue-browse>Browse library</button></div>';
+
 function renderQueue() {
   const historyStart = Math.max(0, state.queueIndex - state.historyVisible);
   const visibleStart = historyStart;
   const visibleEnd = Math.min(state.queue.length, state.queueIndex + 101);
-  const upcoming = state.queue.slice(state.queueIndex + 1);
-  $("queue-summary").textContent = upcoming.length ? `${upcoming.length.toLocaleString()} upcoming` : "Your queue is empty";
+  const view = queueView(state.queue, state.queueIndex);
+  $("queue-summary").textContent = view.summary;
   if ($("queue-pane").hidden) return;
   const visible = state.queue.slice(visibleStart, visibleEnd);
   const rows = visible.map((key, offset) => {
@@ -1096,7 +1098,9 @@ function renderQueue() {
     const section = index < state.queueIndex ? "Played" : index === state.queueIndex ? "Playing" : "Up next";
     return `<div class="queue-row ${index < state.queueIndex ? "played" : ""} ${index === state.queueIndex ? "current" : ""}" draggable="${index > state.queueIndex}" data-queue-index="${index}" data-queue-key="${escapeHtml(key)}"><button class="queue-copy" type="button" data-queue-play="${index}"><span class="queue-state">${section}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(artist)}</small></button><span>${index > state.queueIndex ? `<span class="cache-state ${state.cacheStates[key] || ""}">${escapeHtml(state.cacheStates[key] || "queued")}</span><button class="icon-button" type="button" data-remove-queue="${index}" aria-label="Remove from queue">${icon("close")}</button>` : ""}</span></div>`;
   }).join("");
-  $("queue-list").innerHTML = rows + (upcoming.length ? "" : '<div class="queue-empty"><strong>Your queue is clear.</strong><span>Choose a track or add one from its more menu.</span><button class="button" type="button" data-queue-browse>Browse library</button></div>');
+  // Rows or the empty state, never both: the old form concatenated them, so a one-track queue
+  // showed a PLAYING row with "your queue is clear" underneath it.
+  $("queue-list").innerHTML = view.isEmpty ? QUEUE_EMPTY : rows;
   ensureSummaries(visible);
 }
 
