@@ -478,6 +478,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .track-head { min-height: 43px; padding: 0 9px; border-bottom: 1px solid var(--line); color: var(--muted); }
+/* A column head over zero rows labels nothing. Driven by a class rather than by editing the
+   860px .track-head { display: none } so the two conditions do not fight. */
+.library.is-empty .track-head { display: none; }
 .track-list { padding-bottom: 40px; }
 
 .track-row {

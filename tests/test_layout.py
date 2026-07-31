@@ -222,3 +222,20 @@ class LayoutTests(unittest.TestCase):
         }""")
         self.assertIs(True, visible["filter"], "the playlist filter is hidden on a phone, so narrowing is impossible")
         self.assertIs(True, visible["count"], "the track count is hidden on a phone")
+
+    def test_zero_results_drop_the_column_head_and_disable_play(self):
+        page = self.page(1440, 900)
+        page.route("**/api/tracks*", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"items": [], "offset": 0, "total": 0}'))
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.fill("#track-search", "qqqqq")
+        page.wait_for_selector("#empty-library:not([hidden])")
+        state = page.evaluate("""() => ({
+          head: getComputedStyle(document.querySelector('.track-head')).display,
+          play: document.getElementById('play-playlist').disabled,
+          shuffle: document.getElementById('shuffle-playlist').disabled,
+        })""")
+        self.assertEqual("none", state["head"], "the TRACK/SOURCE/TIME head sits above an empty list")
+        self.assertIs(True, state["play"], "Play is enabled with nothing to play")
+        self.assertIs(True, state["shuffle"], "Shuffle is enabled with nothing to shuffle")

@@ -634,6 +634,9 @@ function renderTracks(force = false) {
   const empty = state.totalTracks === 0 && !state.libraryLoading;
   $("empty-library").hidden = !empty; list.hidden = empty;
   if (empty) {
+    $("library").classList.add("is-empty");
+    $("play-playlist").disabled = true;
+    $("shuffle-playlist").disabled = true;
     const query = $("track-search").value.trim();
     $("empty-eyebrow").textContent = query ? "No matches" : "No tracks here";
     $("empty-title").textContent = query ? `Nothing matches "${query}".` : "Add a channel, bot, or private chat.";
@@ -644,6 +647,9 @@ function renderTracks(force = false) {
     $("empty-clear-search").hidden = !query;
     list.replaceChildren(); renderSources(); return;
   }
+  $("library").classList.remove("is-empty");
+  $("play-playlist").disabled = false;
+  $("shuffle-playlist").disabled = false;
   if (!state.totalTracks) {
     // Mid-refresh the old rows are still on screen and dimmed; replacing them with a skeleton
     // is the flash we are avoiding.
