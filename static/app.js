@@ -1,5 +1,5 @@
 import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
-import { sourceKindLabel } from "./format.js";
+import { AppError, errorCopy, sourceKindLabel } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -26,12 +26,6 @@ let countryList = [], countryMatches = [], countryActive = -1, selectedCountry =
 const COUNTRY_RESULT_LIMIT = 60;
 let lastAudibleVolume = .8;
 const pendingCovers = new Set();
-
-class AppError extends Error {
-  constructor(message, retryable = false, code = "request_failed") {
-    super(message); this.retryable = retryable; this.code = code;
-  }
-}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -82,7 +76,7 @@ function toast(message, action = null, duration = 3200) {
 function showError(error, retry = null, title = "Couldn’t complete that") {
   retryAction = retry;
   $("error-title").textContent = title;
-  $("error-message").textContent = error?.message || String(error);
+  $("error-message").textContent = errorCopy(error);
   $("error-retry").hidden = !(retry && error?.retryable !== false);
   if (!$("error-dialog").open) $("error-dialog").showModal();
 }
@@ -878,7 +872,7 @@ async function playKey(key, queue = null, explicitIndex = null) {
   api("/api/playback/events", { method: "POST", body: JSON.stringify({ key, event: "started" }) }).catch(() => {});
   loadLyrics();
   schedulePersist();
-  try { await startAudioPlayback(); } catch (error) { showError(error); }
+  try { await startAudioPlayback(); } catch (error) { showError(error, () => startAudioPlayback().catch(() => {}), "Couldn’t play this track"); }
 }
 
 function setTrackUi() {
@@ -1270,7 +1264,7 @@ function openMetadata(track = state.current) {
 function metadataFailed(error) {
   $("candidate-list").innerHTML = "";
   $("candidate-section").hidden = true;
-  $("metadata-status").textContent = error.message;
+  $("metadata-status").textContent = errorCopy(error);
 }
 
 async function saveMetadata(event) {
