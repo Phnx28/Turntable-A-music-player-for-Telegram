@@ -362,7 +362,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: grid;
   width: 100%;
   min-height: 41px;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto 30px;
   align-items: center;
   padding: 0 9px;
   border: 0;
@@ -949,7 +949,7 @@ button[aria-busy="true"]::after { width: 12px; height: 12px; border: 1.5px solid
 .source-tools select { min-width: 0; height: 34px; flex: 1; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11px; }
 .bulk-bar { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 8px; border-block: 1px solid var(--line); font-size: 11px; }
 .bulk-bar span { margin-right: auto; }
-.source-link { position: relative; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; min-height: 54px; transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), opacity var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
+.source-link { position: relative; grid-template-columns: 34px minmax(0, 1fr) auto 30px; gap: 10px; min-height: 54px; transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), opacity var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
 .source-entry[draggable="true"] { cursor: grab; }
 .source-entry[draggable="true"]:active { cursor: grabbing; }
 .source-entry.is-dragging { cursor: grabbing; opacity: 0.35; }
@@ -961,29 +961,15 @@ img.source-avatar { object-fit: cover; }
 .source-copy strong, .source-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-copy strong { font-size: 13px; font-weight: 620; }
 .source-copy small { margin-top: 2px; color: var(--muted); font-size: 11px; }
-/* The actions used to sit in the grid at opacity 0, reserving 105px of a 260px rail even
-   when invisible, which squeezed source titles to ~46px and ellipsised them to five
-   characters. Overlay them instead so the title gets the full column and nothing reflows
-   on hover. They stay tabbable, so :focus-within still reveals them for keyboard use. */
-.source-actions {
-  position: absolute;
-  top: 50%;
-  right: 9px;
-  display: flex;
-  padding-left: 8px;
-  background: var(--surface);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-50%) translateX(3px);
-}
-.source-actions .icon-button { width: 27px; height: 27px; }
-.source-link:hover .source-actions, .source-link:focus-within .source-actions { opacity: 1; pointer-events: auto; transform: translateY(-50%); }
-.source-count { color: var(--muted); font-family: var(--font-mono); font-size: 10px; font-variant-numeric: tabular-nums; }
-.source-link:hover .source-count { display: none; }
+.source-count { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
+/* Always rendered, never opacity: 0. The count used to live inside an invisible overlay that
+   also painted over the title on hover -- two bugs from one piece of hidden content. */
+.source-menu { width: 30px; height: 30px; color: var(--graphite); }
+.source-link:hover .source-menu, .source-link:focus-within .source-menu { color: var(--ink); }
+.source-error-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: 1px; }
 .source-select { width: 16px; height: 16px; accent-color: var(--accent); }
 .source-pin-mark { display: inline-grid; width: 14px; height: 14px; flex: 0 0 auto; margin-right: 4px; place-items: center; color: var(--accent); vertical-align: -2px; }
 .source-pin-mark svg { width: 12px; height: 12px; }
-.source-actions .icon-button[data-pin-source].active { color: var(--accent); }
 
 .app-shell, .app-shell.panel-open { transition: grid-template-columns var(--dur-3) var(--ease-out); }
 /* The resizer writes --rail-width on every pointermove, and easing that made the column chase
@@ -998,7 +984,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
    and the collapse button 16px past the rail's edge. */
 .sidebar-collapsed .brand-row { flex-direction: column; align-items: center; justify-content: flex-start; gap: 8px; padding-inline: 0; }
 .sidebar-collapsed .brand-group { flex: 0 0 auto; }
-.sidebar-collapsed .brand-text, .sidebar-collapsed #account-name, .sidebar-collapsed .source-tools, .sidebar-collapsed .bulk-bar, .sidebar-collapsed .source-copy, .sidebar-collapsed .source-count, .sidebar-collapsed .source-actions, .sidebar-collapsed .add-source span, .sidebar-collapsed .sync-all span, .sidebar-collapsed .rail-footer, .sidebar-collapsed .global-search-control input { display: none; }
+.sidebar-collapsed .brand-text, .sidebar-collapsed #account-name, .sidebar-collapsed .source-tools, .sidebar-collapsed .bulk-bar, .sidebar-collapsed .source-copy, .sidebar-collapsed .source-count, .sidebar-collapsed .add-source span, .sidebar-collapsed .sync-all span, .sidebar-collapsed .rail-footer, .sidebar-collapsed .global-search-control input { display: none; }
 .sidebar-collapsed .global-search-wrap { width: 46px; margin-inline: auto; }
 .sidebar-collapsed .global-search-control { width: 46px; height: 46px; grid-template-columns: 1fr; justify-items: center; padding: 0; }
 .sidebar-collapsed .global-search-trigger { width: 46px; height: 46px; }
@@ -1244,8 +1230,6 @@ dialog.modal[open]::backdrop { opacity: 1; }
   .row-menu, .track-row-actions { opacity: 1; }
   :where(.button, .icon-button, .play-button, .add-source, .text-button, .tab, .row-menu, .context-menu button) { min-width: 44px; min-height: 44px; }
   .progress { top: -10px; height: 20px; }
-  .source-actions { opacity: 1; transform: none; }
-  .source-link .source-count { display: none; }
 }
 
 /* Telegram handoff */

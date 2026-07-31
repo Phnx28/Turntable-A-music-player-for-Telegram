@@ -1,4 +1,5 @@
 import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
+import { sourceKindLabel } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -550,16 +551,19 @@ function renderSources() {
     const draggable = $("sidebar-sort").value === "custom" && !state.bulk && !source.pinnedAt;
     return `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}${source.pinnedAt ? " pinned" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${draggable}"${!state.likedMode && source.chatId === state.source ? ' aria-current="page"' : ""}>
     ${state.bulk ? `<input class="source-select" type="checkbox" data-bulk-source="${source.chatId}" ${state.selectedSources.has(source.chatId) ? "checked" : ""} aria-label="Select ${escapeHtml(source.title)}">` : avatarMarkup(source)}
-    <span class="source-copy"><strong>${source.pinnedAt ? `<span class="source-pin-mark" aria-hidden="true">${icon("pin")}</span>` : ""}${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)}${source.syncError ? " · needs attention" : ""}</small></span>
-    <span class="source-actions"><span class="source-count">${source.trackCount}</span><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="false" title="Sync new tracks" aria-label="Sync new tracks from ${escapeHtml(source.title)}">${icon("sync")}</button><button class="icon-button" type="button" data-sync-source="${source.chatId}" data-full="true" title="Full rescan" aria-label="Full rescan ${escapeHtml(source.title)}">${icon("repeat")}</button><button class="icon-button ${source.pinnedAt ? "active" : ""}" type="button" data-pin-source="${source.chatId}" title="${source.pinnedAt ? "Unpin" : "Pin"} from top" aria-pressed="${Boolean(source.pinnedAt)}" aria-label="${source.pinnedAt ? "Unpin" : "Pin"} ${escapeHtml(source.title)}">${icon("pin")}</button></span>
+    <span class="source-copy"><strong>${source.pinnedAt ? `<span class="source-pin-mark" aria-hidden="true">${icon("pin")}</span>` : ""}${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${source.syncError ? `<span class="source-error-dot" role="img" aria-label="Sync problem: ${escapeAttr(source.syncError)}" title="${escapeAttr(source.syncError)}"></span>` : ""}</small></span>
+    <span class="source-count">${source.trackCount.toLocaleString()}</span>
+    ${state.bulk ? "" : `<button class="icon-button source-menu" type="button" data-source-menu="${source.chatId}" aria-label="Actions for ${escapeHtml(source.title)}">${icon("more")}</button>`}
   </div>`;
   }).join("");
   const allMusic = document.querySelector('[data-source=""]');
+  allMusic?.toggleAttribute("hidden", state.bulk);
+  $("liked-source").toggleAttribute("hidden", state.bulk);
   allMusic?.classList.toggle("active", !state.source && !state.likedMode);
   allMusic?.toggleAttribute("aria-current", !state.source && !state.likedMode);
   const selected = state.likedMode ? null : state.sources.find((item) => item.chatId === state.source) || (state.temporarySource?.chatId === state.source ? state.temporarySource : null);
   $("source-title").textContent = state.likedMode ? "Liked songs" : selected?.title || "All music";
-  $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : selected.kind) : "Your Telegram";
+  $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : sourceKindLabel(selected.kind)) : "Your Telegram";
   $("library-summary").textContent = `${state.totalTracks.toLocaleString()} ${state.totalTracks === 1 ? "track" : "tracks"}${selected?.lastSyncedAt ? ` · synced ${new Date(selected.lastSyncedAt * 1000).toLocaleString()}` : ""}`;
   $("bulk-count").textContent = `${state.selectedSources.size} selected`;
   $("bulk-unselect").disabled = !state.selectedSources.size;
@@ -793,7 +797,7 @@ function renderGlobalSearch(message = "") {
   panel.hidden = false; $("global-search").setAttribute("aria-expanded", "true");
   $("global-results-title").textContent = $("global-search").value.trim() || "Search everywhere";
   $("global-source-results").innerHTML = state.globalSources.length
-    ? `<h3>Telegram sources</h3>${state.globalSources.map((source) => `<button class="global-result" type="button" data-global-source="${source.chatId}"><span><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)}${source.trackCount ? ` · ${source.trackCount.toLocaleString()} known tracks` : ""}</small></span><span class="global-result-mark">${source.selected ? "Open" : "Preview"}</span></button>`).join("")}`
+    ? `<h3>Telegram sources</h3>${state.globalSources.map((source) => `<button class="global-result" type="button" data-global-source="${source.chatId}"><span><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${source.trackCount ? ` · ${source.trackCount.toLocaleString()} known tracks` : ""}</small></span><span class="global-result-mark">${source.selected ? "Open" : "Preview"}</span></button>`).join("")}`
     : "";
   $("global-track-results").innerHTML = state.globalTracks.length
     ? `<h3>Tracks</h3>${state.globalTracks.map((track) => `<button class="global-result" type="button" data-global-track="${escapeHtml(track.key)}"><span><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artist)} · ${escapeHtml(track.source.title)}</small></span><span class="global-result-mark">${track.source.selected ? formatTime(track.durationMs / 1000) : "Telegram"}</span></button>`).join("")}`
@@ -1184,7 +1188,7 @@ function renderDiscovered() {
   for (const item of state.discovered) groups.get(item.selected ? "selected" : item.kind)?.push(item);
   $("discover-list").innerHTML = order.map((group) => {
     const items = groups.get(group).sort(compare); if (!items.length) return "";
-    return `<section class="discover-group"><h3>${labels[group]}</h3>${items.map((item) => `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.kind)} · ${item.musicFileCount ?? item.trackCount ?? "…"} music files</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`).join("")}</section>`;
+    return `<section class="discover-group"><h3>${labels[group]}</h3>${items.map((item) => `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${item.musicFileCount ?? item.trackCount ?? "…"} music files</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`).join("")}</section>`;
   }).join("") || '<p class="small-copy">No supported chats found.</p>';
 }
 
@@ -1244,12 +1248,12 @@ async function keepTemporarySource() {
 }
 
 async function unselectSources(ids) {
-  if (!ids.length || !await confirmAction("Unselect sources?", "They’ll disappear from this player and stop syncing. Nothing will be deleted or left in Telegram.", "Unselect")) return;
+  if (!ids.length || !await confirmAction("Remove from library?", "They’ll disappear from this player and stop syncing. Nothing will be deleted or left in Telegram.", "Remove from library")) return;
   try {
     await api("/api/sources/bulk-select", { method: "POST", body: JSON.stringify({ chatIds: ids, selected: false }) });
     state.selectedSources.clear(); state.bulk = false; $("bulk-bar").hidden = true; state.libraryCache.clear();
     if (ids.includes(state.source)) state.source = "";
-    await loadLibrary(true); toast(ids.length === 1 ? "Source unselected" : `${ids.length} sources unselected`);
+    await loadLibrary(true); toast(ids.length === 1 ? "Source removed from library" : `${ids.length} sources removed from library`);
   } catch (error) { showError(error, () => unselectSources(ids)); }
 }
 
@@ -1474,7 +1478,7 @@ function sourceMenu(chatId, x, y) {
     { label: "Open", action: () => selectSource(chatId) },
     { label: "Sync new tracks", action: () => syncSource(chatId, false) },
     { label: "Full rescan", action: () => syncSource(chatId, true) },
-    { label: "Unselect source", danger: true, action: () => unselectSources([chatId]) },
+    { label: "Remove from library", danger: true, action: () => unselectSources([chatId]) },
   ], x, y);
 }
 
@@ -1911,7 +1915,27 @@ $("change-number").addEventListener("click", restartPhoneLogin);
 $("change-number-2fa").addEventListener("click", restartPhoneLogin);
 
 document.querySelector('[data-source=""]').addEventListener("click", () => selectSource(""));
-$("source-list").addEventListener("click", (event) => { const sync = event.target.closest("[data-sync-source]"); if (sync) return syncSource(sync.dataset.syncSource, sync.dataset.full === "true"); const pin = event.target.closest("[data-pin-source]"); if (pin) return pinSource(pin.dataset.pinSource); const checkbox = event.target.closest("[data-bulk-source]"); if (checkbox) { checkbox.checked ? state.selectedSources.add(checkbox.dataset.bulkSource) : state.selectedSources.delete(checkbox.dataset.bulkSource); return renderSources(); } const temporary = event.target.closest("[data-temporary-source]"); if (temporary && !state.bulk) return selectTemporary(); const row = event.target.closest("[data-source]"); if (row && !state.bulk) selectSource(row.dataset.source); });
+$("source-list").addEventListener("click", (event) => {
+  const menu = event.target.closest("[data-source-menu]");
+  if (menu) {
+    const source = state.sources.find((item) => item.chatId === menu.dataset.sourceMenu);
+    if (!source) return;
+    const box = menu.getBoundingClientRect();
+    // Labels, not glyphs: the old rescan button drew a repeat loop, which reads as "repeat".
+    // pinSource(chatId) takes one argument and toggles from source.pinnedAt itself.
+    return openMenu([
+      { label: "Sync new tracks", action: () => syncSource(source.chatId, false) },
+      { label: "Full rescan", action: () => syncSource(source.chatId, true) },
+      { label: source.pinnedAt ? "Unpin from top" : "Pin to top", action: () => pinSource(source.chatId) },
+    ], box.left, box.bottom + 4);
+  }
+  const checkbox = event.target.closest("[data-bulk-source]");
+  if (checkbox) { checkbox.checked ? state.selectedSources.add(checkbox.dataset.bulkSource) : state.selectedSources.delete(checkbox.dataset.bulkSource); return renderSources(); }
+  const temporary = event.target.closest("[data-temporary-source]");
+  if (temporary && !state.bulk) return selectTemporary();
+  const row = event.target.closest("[data-source]");
+  if (row && !state.bulk) selectSource(row.dataset.source);
+});
 // The row is a keyboard target, but the buttons inside it are too. Let a focused button
 // handle its own Enter/Space instead of navigating to the source behind it.
 $("source-list").addEventListener("keydown", (event) => { if (event.target.closest("button")) return; const row = event.target.closest("[data-source]"); if (row && ["Enter", " "].includes(event.key)) { event.preventDefault(); selectSource(row.dataset.source); } });
