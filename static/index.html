@@ -182,6 +182,15 @@
               <span class="sr-only">Search tracks</span>
               <input id="track-search" type="search" placeholder="Filter this playlist" title="Filter this playlist">
             </label>
+            <label class="sort-control">
+              <span class="sr-only">Sort tracks</span>
+              <select id="track-sort">
+                <option value="posted" selected>Posted</option>
+                <option value="title">Title</option>
+                <option value="artist">Artist</option>
+                <option value="duration">Duration</option>
+              </select>
+            </label>
             <button id="keep-source" class="button primary" type="button" hidden>
               <svg><use href="#i-plus"/></svg>Add to library
             </button>
@@ -193,8 +202,13 @@
         <div id="sync-strip" class="sync-strip" hidden aria-hidden="true"><span class="sync-motion"></span><span id="sync-copy">Syncing…</span></div>
         <span id="sync-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
 
-        <div class="track-head utility" aria-hidden="true">
-          <span>#</span><span>Track</span><span>Source</span><span>Posted</span><span>Time</span><span></span><span></span>
+        <div class="track-head utility">
+          <span>#</span>
+          <button type="button" class="head-sort" data-sort="title">Track</button>
+          <span>Source</span>
+          <button type="button" class="head-sort" data-sort="posted">Posted</button>
+          <button type="button" class="head-sort" data-sort="duration">Time</button>
+          <span></span><span></span>
         </div>
         <div id="track-list" class="track-list"></div>
         <section id="empty-library" class="empty-state" hidden>

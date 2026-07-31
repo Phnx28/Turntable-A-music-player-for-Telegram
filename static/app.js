@@ -3,7 +3,7 @@ import { AppError, errorCopy, formatPostedDate, formatSyncedAt, ordinal, sourceK
 
 const $ = (id) => document.getElementById(id);
 const state = {
-  sources: [], tracks: [], discovered: [], source: "", likedMode: false, current: null, editing: null,
+  sources: [], tracks: [], discovered: [], source: "", likedMode: false, sort: "posted", current: null, editing: null,
   lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1, queueTruncated: false, queueTotal: 0,
   shuffle: localStorage.getItem("tm-shuffle") === "1",
   repeat: localStorage.getItem("tm-repeat") || "off",
@@ -638,6 +638,13 @@ function trackRowHeight() { return 52; }
 
 function renderTracks(force = false) {
   const list = $("track-list");
+  for (const cell of document.querySelectorAll(".track-head [data-sort]")) {
+    const active = cell.dataset.sort === state.sort;
+    // Posted and Duration read newest/longest first; Title and Artist read A-Z.
+    if (active) cell.setAttribute("aria-sort", state.sort === "title" || state.sort === "artist" ? "ascending" : "descending");
+    else cell.removeAttribute("aria-sort");
+  }
+  $("track-sort").value = state.sort;
   const empty = state.totalTracks === 0 && !state.libraryLoading;
   $("empty-library").hidden = !empty; list.hidden = empty;
   if (empty) {
@@ -683,7 +690,9 @@ function renderTracks(force = false) {
 function libraryParameters(offset) {
   const query = $("track-search").value.trim();
   const temporary = Boolean(state.temporarySource?.chatId === state.source && !state.sources.some((item) => item.chatId === state.source));
-  return `source=${encodeURIComponent(state.likedMode ? "" : state.source)}&q=${encodeURIComponent(query)}&offset=${offset}&limit=100&liked=${state.likedMode}&temporary=${temporary}`;
+  // This string is also the state.libraryCache key. Anything that changes which rows come back
+  // must appear here, or a sort change is served the previous sort's cached page.
+  return `source=${encodeURIComponent(state.likedMode ? "" : state.source)}&q=${encodeURIComponent(query)}&offset=${offset}&limit=100&liked=${state.likedMode}&temporary=${temporary}&sort=${encodeURIComponent(state.sort)}`;
 }
 
 async function loadPage(offset, force = false, token = libraryRequest) {
@@ -2007,6 +2016,17 @@ $("source-list").addEventListener("drop", async (event) => {
 $("source-list").addEventListener("dragend", () => { cleanupSourceDrag(); draggedSource = ""; });
 
 $("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey, like).catch(showError); } });
+$("track-sort").addEventListener("change", (event) => {
+  state.sort = event.target.value;
+  state.libraryCache.clear();
+  loadLibrary(true).catch(showError);
+});
+document.querySelector(".track-head").addEventListener("click", (event) => {
+  const cell = event.target.closest("[data-sort]");
+  if (!cell) return;
+  $("track-sort").value = cell.dataset.sort;
+  $("track-sort").dispatchEvent(new Event("change"));
+});
 $("track-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-track-key]"); if (row) { event.preventDefault(); trackMenu(row.dataset.trackKey, event.clientX, event.clientY); } });
 $("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling?.classList.remove("is-covered"); } }, true);
 // The row may be replaced by an innerHTML re-render between load and the rAF

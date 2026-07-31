@@ -504,6 +504,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
+.sort-control select { min-height: 40px; }
 
 .icon-button,
 .play-button {
@@ -529,6 +530,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .track-head { min-height: 43px; padding: 0 9px; border-bottom: 1px solid var(--rule); color: var(--graphite); }
+.head-sort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: inherit; text-transform: inherit; cursor: pointer; }
+.head-sort:hover { color: var(--ink); }
+.head-sort[aria-sort] { color: var(--ink); font-weight: 620; }
+.head-sort[aria-sort]::after { margin-left: 4px; content: "↓"; }
+.head-sort[aria-sort="ascending"]::after { content: "↑"; }
 /* A column head over zero rows labels nothing. Driven by a class rather than by editing the
    860px .track-head { display: none } so the two conditions do not fight. */
 .library.is-empty .track-head { display: none; }

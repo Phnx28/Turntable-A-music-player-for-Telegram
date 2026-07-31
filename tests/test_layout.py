@@ -279,6 +279,48 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(1, shape["headRows"], "the column head must stay a single grid row")
         self.assertEqual(1, shape["rowRows"], "a row cell wrapped into an implicit second grid row")
 
+    def test_sort_control_changes_the_requested_order(self):
+        page = self.page(1440, 900)
+        requested = []
+
+        def record(route):
+            requested.append(route.request.url)
+            self._stub(route)
+
+        page.route("**/api/tracks*", record)
+        # page() has already booted once before returning; reload after installing the recorder
+        # so the default request is observed by this regression too.
+        page.reload(wait_until="load")
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        self.assertTrue(any("sort=posted" in url for url in requested),
+                        f"the default sort is not sent: {requested}")
+
+        requested.clear()
+        page.select_option("#track-sort", "title")
+        page.wait_for_function("() => document.querySelectorAll('.track-row').length > 0")
+        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+        # It must reach the network, not a cache entry keyed without sort.
+        self.assertTrue(any("sort=title" in url for url in requested),
+                        f"changing sort served a stale cache entry instead of refetching: {requested}")
+
+        marked = page.evaluate("""() => [...document.querySelectorAll('.track-head [aria-sort]')]
+          .map((cell) => [cell.textContent.trim(), cell.getAttribute('aria-sort')])""")
+        self.assertIn(["Track", "ascending"], marked,
+                      f"the active sort key is not marked in the column header: {marked}")
+
+        requested.clear()
+        page.click('.head-sort[data-sort="posted"]')
+        page.wait_for_function("() => document.querySelector('.track-head [data-sort=posted]')?.getAttribute('aria-sort') === 'descending'")
+        self.assertTrue(any("sort=posted" in url for url in requested),
+                        f"clicking the Posted head did not use the sort request path: {requested}")
+
+        requested.clear()
+        page.select_option("#track-sort", "title")
+        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+        self.assertTrue(any("sort=title" in url for url in requested),
+                        f"returning to Title did not refetch the cached sort key: {requested}")
+
     def test_zero_results_drop_the_column_head_and_disable_play(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(
