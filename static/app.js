@@ -1558,32 +1558,38 @@ function updateRowLikeUi(key, liked) {
   });
 }
 
+function trackRepresentations(key) {
+  const representations = new Set();
+  const add = (track) => { if (track) representations.add(track); };
+  state.tracks.filter((track) => track?.key === key).forEach(add);
+  add(state.summaryCache.get(key));
+  add(state.trackCache.get(key));
+  if (state.current?.key === key) add(state.current);
+  return [...representations];
+}
+
 async function toggleRowLike(key) {
-  const track = state.tracks.find((entry) => entry?.key === key)
-    || state.trackCache.get(key)
-    || state.summaryCache.get(key);
-  if (!track) return;
-  const previous = Boolean(track.liked);
-  const next = !previous;
-  track.liked = next;
-  if (state.current?.key === key) state.current.liked = next;
-  state.likedCount += next ? 1 : -1;
-  const summary = state.summaryCache.get(key);
-  if (summary) summary.liked = next;
-  updateRowLikeUi(key, next);
-  if (state.current?.key === key) setTrackUi();
-  renderSources();
-  try {
-    await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: next }) });
-    if (state.likedMode) loadLibrary(true);
-  } catch (error) {
-    track.liked = previous;
-    if (state.current?.key === key) state.current.liked = previous;
-    state.likedCount += previous ? 1 : -1;
-    if (summary) summary.liked = previous;
-    updateRowLikeUi(key, previous);
+  const representations = trackRepresentations(key);
+  if (!representations.length) return;
+  const previous = Boolean(representations[0].liked);
+  const requested = !previous;
+  const applyLiked = (liked) => {
+    representations.forEach((track) => { track.liked = liked; });
+    updateRowLikeUi(key, liked);
     if (state.current?.key === key) setTrackUi();
     renderSources();
+  };
+  state.likedCount += requested ? 1 : -1;
+  applyLiked(requested);
+  try {
+    const updated = await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: requested }) });
+    const canonical = typeof updated?.liked === "boolean" ? updated.liked : requested;
+    if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
+    applyLiked(canonical);
+    if (state.likedMode) loadLibrary(true);
+  } catch (error) {
+    state.likedCount += previous ? 1 : -1;
+    applyLiked(previous);
     showError(error);
   }
 }

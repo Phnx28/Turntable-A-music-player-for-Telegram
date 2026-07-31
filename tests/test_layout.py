@@ -327,12 +327,94 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(shape["sizes"], "the row menu opened empty")
         self.assertTrue(all(height >= 44 for height in shape["sizes"]),
                         f"sheet targets under 44px: {shape}")
-        self.assertIn("Like", shape["labels"], f"the narrow row menu lacks Like/Unlike: {shape}")
+        like_labels = [label for label in shape["labels"] if label in {"Like", "Unlike"}]
+        self.assertEqual(1, len(like_labels), f"the narrow row menu must expose exactly one Like/Unlike branch: {shape}")
         self.assertTrue(any(label.startswith("Duration ") for label in shape["labels"]),
                         f"the narrow row menu lacks formatted duration: {shape}")
         self.assertGreaterEqual(shape["menuTop"], 0, f"sheet starts above the viewport: {shape}")
         self.assertLessEqual(shape["menuBottom"], shape["playerTop"] + 1,
                              f"sheet overlaps the player: {shape}")
+
+    def test_narrow_sheet_like_propagates_canonical_state_and_rolls_back(self):
+        page = self.page(390, 844)
+        patches = []
+        tracks = {track["key"]: {**track, "metadata": {"title": track["title"], "artist": track["artist"]},
+                                  "file": {"name": f"{track['title']}.mp3", "mimeType": "audio/mpeg"}}
+                  for track in _tracks(2)}
+
+        def detail_and_like(route):
+            path = urlsplit(route.request.url).path
+            if path.endswith("1000/like"):
+                patches.append(route)
+                return
+            if path.endswith("1000") or path.endswith("1001"):
+                key = "-1001:1000" if path.endswith("1000") else "-1001:1001"
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(tracks[key]))
+            return route.fallback()
+
+        # Playing the row is the real getTrack consumer: its detail response is a distinct
+        # object from the library row, and is retained for the later play-back-to-this-row path.
+        page.route("**/api/**", detail_and_like)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        rows = page.locator(".track-row:not(.track-placeholder)")
+        rows.nth(0).locator(".track-main").click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+
+        def close_fixture_audio_error():
+            page.wait_for_timeout(150)
+            if page.evaluate("() => document.getElementById('error-dialog').open"):
+                page.locator("#error-dialog [data-close='error-dialog']").click()
+
+        def click_sheet_like():
+            rows.nth(0).locator(".row-menu").click()
+            page.wait_for_selector("#context-menu:not([hidden])")
+            page.get_by_role("menuitem", name="Like", exact=True).click()
+
+        close_fixture_audio_error()
+        click_sheet_like()
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        optimistic = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "true", "current": "true", "count": "28"}, optimistic)
+        self.assertEqual(1, len(patches), "the sheet Like action did not reach PATCH")
+
+        # The server's canonical answer deliberately rejects the requested like.
+        patches.pop(0).fulfill(status=200, content_type="application/json", body='{"liked": false}')
+        page.wait_for_timeout(200)
+        canonical = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "false", "current": "false", "count": "27"}, canonical)
+
+        # Re-consume the cached detail through the real row playback path; canonical success must
+        # not leave the distinct detail copy stale and revive the optimistic liked state.
+        rows.nth(1).locator(".track-main").click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Rival Dealer'")
+        close_fixture_audio_error()
+        rows.nth(0).locator(".track-main").click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        close_fixture_audio_error()
+        self.assertEqual("false", page.locator("#like-current").get_attribute("aria-pressed"))
+
+        click_sheet_like()
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        self.assertEqual(1, len(patches), "the rollback PATCH was not captured")
+        patches.pop(0).fulfill(status=500, content_type="application/json",
+                               body='{"error": {"message": "like failed", "retryable": true}}')
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'false'")
+        rolled_back = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+          errorOpen: document.getElementById('error-dialog').open,
+        })""")
+        self.assertEqual({"row": "false", "current": "false", "count": "27", "errorOpen": True}, rolled_back)
 
     def test_desktop_track_menu_does_not_duplicate_row_controls(self):
         page = self.page(1440, 900)
