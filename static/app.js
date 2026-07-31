@@ -1,5 +1,5 @@
 import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
-import { AppError, errorCopy, sourceKindLabel } from "./format.js";
+import { AppError, errorCopy, formatSyncedAt, sourceKindLabel } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -558,7 +558,8 @@ function renderSources() {
   const selected = state.likedMode ? null : state.sources.find((item) => item.chatId === state.source) || (state.temporarySource?.chatId === state.source ? state.temporarySource : null);
   $("source-title").textContent = state.likedMode ? "Liked songs" : selected?.title || "All music";
   $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : sourceKindLabel(selected.kind)) : "Your Telegram";
-  $("library-summary").textContent = `${state.totalTracks.toLocaleString()} ${state.totalTracks === 1 ? "track" : "tracks"}${selected?.lastSyncedAt ? ` · synced ${new Date(selected.lastSyncedAt * 1000).toLocaleString()}` : ""}`;
+  const synced = formatSyncedAt(selected?.lastSyncedAt, Math.floor(Date.now() / 1000));
+  $("library-summary").textContent = `${state.totalTracks.toLocaleString()} ${state.totalTracks === 1 ? "track" : "tracks"}${synced ? ` · ${synced}` : ""}`;
   $("bulk-count").textContent = `${state.selectedSources.size} selected`;
   $("bulk-unselect").disabled = !state.selectedSources.size;
   $("sync-source").disabled = state.likedMode || Boolean(selected?.temporary);

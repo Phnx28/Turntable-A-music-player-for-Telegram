@@ -23,3 +23,41 @@ const GENERIC_FAILURE = "Something went wrong at our end. Try again in a moment.
 export function errorCopy(error) {
   return error instanceof AppError && error.message ? error.message : GENERIC_FAILURE;
 }
+
+const DAY = 86400;
+const WEEK = 7 * DAY;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// nowSeconds is a parameter, not Date.now(), so every boundary here is testable. UTC getters
+// throughout: mixing local getters with a UTC caller makes the year boundary machine-dependent.
+export function formatPostedDate(seconds, nowSeconds) {
+  const posted = Number(seconds) || 0;
+  if (posted <= 0) return "—";
+  const now = Number(nowSeconds) || 0;
+  const elapsed = now - posted;
+  // Server and browser clocks disagree; a negative age must not render as "-3m ago".
+  if (elapsed < 0) return "Just now";
+  if (elapsed < 3600) { const minutes = Math.floor(elapsed / 60); return minutes < 1 ? "Just now" : `${minutes}m ago`; }
+  if (elapsed < DAY) return `${Math.floor(elapsed / 3600)}h ago`;
+  if (elapsed < WEEK) { const days = Math.floor(elapsed / DAY); return days === 1 ? "Yesterday" : `${days}d ago`; }
+  const date = new Date(posted * 1000);
+  const stem = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`;
+  return date.getUTCFullYear() === new Date(now * 1000).getUTCFullYear()
+    ? stem : `${stem} ${String(date.getUTCFullYear()).slice(2)}`;
+}
+
+// Zero-padded to the width of the total so the mono column stays aligned: 007 of 412.
+export function ordinal(position, total) {
+  const width = String(Math.max(1, Number(total) || 1)).length;
+  return String(Math.max(0, Number(position) || 0)).padStart(width, "0");
+}
+
+export function formatSyncedAt(seconds, nowSeconds) {
+  const synced = Number(seconds) || 0;
+  if (synced <= 0) return "";
+  const elapsed = (Number(nowSeconds) || 0) - synced;
+  if (elapsed < 60) return "synced just now";
+  if (elapsed < 3600) return `synced ${Math.floor(elapsed / 60)}m ago`;
+  if (elapsed < DAY) return `synced ${Math.floor(elapsed / 3600)}h ago`;
+  return `synced ${formatPostedDate(synced, nowSeconds)}`;
+}
