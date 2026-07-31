@@ -1520,8 +1520,14 @@ function trackMenu(key, x, y) {
   const detail = state.trackCache.get(key);
   const source = summary?.source || detail?.source;
   if (!source) return;
+  const narrow = matchMedia("(max-width: 860px)").matches;
+  const durationMs = summary?.durationMs ?? detail?.durationMs;
   openMenu([
     { label: "Play", action: () => source.selected === false ? playKey(key, state.globalTracks.map((item) => item.key)) : playFromLibrary(key) },
+    ...(narrow ? [
+      { label: summary?.liked ? "Unlike" : "Like", action: () => toggleRowLike(key) },
+      { label: `Duration ${formatTime(durationMs / 1000)}`, action: null },
+    ] : []),
     { label: "Play next", action: () => { const at = Math.max(state.queueIndex + 1, 0); state.queue.splice(at, 0, key); renderQueue(); schedulePrefetch(); toast("Playing next"); } },
     { label: "Add to queue", action: () => { state.queue.push(key); renderQueue(); schedulePrefetch(); toast("Added to queue"); } },
     { label: "Download", action: () => { location.href = mediaUrl({ key }, "download"); } },
@@ -1543,29 +1549,40 @@ function sourceMenu(chatId, x, y) {
   ], x, y);
 }
 
-async function toggleRowLike(key, button) {
-  const track = state.tracks.find((entry) => entry?.key === key);
+function updateRowLikeUi(key, liked) {
+  document.querySelectorAll(`[data-row-like-key="${CSS.escape(key)}"]`).forEach((button) => {
+    button.classList.toggle("active", liked);
+    button.setAttribute("aria-pressed", String(liked));
+    button.setAttribute("aria-label", `${liked ? "Unlike" : "Like"} ${button.getAttribute("aria-label")?.replace(/^(Unlike|Like) /, "") || "track"}`);
+    button.querySelector("use")?.setAttribute("href", liked ? "#i-heart-filled" : "#i-heart");
+  });
+}
+
+async function toggleRowLike(key) {
+  const track = state.tracks.find((entry) => entry?.key === key)
+    || state.trackCache.get(key)
+    || state.summaryCache.get(key);
   if (!track) return;
   const previous = Boolean(track.liked);
   const next = !previous;
   track.liked = next;
+  if (state.current?.key === key) state.current.liked = next;
   state.likedCount += next ? 1 : -1;
   const summary = state.summaryCache.get(key);
   if (summary) summary.liked = next;
-  button.classList.toggle("active", next);
-  button.setAttribute("aria-pressed", String(next));
-  button.querySelector("use").setAttribute("href", next ? "#i-heart-filled" : "#i-heart");
+  updateRowLikeUi(key, next);
+  if (state.current?.key === key) setTrackUi();
   renderSources();
   try {
     await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: next }) });
     if (state.likedMode) loadLibrary(true);
   } catch (error) {
     track.liked = previous;
+    if (state.current?.key === key) state.current.liked = previous;
     state.likedCount += previous ? 1 : -1;
     if (summary) summary.liked = previous;
-    button.classList.toggle("active", previous);
-    button.setAttribute("aria-pressed", String(previous));
-    button.querySelector("use").setAttribute("href", previous ? "#i-heart-filled" : "#i-heart");
+    updateRowLikeUi(key, previous);
+    if (state.current?.key === key) setTrackUi();
     renderSources();
     showError(error);
   }
@@ -2050,7 +2067,7 @@ $("source-list").addEventListener("drop", async (event) => {
 });
 $("source-list").addEventListener("dragend", () => { cleanupSourceDrag(); draggedSource = ""; });
 
-$("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey, like).catch(showError); } });
+$("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey).catch(showError); } });
 $("track-sort").addEventListener("change", (event) => {
   state.sort = event.target.value;
   state.libraryCache.clear();

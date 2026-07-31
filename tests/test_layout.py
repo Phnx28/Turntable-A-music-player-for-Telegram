@@ -265,6 +265,87 @@ class LayoutTests(unittest.TestCase):
         self.assertIs(True, visible["filter"], "the playlist filter is hidden on a phone, so narrowing is impossible")
         self.assertIs(True, visible["count"], "the track count is hidden on a phone")
 
+    def test_narrow_rows_give_their_space_to_titles(self):
+        page = self.page(320, 720)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        shape = page.evaluate("""() => {
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          const hidden = (selector) => {
+            const el = row.querySelector(selector);
+            return !el || getComputedStyle(el).display === 'none';
+          };
+          return {
+            rowWidth: Math.round(row.getBoundingClientRect().width),
+            mainWidth: Math.round(row.querySelector('.track-main').getBoundingClientRect().width),
+            copyWidth: Math.round(row.querySelector('.track-copy').getBoundingClientRect().width),
+            ordinalWidth: Math.round(row.querySelector('.track-ordinal').getBoundingClientRect().width),
+            visibleCells: [...row.children]
+              .filter((child) => getComputedStyle(child).display !== 'none')
+              .map((child) => child.classList.contains('row-menu') ? 'row-menu' : child.classList[0]),
+            postedHidden: hidden('.track-posted'),
+            durationHidden: hidden('.track-duration'),
+            likeHidden: hidden('.track-row-actions'),
+          };
+        }""")
+        self.assertEqual(["track-ordinal", "track-main", "row-menu"], shape["visibleCells"], shape)
+        self.assertTrue(shape["postedHidden"], "the date should yield before title space at 320px")
+        self.assertTrue(shape["durationHidden"], "duration should move to the row sheet at 320px")
+        self.assertTrue(shape["likeHidden"], "the like button should move to the row sheet at 320px")
+        self.assertLessEqual(shape["ordinalWidth"], 30, "the ordinal should shrink to ~3ch")
+        self.assertGreater(shape["mainWidth"] / shape["rowWidth"], 0.7,
+                           f"the main column is still starved: {shape}")
+        # Text copy gets the main column after the measured 40px artwork and 12px gap;
+        # the 2px tolerance covers integer rounding of the browser's layout rectangles.
+        self.assertGreaterEqual(shape["copyWidth"], shape["mainWidth"] - 54,
+                                f"text copy lost more than the artwork+gap budget: {shape}")
+
+    def test_row_sheet_opens_with_reachable_targets(self):
+        page = self.page(390, 844)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        page.click(".track-row:not(.track-placeholder) .row-menu")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.wait_for_timeout(150)
+        shape = page.evaluate("""() => {
+          const menu = document.getElementById('context-menu');
+          const player = document.getElementById('player');
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          return {
+            sizes: [...menu.querySelectorAll('button')]
+              .map((button) => Math.round(button.getBoundingClientRect().height)),
+            labels: [...menu.querySelectorAll('button')].map((button) => button.textContent),
+            visibleCells: [...row.children]
+              .filter((child) => getComputedStyle(child).display !== 'none')
+              .map((child) => child.classList.contains('row-menu') ? 'row-menu' : child.classList[0]),
+            menuTop: menu.getBoundingClientRect().top,
+            menuBottom: menu.getBoundingClientRect().bottom,
+            playerTop: player.getBoundingClientRect().top,
+          };
+        }""")
+        self.assertEqual(["track-ordinal", "track-main", "track-posted", "row-menu"], shape["visibleCells"], shape)
+        self.assertTrue(shape["sizes"], "the row menu opened empty")
+        self.assertTrue(all(height >= 44 for height in shape["sizes"]),
+                        f"sheet targets under 44px: {shape}")
+        self.assertIn("Like", shape["labels"], f"the narrow row menu lacks Like/Unlike: {shape}")
+        self.assertTrue(any(label.startswith("Duration ") for label in shape["labels"]),
+                        f"the narrow row menu lacks formatted duration: {shape}")
+        self.assertGreaterEqual(shape["menuTop"], 0, f"sheet starts above the viewport: {shape}")
+        self.assertLessEqual(shape["menuBottom"], shape["playerTop"] + 1,
+                             f"sheet overlaps the player: {shape}")
+
+    def test_desktop_track_menu_does_not_duplicate_row_controls(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        page.click(".track-row:not(.track-placeholder) .row-menu")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
+        self.assertNotIn("Like", labels, f"desktop menu duplicated the row like control: {labels}")
+        self.assertNotIn("Unlike", labels, f"desktop menu duplicated the row like control: {labels}")
+        self.assertFalse(any(label.startswith("Duration ") for label in labels),
+                         f"desktop menu duplicated the row duration: {labels}")
+
     def test_rows_are_numbered_dated_and_52px(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
@@ -300,7 +381,7 @@ class LayoutTests(unittest.TestCase):
         within = page.evaluate("() => getComputedStyle(document.querySelector('.track-source')).display")
         self.assertEqual("none", within, "the source column repeats the page title inside a single source")
 
-    def test_responsive_rows_keep_head_compatible_at_800px(self):
+    def test_responsive_rows_keep_four_cells_at_800px(self):
         page = self.page(800, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
@@ -310,15 +391,17 @@ class LayoutTests(unittest.TestCase):
           const head = document.querySelector('.track-head');
           const row = document.querySelector('.track-row:not(.track-placeholder)');
           return {
-            headCells: visible(head).length,
             rowCells: visible(row).length,
-            headRows: getComputedStyle(head).gridTemplateRows.trim().split(/\\s+/).filter(Boolean).length,
             rowRows: getComputedStyle(row).gridTemplateRows.trim().split(/\\s+/).filter(Boolean).length,
+            headDisplay: getComputedStyle(head).display,
+            rowColumns: getComputedStyle(row).gridTemplateColumns.trim().split(/\\s+/).filter(Boolean).length,
+            visibleClasses: visible(row).map((child) => child.classList.contains('row-menu') ? 'row-menu' : child.classList[0]),
           };
         }""")
-        self.assertEqual(6, shape["headCells"], "Source is hidden at 800px, leaving six visible head cells")
-        self.assertEqual(shape["headCells"], shape["rowCells"], "head and row must expose the same visible cells")
-        self.assertEqual(1, shape["headRows"], "the column head must stay a single grid row")
+        self.assertEqual("none", shape["headDisplay"], "the column head should hide on a narrow layout")
+        self.assertEqual(4, shape["rowCells"], "800px rows should expose ordinal, main, posted and menu")
+        self.assertEqual(["track-ordinal", "track-main", "track-posted", "row-menu"], shape["visibleClasses"])
+        self.assertEqual(4, shape["rowColumns"], "the grid must have four visible tracks at 800px")
         self.assertEqual(1, shape["rowRows"], "a row cell wrapped into an implicit second grid row")
 
     def test_sort_control_changes_the_requested_order(self):
