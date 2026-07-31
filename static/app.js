@@ -1,4 +1,4 @@
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -1361,24 +1361,27 @@ function closePanel() {
 // the top" -- so we expand, the pane becomes scrollable again, momentum pushes past 48 and
 // it collapses once more. That feedback loop is the juddering in the Details tab.
 //
-// So require the pane to still be scrollable after collapsing. We do not know the collapsed
-// header height before committing, but it is always positive, so the freed height is strictly
-// less than the current header height -- subtracting the whole header is a conservative bound
-// that cannot oscillate. Panes with real overflow (lyrics) clear it comfortably; panes that
-// already fit simply keep the full header, which is what you want when there is nothing to
-// scroll past.
+// So require the pane to still be scrollable after collapsing -- but subtract only the height
+// the collapse actually frees, not the whole header. Subtracting the whole header was a bound
+// so conservative it was never satisfiable: measured at 1440x900 with lyrics loaded,
+// 636 - 206 - 546 = -116, so the collapse could not fire at all. The collapsed header is a
+// measured, CSS-pinned 132px (120px at <=860px), read from --compact-header so the two cannot
+// drift; freed = 546 - 132 = 414 leaves +16px of real overflow, which clears the 12px floor.
 function updateNowHeader() {
   const header = document.querySelector(".now-header");
   const content = $("now-content");
   if (!header || !content) return;
-  const top = content.scrollTop;
   const compact = header.classList.contains("is-compact");
-  if (compact) {
-    if (top < 12) setNowHeaderCompact(header, false);
-    return;
-  }
-  const scrollable = content.scrollHeight - content.clientHeight - header.offsetHeight;
-  if (top > 48 && scrollable > 48) setNowHeaderCompact(header, true);
+  const compactHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--compact-header")) || 132;
+  const next = shouldCompactHeader({
+    scrollTop: content.scrollTop,
+    scrollHeight: content.scrollHeight,
+    clientHeight: content.clientHeight,
+    headerHeight: header.offsetHeight,
+    compactHeight,
+    compact,
+  });
+  if (next !== compact) setNowHeaderCompact(header, next);
 }
 
 // The collapse switches the header between two grid layouts, so the art and the title land in

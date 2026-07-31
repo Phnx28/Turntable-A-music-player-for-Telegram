@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
 
 test("player helpers", () => {
   assert.equal(formatTime(65.9), "1:05");
@@ -71,4 +71,31 @@ test("the queue summary counts the whole queue, and empty means empty", () => {
   // Thousands separators, matching the .toLocaleString() the summary already used.
   assert.equal(queueView(Array.from({ length: 54660 }, (_, index) => String(index)), 0).summary,
     "54,660 in queue · 54,659 up next");
+});
+
+test("the now-playing header collapses on the real measured geometry", () => {
+  // Audit A3, measured at 1440x900 with synced lyrics: the header is a sibling of the
+  // scroller, so subtracting its full height made `scrollable` negative and the collapse
+  // could never fire. Only the height it *frees* (546 - 132) belongs in the subtraction.
+  const audited = { scrollTop: 100, scrollHeight: 636, clientHeight: 206, headerHeight: 546, compactHeight: 132, compact: false };
+  assert.equal(shouldCompactHeader(audited), true);
+  // Same numbers under the old arithmetic: 636 - 206 - 546 = -116, which never cleared > 48.
+  assert.equal(audited.scrollHeight - audited.clientHeight - audited.headerHeight, -116);
+  assert.equal(shouldCompactHeader({ ...audited, compactHeight: audited.headerHeight }), false);
+
+  // The phone header frees less, but a lyric sheet still clears it.
+  assert.equal(shouldCompactHeader({ scrollTop: 100, scrollHeight: 900, clientHeight: 300, headerHeight: 515, compactHeight: 120, compact: false }), true);
+
+  // A pane that does not overflow once collapsed must stay expanded, or it judders: collapse
+  // grows clientHeight, scrollTop gets clamped to ~0, we expand, momentum collapses again.
+  assert.equal(shouldCompactHeader({ scrollTop: 100, scrollHeight: 400, clientHeight: 400, headerHeight: 546, compactHeight: 132, compact: false }), false);
+  assert.equal(shouldCompactHeader({ scrollTop: 100, scrollHeight: 620, clientHeight: 206, headerHeight: 546, compactHeight: 132, compact: false }), false);
+
+  // Below the collapse threshold, however much room there is.
+  assert.equal(shouldCompactHeader({ ...audited, scrollTop: 20 }), false);
+
+  // Already compact: expand only back under 12, so the two thresholds do not meet.
+  assert.equal(shouldCompactHeader({ scrollTop: 5, scrollHeight: 636, clientHeight: 620, headerHeight: 132, compactHeight: 132, compact: true }), false);
+  assert.equal(shouldCompactHeader({ scrollTop: 40, scrollHeight: 636, clientHeight: 620, headerHeight: 132, compactHeight: 132, compact: true }), true);
+  assert.equal(shouldCompactHeader({ scrollTop: 12, scrollHeight: 636, clientHeight: 620, headerHeight: 132, compactHeight: 132, compact: true }), true);
 });

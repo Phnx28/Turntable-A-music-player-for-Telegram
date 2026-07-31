@@ -77,3 +77,15 @@ export function queueView(queue, queueIndex) {
     : `${total.toLocaleString()} in queue · last track`;
   return { total, upcoming, isEmpty: total === 0, summary };
 }
+
+// The header is a flex sibling of the scroller, so collapsing it hands its freed height to
+// .now-content and shrinks the maximum scrollTop by the same amount. Subtract only what the
+// collapse frees (measured: 546 -> 132 desktop, 515 -> 120 phone) and require the pane to
+// still be scrollable afterwards, or a short pane oscillates. Two scroll thresholds, 48 to
+// collapse and 12 to expand, so the boundary is never a single point.
+export function shouldCompactHeader({ scrollTop, scrollHeight, clientHeight, headerHeight, compactHeight, compact }) {
+  if (compact) return scrollTop >= 12;
+  if (compactHeight >= headerHeight) return false;
+  const freed = Math.max(0, headerHeight - compactHeight);
+  return scrollTop > 48 && (scrollHeight - clientHeight - freed) > 12;
+}

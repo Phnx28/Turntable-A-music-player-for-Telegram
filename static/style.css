@@ -29,6 +29,9 @@
   --rail-width: 232px;
   --panel-width: 368px;
   --player-height: 88px;
+  /* Read by updateNowHeader to work out how much height the collapse frees. Measured, not
+     guessed: 132px holds the 40px tabs, the 40px close button and the 64px art. */
+  --compact-header: 132px;
 }
 
 html[data-theme="dark"] {
@@ -535,7 +538,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 /* Collapsed: art shrinks and sits beside the title instead of above it. Transitions run on
    the wrapper's width/height and the title's font-size, all cheap to animate. */
-.now-header.is-compact { display: grid; grid-template-areas: "art title close" "tabs tabs tabs"; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 14px; }
+.now-header.is-compact { display: grid; grid-template-areas: "art title close" "tabs tabs tabs"; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 14px; height: var(--compact-header); }
 /* The eyebrow goes away when compact, but the close button must not: hiding the whole
    .panel-header took the only way to dismiss the panel with it, and left it unreachable by
    keyboard too (offsetParent null). Keep the header as a layout-only wrapper in the "close"
@@ -881,6 +884,8 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   /* The panel is fixed at inset 0 and sits above the player (z 25 vs 10), so the last 44px
      of every lyric sheet was unreachable behind the player bar. */
   .now-content { padding-bottom: 84px; }
+  /* The phone art is 56px, not 64px, so the collapsed header lands 12px shorter. */
+  :root { --compact-header: 120px; }
   .now-header.is-compact .large-art-wrap { width: 56px; margin: 6px 0; }
   /* Match the panel's own responsive side padding so the sticky bar stays edge-to-edge. */
   .now-header.is-compact { margin: 0 calc(-1 * max(20px, (100vw - 580px) / 2)); padding: 4px max(20px, calc((100vw - 580px) / 2)) 0; }
