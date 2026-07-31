@@ -952,7 +952,7 @@ class Database:
             f"""
             SELECT t.rowid AS track_rowid, t.chat_id, t.message_id, t.file_name,
                    t.file_size, t.duration_ms, t.telegram_title, t.telegram_artist,
-                   t.sent_at, t.document_id, s.title AS source_title,
+                   t.sent_at, t.document_id, t.liked_at, s.title AS source_title,
                    s.kind AS source_kind, s.selected AS source_selected,
                    o.payload AS override_payload
             FROM tracks t

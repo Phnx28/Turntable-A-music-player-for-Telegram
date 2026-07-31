@@ -120,6 +120,26 @@ class CoreTests(unittest.TestCase):
             self.assertEqual("Needle Remix", database.get_track("1", "2")["metadata"]["title"])
             database.close()
 
+    def test_library_rows_report_liked_the_same_as_queue_rows(self):
+        # list_tracks omitted t.liked_at from its SELECT, so _track_summary's
+        # value.get("liked_at") was always None and every library row rendered un-liked --
+        # while the queue, which goes through track_summaries, showed the heart correctly.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([{"chatId": "1", "messageId": "2", "fileName": "song.mp3",
+                                     "mimeType": "audio/mpeg", "title": "T", "artist": "A"}])
+            database.set_liked("1:2", True)
+
+            self.assertIs(True, database.list_tracks()["items"][0]["liked"])
+            # Both read paths, asserted together, so they cannot diverge again.
+            self.assertIs(True, database.track_summaries(["1:2"])[0]["liked"])
+            # And unliking has to come back through the same path.
+            database.set_liked("1:2", False)
+            self.assertIs(False, database.list_tracks()["items"][0]["liked"])
+            self.assertIs(False, database.track_summaries(["1:2"])[0]["liked"])
+            database.close()
+
     def test_short_queries_use_the_overrides_join(self):
         # One and two character queries fall back to LIKE against o.payload instead of FTS,
         # so every query that builds a WHERE clause needs the overrides join in scope.
