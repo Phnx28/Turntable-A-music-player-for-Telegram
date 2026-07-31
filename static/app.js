@@ -1,5 +1,5 @@
 import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
-import { AppError, errorCopy, formatSyncedAt, sourceKindLabel } from "./format.js";
+import { AppError, errorCopy, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -558,6 +558,7 @@ function renderSources() {
   const selected = state.likedMode ? null : state.sources.find((item) => item.chatId === state.source) || (state.temporarySource?.chatId === state.source ? state.temporarySource : null);
   $("source-title").textContent = state.likedMode ? "Liked songs" : selected?.title || "All music";
   $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : sourceKindLabel(selected.kind)) : "Your Telegram";
+  $("library").classList.toggle("single-source", Boolean(state.source) && !state.likedMode);
   const synced = formatSyncedAt(selected?.lastSyncedAt, Math.floor(Date.now() / 1000));
   $("library-summary").textContent = `${state.totalTracks.toLocaleString()} ${state.totalTracks === 1 ? "track" : "tracks"}${synced ? ` · ${synced}` : ""}`;
   $("bulk-count").textContent = `${state.selectedSources.size} selected`;
@@ -577,15 +578,18 @@ function renderSources() {
   }
 }
 
-function renderTrackRow(track) {
+function renderTrackRow(track, position = 0) {
   const playing = track.key === state.current?.key;
   const liked = Boolean(track.liked);
+  const now = Math.floor(Date.now() / 1000);
   return `<article class="track-row ${playing ? "current" : ""}" data-track-key="${escapeHtml(track.key)}" tabindex="-1">
+    <span class="track-ordinal utility">${playing ? `<span class="playing-mark" aria-label="Now playing"></span>` : ordinal(position + 1, state.totalTracks)}</span>
     <button class="track-main" type="button" data-play-key="${escapeHtml(track.key)}">
       <span class="mini-art-wrap"><img class="mini-art row-art" data-src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt=""><span class="art-placeholder mini"><span></span></span><span class="track-play-overlay">${icon(playing && !audio.paused ? "pause" : "play-filled")}</span></span>
       <span class="track-copy"><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artist || "Unknown artist")}</small></span>
     </button>
     <span class="track-source">${escapeHtml(track.source.title)}</span>
+    <span class="track-posted utility">${escapeHtml(formatPostedDate(track.sentAt, now))}</span>
     <span class="track-duration utility">${formatTime(track.durationMs / 1000)}</span>
     <span class="track-row-actions">
       <button class="icon-button row-like ${liked ? "active" : ""}" type="button" data-row-like-key="${escapeHtml(track.key)}" aria-pressed="${liked}" aria-label="${liked ? "Unlike" : "Like"} ${escapeHtml(track.title)}">${icon(liked ? "heart-filled" : "heart")}</button>
@@ -595,7 +599,9 @@ function renderTrackRow(track) {
 }
 
 function renderTrackPlaceholder() {
-  return '<article class="track-row track-placeholder" aria-hidden="true"><span class="placeholder-main"><i></i><span><i></i><i></i></span></span><i class="placeholder-source"></i><i class="placeholder-time"></i><i></i></article>';
+  // Seven top-level children, matching the seven grid columns exactly: ordinal, main, source,
+  // posted, time, actions, menu. One short and the skeleton shears against real rows.
+  return '<article class="track-row track-placeholder" aria-hidden="true"><i class="placeholder-ordinal"></i><span class="placeholder-main"><i></i><span><i></i><i></i></span></span><i class="placeholder-source"></i><i class="placeholder-posted"></i><i class="placeholder-time"></i><i></i><i></i></article>';
 }
 
 function librarySkeleton() {
@@ -628,7 +634,7 @@ function revealLibrary() {
   if (!$("track-list").hidden) $("track-list").classList.add("library-reveal");
 }
 
-function trackRowHeight() { return 68; }
+function trackRowHeight() { return 52; }
 
 function renderTracks(force = false) {
   const list = $("track-list");
@@ -664,7 +670,7 @@ function renderTracks(force = false) {
   const end = Math.min(state.totalTracks, start + 80);
   if (force || state.windowStart !== start) {
     state.windowStart = start;
-    const rows = Array.from({ length: end - start }, (_, offset) => state.tracks[start + offset] ? renderTrackRow(state.tracks[start + offset]) : renderTrackPlaceholder()).join("");
+    const rows = Array.from({ length: end - start }, (_, offset) => state.tracks[start + offset] ? renderTrackRow(state.tracks[start + offset], start + offset) : renderTrackPlaceholder()).join("");
     list.innerHTML = `<div class="track-spacer"></div>${rows}<div class="track-spacer"></div>`;
     const spacers = list.querySelectorAll(".track-spacer");
     spacers[0].style.height = `${start * rowHeight}px`;

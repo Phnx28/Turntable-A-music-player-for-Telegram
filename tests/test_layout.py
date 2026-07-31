@@ -223,6 +223,41 @@ class LayoutTests(unittest.TestCase):
         self.assertIs(True, visible["filter"], "the playlist filter is hidden on a phone, so narrowing is impossible")
         self.assertIs(True, visible["count"], "the track count is hidden on a phone")
 
+    def test_rows_are_numbered_dated_and_52px(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        shape = page.evaluate("""() => {
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          return {
+            height: Math.round(row.getBoundingClientRect().height),
+            ordinal: row.querySelector('.track-ordinal')?.textContent ?? null,
+            posted: row.querySelector('.track-posted')?.textContent ?? null,
+            intrinsic: getComputedStyle(row).containIntrinsicSize,
+            art: Math.round(document.querySelector('.row-art').getBoundingClientRect().width),
+          };
+        }""")
+        self.assertEqual(52, shape["height"])
+        self.assertEqual("52px", shape["intrinsic"].split()[-1],
+                         "contain-intrinsic-size drifted from the row height, so off-screen rows reserve the wrong space")
+        self.assertEqual(40, shape["art"])
+        self.assertEqual("01", shape["ordinal"], "the ordinal is the real play position, zero-padded to the total")
+        self.assertTrue(shape["posted"], "rows must show when the track was posted")
+
+    def test_source_column_only_appears_across_sources(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        # All music: the source is the one thing distinguishing otherwise similar rows.
+        self.assertTrue(page.evaluate("() => !!document.querySelector('.track-source')"))
+        across = page.evaluate("() => getComputedStyle(document.querySelector('.track-source')).display")
+        self.assertNotEqual("none", across)
+        # Inside one source it repeats the h1 on every row and is the widest column (audit D5).
+        page.evaluate("() => document.querySelector('.library').classList.add('single-source')")
+        page.wait_for_timeout(80)
+        within = page.evaluate("() => getComputedStyle(document.querySelector('.track-source')).display")
+        self.assertEqual("none", within, "the source column repeats the page title inside a single source")
+
     def test_zero_results_drop_the_column_head_and_disable_play(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(
