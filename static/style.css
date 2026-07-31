@@ -876,6 +876,10 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
     position: fixed;
     z-index: 20;
     inset: 0;
+    /* Stop above the player rather than covering it. The panel has no transport of its own, so
+       a full-bleed inset: 0 made pause, skip, seek and progress unreachable on the app's
+       most-used mobile screen. */
+    bottom: var(--player-height);
     width: 100%;
     padding: calc(28px + env(safe-area-inset-top)) max(20px, calc((100vw - 580px) / 2)) calc(32px + env(safe-area-inset-bottom));
     border-left: 0;
@@ -1210,7 +1214,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
   .settings-nav { grid-auto-flow: column; grid-auto-columns: max-content; gap: 4px; overflow-x: auto; padding-bottom: 4px; }
   .settings-nav button { padding-inline: 12px; text-align: center; }
   .settings-content { height: auto; max-height: 52vh; }
-  .now-panel { position: fixed; z-index: 25; inset: 0; }
+  .now-panel { position: fixed; z-index: 25; inset: 0; bottom: var(--player-height); }
   /* A full-screen sheet should rise from the edge it covers, not nudge in from the side. */
   .now-panel:not([hidden]) { animation-name: sheet-in; }
   .now-panel.is-closing { animation-name: sheet-out; }
