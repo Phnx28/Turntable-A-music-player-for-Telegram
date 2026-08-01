@@ -1520,12 +1520,11 @@ function trackMenu(key, x, y) {
   const summary = state.summaryCache.get(key)
     || state.globalTracks.find((track) => track.key === key);
   const detail = state.trackCache.get(key);
-  const current = state.current?.key === key ? state.current : null;
   const source = summary?.source || detail?.source;
   if (!source) return;
   const narrow = matchMedia("(max-width: 860px)").matches;
   const durationMs = summary?.durationMs ?? detail?.durationMs;
-  const liked = summary?.liked ?? current?.liked ?? detail?.liked;
+  const liked = trackLikedState(key);
   openMenu([
     { label: "Play", action: () => source.selected === false ? playKey(key, state.globalTracks.map((item) => item.key)) : playFromLibrary(key) },
     ...(narrow ? [
@@ -1573,10 +1572,20 @@ function trackRepresentations(key) {
   return [...representations];
 }
 
-async function toggleRowLike(key) {
+function trackLikedState(key, representations = trackRepresentations(key)) {
+  const current = state.current?.key === key ? state.current : null;
+  const detail = state.trackCache.get(key);
+  const summary = state.summaryCache.get(key);
+  // Detail/current are the richest representations. A search summary may omit liked entirely,
+  // so only a real boolean participates; rows and global results are the final fallback.
+  return [current, detail, summary, ...representations]
+    .find((track) => typeof track?.liked === "boolean")?.liked ?? false;
+}
+
+async function toggleTrackLike(key, { notify = false } = {}) {
   const representations = trackRepresentations(key);
   if (!representations.length) return;
-  const previous = Boolean(representations[0].liked);
+  const previous = trackLikedState(key, representations);
   const requested = !previous;
   const operation = { id: ++nextRowLikeOperation };
   rowLikeOperations.set(key, operation);
@@ -1595,6 +1604,7 @@ async function toggleRowLike(key) {
     if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
     applyLiked(canonical);
     rowLikeOperations.delete(key);
+    if (notify) { toast(canonical ? "Added to Liked Songs" : "Removed from Liked Songs"); schedulePersist(); }
     if (state.likedMode) loadLibrary(true);
   } catch (error) {
     if (rowLikeOperations.get(key) !== operation) return;
@@ -1605,27 +1615,13 @@ async function toggleRowLike(key) {
   }
 }
 
+async function toggleRowLike(key) {
+  return toggleTrackLike(key);
+}
+
 async function toggleLike() {
   if (!state.current) return;
-  const previous = state.current.liked;
-  state.current.liked = !previous;
-  state.likedCount += state.current.liked ? 1 : -1;
-  const summary = state.summaryCache.get(state.current.key);
-  if (summary) summary.liked = state.current.liked;
-  setTrackUi(); renderSources();
-  try {
-    const updated = await api(`${mediaUrl(state.current, "like")}`, { method: "PATCH", body: JSON.stringify({ liked: state.current.liked }) });
-    state.current.liked = updated.liked;
-    toast(updated.liked ? "Added to Liked Songs" : "Removed from Liked Songs");
-    schedulePersist();
-    if (state.likedMode) loadLibrary(true);
-  } catch (error) {
-    state.current.liked = previous;
-    state.likedCount += previous ? 1 : -1;
-    if (summary) summary.liked = previous;
-    setTrackUi(); renderSources();
-    showError(error);
-  }
+  return toggleTrackLike(state.current.key, { notify: true });
 }
 
 async function saveCurrentToTelegram() {

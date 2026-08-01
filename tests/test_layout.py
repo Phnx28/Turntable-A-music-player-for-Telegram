@@ -502,6 +502,7 @@ class LayoutTests(unittest.TestCase):
     def test_narrow_menu_uses_detail_like_when_search_summary_omits_like(self):
         page = self.page(390, 844)
         key = "-1009:77"
+        patches = []
         detail = {
             "key": key, "title": "Burial", "artist": "Burial", "liked": True, "durationMs": 242000,
             "metadata": {"title": "Burial", "artist": "Burial"},
@@ -518,6 +519,9 @@ class LayoutTests(unittest.TestCase):
                     "tracks": [{key_name: value for key_name, value in detail.items()
                                 if key_name not in {"liked", "metadata", "file"}}],
                 }))
+            if path.endswith("77/like"):
+                patches.append(route)
+                return
             if path.startswith("/api/tracks/") and path.endswith("77"):
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps(detail))
             return route.fallback()
@@ -535,6 +539,96 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_selector("#context-menu:not([hidden])")
         labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
         self.assertIn("Unlike", labels, f"detail/current liked state was ignored: {labels}")
+        page.get_by_role("menuitem", name="Unlike", exact=True).click()
+        page.wait_for_timeout(100)
+        self.assertEqual(1, len(patches), "the menu action did not reach PATCH")
+        self.assertEqual({"liked": False}, json.loads(patches[0].request.post_data),
+                         "the menu payload must invert the authoritative detail/current state")
+        self.assertEqual("false", page.locator("#like-current").get_attribute("aria-pressed"))
+        self.assertEqual("26", page.locator("#liked-count").text_content())
+        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": false}')
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'false'")
+
+    def test_player_heart_synchronizes_distinct_row_summary_detail_and_current(self):
+        page = self.page(390, 844)
+        patches = []
+        key = "-1001:1000"
+        row = _tracks(1)[0]
+        summary = {**row, "liked": False, "artworkVersion": "search-copy"}
+        detail = {**row, "liked": False, "metadata": {"title": "Angels", "artist": "Burial"},
+                  "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"}}
+
+        def distinct_representations(route):
+            path = urlsplit(route.request.url).path
+            if path == "/api/search/telegram":
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "sources": [], "tracks": [summary],
+                }))
+            if path.endswith("1000/like"):
+                patches.append(route)
+                return
+            if path.endswith("1000"):
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(detail))
+            return route.fallback()
+
+        page.route("**/api/**", distinct_representations)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.fill("#global-search", "angels")
+        page.wait_for_selector("[data-global-track]")
+        page.press("#global-search", "Escape")
+        page.locator(".track-row:not(.track-placeholder) .track-main").nth(0).click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_timeout(150)
+        if page.evaluate("() => document.getElementById('error-dialog').open"):
+            page.locator("#error-dialog [data-close='error-dialog']").click()
+
+        page.click("#like-current")
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_timeout(100)
+        self.assertEqual(1, len(patches), "the player heart did not reach PATCH")
+        self.assertEqual({"liked": True}, json.loads(patches[0].request.post_data))
+        optimistic = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "true", "current": "true", "count": "28"}, optimistic)
+        patches.pop(0).fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        page.wait_for_timeout(150)
+
+        page.click("#like-current")
+        page.wait_for_timeout(100)
+        self.assertEqual(1, len(patches), "the second player-heart operation did not reach PATCH")
+        self.assertEqual({"liked": False}, json.loads(patches[0].request.post_data))
+        patches[0].fulfill(status=500, content_type="application/json",
+                           body='{"error": {"message": "like failed", "retryable": true}}')
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        rolled_back = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "true", "current": "true", "count": "28"}, rolled_back)
+        if page.evaluate("() => document.getElementById('error-dialog').open"):
+            page.locator("#error-dialog [data-close='error-dialog']").click()
+        page.locator(".track-row:not(.track-placeholder) .row-menu").nth(0).click()
+        page.wait_for_selector("#context-menu:not([hidden])")
+        self.assertIn("Unlike", page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"))
+
+    def test_320px_library_heading_uses_title_token(self):
+        page = self.page(320, 844)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        size = page.evaluate("""() => {
+          const heading = document.querySelector('.library-heading h1');
+          const expected = document.createElement('span');
+          expected.style.fontSize = 'var(--text-title)';
+          document.body.append(expected);
+          const result = [getComputedStyle(heading).fontSize, getComputedStyle(expected).fontSize];
+          expected.remove();
+          return result;
+        }""")
+        self.assertEqual(size[1], size[0], f"320px heading drifted from --text-title: {size}")
 
     def test_desktop_track_menu_does_not_duplicate_row_controls(self):
         page = self.page(1440, 900)

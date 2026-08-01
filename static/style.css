@@ -1076,6 +1076,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
 @media (max-width: 360px) {
   .track-row { grid-template-columns: 3ch minmax(0, 1fr) 44px; column-gap: 5px; }
   .track-row .track-posted { display: none; }
+  .library-heading h1 { font-size: var(--text-title); }
 }
 
 /* Responsive interaction pass */
