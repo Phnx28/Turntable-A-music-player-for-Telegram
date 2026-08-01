@@ -416,6 +416,126 @@ class LayoutTests(unittest.TestCase):
         })""")
         self.assertEqual({"row": "false", "current": "false", "count": "27", "errorOpen": True}, rolled_back)
 
+    def test_narrow_sheet_like_updates_current_created_while_patch_is_pending(self):
+        page = self.page(390, 844)
+        patches = []
+        track = {**_tracks(1)[0], "metadata": {"title": "Angels", "artist": "Burial"},
+                 "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"}}
+
+        def detail_and_like(route):
+            path = urlsplit(route.request.url).path
+            if path.endswith("1000/like"):
+                patches.append(route)
+                return
+            if path.endswith("1000"):
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(track))
+            return route.fallback()
+
+        page.route("**/api/**", detail_and_like)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        row = page.locator(".track-row:not(.track-placeholder)").nth(0)
+        row.locator(".row-menu").click()
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.get_by_role("menuitem", name="Like", exact=True).click()
+        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'")
+        self.assertEqual(1, len(patches), "the optimistic Like did not remain pending")
+
+        # This creates the current clone after toggleRowLike captured its initial representations.
+        row.locator(".track-main").click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        self.assertEqual("false", page.locator("#like-current").get_attribute("aria-pressed"),
+                         "the fixture detail starts unliked while PATCH is pending")
+
+        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        settled = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "true", "current": "true", "count": "28"}, settled)
+
+    def test_latest_row_like_operation_wins_when_patch_responses_arrive_out_of_order(self):
+        page = self.page(390, 844)
+        patches = []
+
+        def pending_like(route):
+            path = urlsplit(route.request.url).path
+            if path.endswith("1000/like"):
+                patches.append(route)
+                return
+            return route.fallback()
+
+        page.route("**/api/**", pending_like)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        row = page.locator(".track-row:not(.track-placeholder)").nth(0)
+
+        row.locator(".row-menu").click()
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.get_by_role("menuitem", name="Like", exact=True).click()
+        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_timeout(150)
+        row.locator(".row-menu").click()
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.get_by_role("menuitem", name="Unlike", exact=True).click()
+        for _ in range(20):
+            if len(patches) == 2:
+                break
+            page.wait_for_timeout(25)
+        self.assertEqual(2, len(patches), "both optimistic inversions must reach PATCH")
+        self.assertEqual("false", row.locator(".row-like").get_attribute("aria-pressed"))
+        self.assertEqual("27", page.locator("#liked-count").text_content())
+
+        # The newer request wins even when the older response arrives afterward.
+        patches[1].fulfill(status=200, content_type="application/json", body='{"liked": false}')
+        page.wait_for_timeout(80)
+        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        page.wait_for_timeout(150)
+        settled = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "false", "count": "27"}, settled)
+
+    def test_narrow_menu_uses_detail_like_when_search_summary_omits_like(self):
+        page = self.page(390, 844)
+        key = "-1009:77"
+        detail = {
+            "key": key, "title": "Burial", "artist": "Burial", "liked": True, "durationMs": 242000,
+            "metadata": {"title": "Burial", "artist": "Burial"},
+            "file": {"name": "burial.mp3", "mimeType": "audio/mpeg"},
+            "source": {"chatId": "-1009", "title": "Telegram Vault", "kind": "channel", "selected": False},
+        }
+
+        def search_and_detail(route):
+            path = urlsplit(route.request.url).path
+            if path == "/api/search/telegram":
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "sources": [],
+                    # Search summaries can omit liked; the detail response is authoritative here.
+                    "tracks": [{key_name: value for key_name, value in detail.items()
+                                if key_name not in {"liked", "metadata", "file"}}],
+                }))
+            if path.startswith("/api/tracks/") and path.endswith("77"):
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(detail))
+            return route.fallback()
+
+        page.route("**/api/**", search_and_detail)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.fill("#global-search", "burial")
+        page.wait_for_selector("[data-global-track]")
+        page.evaluate("() => document.querySelector('[data-global-track]').click()")
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Burial'")
+        page.wait_for_timeout(150)
+        if page.evaluate("() => document.getElementById('error-dialog').open"):
+            page.locator("#error-dialog [data-close='error-dialog']").click()
+        page.click("#player-more")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
+        self.assertIn("Unlike", labels, f"detail/current liked state was ignored: {labels}")
+
     def test_desktop_track_menu_does_not_duplicate_row_controls(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")

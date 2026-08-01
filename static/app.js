@@ -27,6 +27,8 @@ const COUNTRY_RESULT_LIMIT = 60;
 const GLOBAL_SEARCH_LIMIT = 30;
 let lastAudibleVolume = .8;
 const pendingCovers = new Set();
+const rowLikeOperations = new Map();
+let nextRowLikeOperation = 0;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -1518,14 +1520,16 @@ function trackMenu(key, x, y) {
   const summary = state.summaryCache.get(key)
     || state.globalTracks.find((track) => track.key === key);
   const detail = state.trackCache.get(key);
+  const current = state.current?.key === key ? state.current : null;
   const source = summary?.source || detail?.source;
   if (!source) return;
   const narrow = matchMedia("(max-width: 860px)").matches;
   const durationMs = summary?.durationMs ?? detail?.durationMs;
+  const liked = summary?.liked ?? current?.liked ?? detail?.liked;
   openMenu([
     { label: "Play", action: () => source.selected === false ? playKey(key, state.globalTracks.map((item) => item.key)) : playFromLibrary(key) },
     ...(narrow ? [
-      { label: summary?.liked ? "Unlike" : "Like", action: () => toggleRowLike(key) },
+      { label: liked ? "Unlike" : "Like", action: () => toggleRowLike(key) },
       { label: `Duration ${formatTime(durationMs / 1000)}`, action: null },
     ] : []),
     { label: "Play next", action: () => { const at = Math.max(state.queueIndex + 1, 0); state.queue.splice(at, 0, key); renderQueue(); schedulePrefetch(); toast("Playing next"); } },
@@ -1562,6 +1566,7 @@ function trackRepresentations(key) {
   const representations = new Set();
   const add = (track) => { if (track) representations.add(track); };
   state.tracks.filter((track) => track?.key === key).forEach(add);
+  state.globalTracks.filter((track) => track?.key === key).forEach(add);
   add(state.summaryCache.get(key));
   add(state.trackCache.get(key));
   if (state.current?.key === key) add(state.current);
@@ -1573,8 +1578,10 @@ async function toggleRowLike(key) {
   if (!representations.length) return;
   const previous = Boolean(representations[0].liked);
   const requested = !previous;
+  const operation = { id: ++nextRowLikeOperation };
+  rowLikeOperations.set(key, operation);
   const applyLiked = (liked) => {
-    representations.forEach((track) => { track.liked = liked; });
+    trackRepresentations(key).forEach((track) => { track.liked = liked; });
     updateRowLikeUi(key, liked);
     if (state.current?.key === key) setTrackUi();
     renderSources();
@@ -1583,13 +1590,17 @@ async function toggleRowLike(key) {
   applyLiked(requested);
   try {
     const updated = await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: requested }) });
+    if (rowLikeOperations.get(key) !== operation) return;
     const canonical = typeof updated?.liked === "boolean" ? updated.liked : requested;
     if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
     applyLiked(canonical);
+    rowLikeOperations.delete(key);
     if (state.likedMode) loadLibrary(true);
   } catch (error) {
+    if (rowLikeOperations.get(key) !== operation) return;
     state.likedCount += previous ? 1 : -1;
     applyLiked(previous);
+    rowLikeOperations.delete(key);
     showError(error);
   }
 }
