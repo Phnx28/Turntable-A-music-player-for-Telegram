@@ -37,6 +37,7 @@
   --text-micro: 11px;
   --text-data: 12px;
   --row-height: 52px;
+  --day-separator-height: 28px;
   --art-row: 40px;
   --rail-width: 236px;
   --panel-width: 360px;
@@ -539,6 +540,15 @@ body.resizing { cursor: col-resize; user-select: none; }
    860px .track-head { display: none } so the two conditions do not fight. */
 .library.is-empty .track-head { display: none; }
 .track-list { padding-bottom: 40px; }
+.day-separator {
+  display: flex;
+  height: var(--day-separator-height);
+  align-items: center;
+  color: var(--graphite);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  letter-spacing: .08em;
+}
 
 .track-row {
   width: 100%;
@@ -607,6 +617,18 @@ body.resizing { cursor: col-resize; user-select: none; }
   top: 0;
   flex-shrink: 0;
   background: var(--surface);
+}
+.now-header:not(.is-compact) {
+  display: grid;
+  height: 45%;
+  max-height: 45%;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+.now-header:not(.is-compact) .large-art-wrap {
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  margin: 6px auto;
 }
 .now-content { overflow-y: auto; flex: 1; min-height: 0; }
 

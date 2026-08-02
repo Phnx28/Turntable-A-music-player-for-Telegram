@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader, virtualTrackWindow } from "./player-core.js";
 
 test("player helpers", () => {
   assert.equal(formatTime(65.9), "1:05");
@@ -14,7 +14,7 @@ test("player helpers", () => {
   const lines = [{ startMs: 1000 }, { startMs: 2000 }, { startMs: 4000 }];
   assert.equal(lyricIndex(lines, 500), -1);
   assert.equal(lyricIndex(lines, 2500), 1);
-  assert.deepEqual(normalizeTrackPage(null), { items: [], offset: 0, total: 0 });
+  assert.deepEqual(normalizeTrackPage(null), { items: [], offset: 0, total: 0, allMusicTotal: null, dayBreaks: [] });
   assert.deepEqual(normalizeTrackPage({ items: [null, { key: "1:2" }], total: 1 }).items, [{ key: "1:2" }]);
   assert.equal(normalizePlayerState({ version: 3 }), null);
   assert.equal(normalizePlayerState(null), null);
@@ -98,4 +98,31 @@ test("the now-playing header collapses on the real measured geometry", () => {
   assert.equal(shouldCompactHeader({ scrollTop: 5, scrollHeight: 636, clientHeight: 620, headerHeight: 132, compactHeight: 132, compact: true }), false);
   assert.equal(shouldCompactHeader({ scrollTop: 40, scrollHeight: 636, clientHeight: 620, headerHeight: 132, compactHeight: 132, compact: true }), true);
   assert.equal(shouldCompactHeader({ scrollTop: 12, scrollHeight: 636, clientHeight: 620, headerHeight: 132, compactHeight: 132, compact: true }), true);
+});
+
+test("track pages normalize additive totals and valid ordered day breaks", () => {
+  const page = normalizeTrackPage({
+    items: [{ key: "1:1" }], offset: 0, total: 1, allMusicTotal: 17,
+    dayBreaks: [{ index: 0, dayKey: "2025-07-30" }, { index: -1, dayKey: "bad" }],
+  });
+  assert.equal(page.total, 1);
+  assert.equal(page.allMusicTotal, 17);
+  assert.deepEqual(page.dayBreaks, [{ index: 0, dayKey: "2025-07-30" }]);
+  assert.equal(normalizeTrackPage(null).allMusicTotal, null, "pre-response count stays neutral");
+});
+
+test("day separators preserve 40-track alignment and exact spacer height", () => {
+  const dayBreaks = [
+    { index: 0, dayKey: "2025-07-30" },
+    { index: 40, dayKey: "2025-07-29" },
+    { index: 80, dayKey: "2025-07-28" },
+  ];
+  const first = virtualTrackWindow({ scrollTop: 0, listTop: 0, total: 121, rowHeight: 52, separatorHeight: 28, dayBreaks });
+  assert.deepEqual(first, { start: 0, end: 80, topHeight: 0, bottomHeight: 2160 });
+  const middle = virtualTrackWindow({ scrollTop: 4300, listTop: 0, total: 121, rowHeight: 52, separatorHeight: 28, dayBreaks });
+  assert.equal(middle.start % 40, 0);
+  assert.ok(middle.end - middle.start <= 80);
+  assert.equal(middle.topHeight + middle.bottomHeight + (middle.end - middle.start) * 52
+    + dayBreaks.filter(({ index }) => index >= middle.start && index < middle.end).length * 28,
+  121 * 52 + dayBreaks.length * 28, "spacers plus rendered rows have no gap or overlap");
 });

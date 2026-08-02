@@ -28,6 +28,14 @@ const DAY = 86400;
 const WEEK = 7 * DAY;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+export function formatDayRule(dayKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey || "")) return "";
+  const [year, month, day] = dayKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "";
+  return `── ${day} ${MONTHS[month - 1].toUpperCase()} ──`;
+}
+
 // nowSeconds is a parameter, not Date.now(), so every boundary here is testable. UTC getters
 // throughout: mixing local getters with a UTC caller makes the year boundary machine-dependent.
 export function formatPostedDate(seconds, nowSeconds) {

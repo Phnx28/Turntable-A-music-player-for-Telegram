@@ -188,6 +188,36 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(3, database.list_tracks()["total"])
             database.close()
 
+    def test_track_pages_report_authoritative_all_music_total_and_utc_day_breaks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Selected"})
+            database.upsert_source({"chatId": "2", "kind": "channel", "title": "Hidden"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg", "title": "Needle", "sentAt": 1753835400},
+                {"chatId": "1", "messageId": "2", "fileName": "b.mp3", "mimeType": "audio/mpeg", "title": "Other", "sentAt": 1753749000},
+                {"chatId": "1", "messageId": "3", "fileName": "c.mp3", "mimeType": "audio/mpeg", "title": "Unknown date", "sentAt": 0},
+                {"chatId": "2", "messageId": "1", "fileName": "d.mp3", "mimeType": "audio/mpeg", "title": "Hidden", "sentAt": 1753835400},
+            ])
+            database.set_source_selected("2", False)
+
+            page = database.list_tracks(query="Needle")
+            self.assertEqual(1, page["total"], "active-view total remains query-specific")
+            self.assertEqual(3, page["allMusicTotal"], "selected, available tracks are authoritative")
+            self.assertEqual([{"index": 0, "dayKey": "2025-07-30"}], page["dayBreaks"])
+
+            full = database.list_tracks()
+            self.assertEqual([
+                {"index": 0, "dayKey": "2025-07-30"},
+                {"index": 1, "dayKey": "2025-07-29"},
+            ], full["dayBreaks"], "invalid/non-positive timestamps do not create rules")
+            database.mark_unavailable("1", ["2"])
+            self.assertEqual(2, database.list_tracks()["allMusicTotal"])
+
+            for kwargs in ({"chat_id": "1"}, {"liked": True}, {"sort": "title"}):
+                self.assertEqual([], database.list_tracks(**kwargs)["dayBreaks"])
+            database.close()
+
     def test_track_position_matches_each_allowlisted_track_sort(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")

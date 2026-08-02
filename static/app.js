@@ -1,5 +1,5 @@
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader } from "./player-core.js";
-import { AppError, errorCopy, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
+import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader, virtualTrackWindow } from "./player-core.js";
+import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -9,7 +9,7 @@ const state = {
   repeat: localStorage.getItem("tm-repeat") || "off",
   cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
-  loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, windowStart: -1, libraryLoading: false,
+  loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, allMusicTotal: null, dayBreaks: [], windowStart: -1, libraryLoading: false,
   globalTracks: [], globalSources: [], summaryRequests: new Set(),
   temporarySource: null, temporaryJob: null, keepingSource: false, likedCount: 0, historyVisible: 50,
   lyricsFollow: true, lyricScrollTimer: 0, restored: false, contacts: [],
@@ -538,7 +538,7 @@ function avatarMarkup(source) {
 
 function renderSources() {
   const sorted = sourceSort(state.sources);
-  $("all-count").textContent = state.sources.reduce((total, item) => total + item.trackCount, 0);
+  $("all-count").textContent = state.allMusicTotal === null ? "—" : state.allMusicTotal.toLocaleString();
   $("liked-count").textContent = state.likedCount.toLocaleString();
   $("liked-source").classList.toggle("active", state.likedMode);
   $("liked-source").toggleAttribute("aria-current", state.likedMode);
@@ -638,6 +638,18 @@ function revealLibrary() {
 }
 
 function trackRowHeight() { return 52; }
+function daySeparatorHeight() {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--day-separator-height")) || 28;
+}
+
+function visibleDayBreaks() {
+  return !state.source && !state.likedMode && state.sort === "posted" ? state.dayBreaks : [];
+}
+
+function renderDaySeparator(dayBreak) {
+  const label = formatDayRule(dayBreak.dayKey);
+  return label ? `<div class="day-separator utility" data-day-key="${dayBreak.dayKey}" role="separator">${label}</div>` : "";
+}
 
 function renderTracks(force = false) {
   const list = $("track-list");
@@ -674,16 +686,27 @@ function renderTracks(force = false) {
   }
   const scroller = $("library");
   const rowHeight = trackRowHeight();
-  const firstVisible = Math.max(0, Math.floor((scroller.scrollTop - list.offsetTop) / rowHeight));
-  const start = Math.max(0, Math.floor(firstVisible / 40) * 40 - 40);
-  const end = Math.min(state.totalTracks, start + 80);
+  const dayBreaks = visibleDayBreaks();
+  const { start, end, topHeight, bottomHeight } = virtualTrackWindow({
+    scrollTop: scroller.scrollTop,
+    listTop: list.offsetTop,
+    total: state.totalTracks,
+    rowHeight,
+    separatorHeight: daySeparatorHeight(),
+    dayBreaks,
+  });
   if (force || state.windowStart !== start) {
     state.windowStart = start;
-    const rows = Array.from({ length: end - start }, (_, offset) => state.tracks[start + offset] ? renderTrackRow(state.tracks[start + offset], start + offset) : renderTrackPlaceholder()).join("");
+    const breaksByIndex = new Map(dayBreaks.map((item) => [item.index, item]));
+    const rows = Array.from({ length: end - start }, (_, offset) => {
+      const index = start + offset;
+      const separator = breaksByIndex.has(index) ? renderDaySeparator(breaksByIndex.get(index)) : "";
+      return separator + (state.tracks[index] ? renderTrackRow(state.tracks[index], index) : renderTrackPlaceholder());
+    }).join("");
     list.innerHTML = `<div class="track-spacer"></div>${rows}<div class="track-spacer"></div>`;
     const spacers = list.querySelectorAll(".track-spacer");
-    spacers[0].style.height = `${start * rowHeight}px`;
-    spacers[1].style.height = `${Math.max(0, state.totalTracks - end) * rowHeight}px`;
+    spacers[0].style.height = `${topHeight}px`;
+    spacers[1].style.height = `${bottomHeight}px`;
     list.querySelectorAll(".row-art[data-src]").forEach((image) => coverObserver.observe(image));
   }
   for (let offset = Math.floor(start / 100) * 100; offset < end; offset += 100) loadPage(offset);
@@ -711,6 +734,8 @@ async function loadPage(offset, force = false, token = libraryRequest) {
     const page = normalizeTrackPage(raw);
     if (!state.libraryCache.has(cacheKey)) cacheSet(state.libraryCache, cacheKey, page, 8);
     state.totalTracks = page.total;
+    state.allMusicTotal = page.allMusicTotal;
+    state.dayBreaks = page.dayBreaks;
     state.tracks.length = page.total;
     page.items.forEach((track, index) => { state.tracks[page.offset + index] = track; cacheSet(state.summaryCache, track.key, track, 500); });
     state.loadedPages.add(page.offset);
@@ -725,7 +750,7 @@ async function loadLibrary(force = false, keepVisible = false) {
   requestController?.abort(); requestController = new AbortController();
   const token = ++libraryRequest;
   state.tracks = []; state.loadedPages.clear(); state.pageRequests.clear();
-  state.totalTracks = 0; state.windowStart = -1; state.libraryLoading = true;
+  state.totalTracks = 0; state.dayBreaks = []; state.windowStart = -1; state.libraryLoading = true;
   // Refining a search should not blank the list. Keep the previous rows on screen, dimmed,
   // until the new page lands; a skeleton flash on every keystroke reads as the app breaking.
   if (keepVisible) $("library").classList.add("is-refreshing");

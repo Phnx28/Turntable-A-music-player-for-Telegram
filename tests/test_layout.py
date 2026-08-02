@@ -4,7 +4,7 @@ import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 try:
     from playwright.sync_api import sync_playwright
@@ -983,6 +983,98 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
         self.assertTrue(any("sort=title" in url for url in requested),
                         f"returning to Title did not refetch the cached sort key: {requested}")
+
+    def test_all_music_count_uses_server_total_and_starts_neutral(self):
+        static_page = self.browser.new_page(viewport={"width": 1440, "height": 900})
+        static_page.route("**/app.js", lambda route: route.abort())
+        static_page.goto(f"http://127.0.0.1:{self.port}/index.html", wait_until="load")
+        self.addCleanup(static_page.close)
+        self.assertEqual("—", static_page.text_content("#all-count"), "pre-response state must not claim zero")
+
+        page = self.page(1440, 900)
+        page.route("**/api/tracks*", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=json.dumps({"items": _tracks(1), "offset": 0, "total": 1,
+                             "allMusicTotal": 7, "dayBreaks": []})))
+        page.reload(wait_until="load")
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_function("() => document.getElementById('all-count').textContent === '7'")
+        self.assertEqual("1 track", page.text_content("#library-summary"),
+                         "active-view total must remain query-specific")
+        self.assertNotEqual(7, sum(source["trackCount"] for source in SOURCES),
+                            "fixture must intentionally disagree with source.trackCount")
+
+    def test_all_music_day_rules_virtualize_without_duplicate_rows_or_spacer_gaps(self):
+        page = self.page(1440, 900)
+        tracks = _tracks(121)
+        day_breaks = [
+            {"index": 0, "dayKey": "2025-07-30"},
+            {"index": 40, "dayKey": "2025-07-29"},
+            {"index": 80, "dayKey": "2025-07-28"},
+        ]
+
+        def paged(route):
+            query = parse_qs(urlsplit(route.request.url).query)
+            offset = int(query.get("offset", [0])[0])
+            return route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                "items": tracks[offset:offset + 100], "offset": offset, "total": len(tracks),
+                "allMusicTotal": len(tracks), "dayBreaks": day_breaks,
+            }))
+
+        page.route("**/api/tracks*", paged)
+        page.reload(wait_until="load")
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector('.day-separator[data-day-key="2025-07-30"]')
+        self.assertEqual("── 30 JUL ──", page.text_content('.day-separator[data-day-key="2025-07-30"]'))
+
+        page.evaluate("""() => {
+          const library = document.getElementById('library');
+          library.scrollTop = document.getElementById('track-list').offsetTop + 4300;
+          library.dispatchEvent(new Event('scroll'));
+        }""")
+        page.wait_for_selector('.day-separator[data-day-key="2025-07-28"]')
+        geometry = page.evaluate("""() => {
+          const list = document.getElementById('track-list');
+          const rows = [...list.querySelectorAll('.track-row')];
+          const keys = rows.map((row) => row.dataset.trackKey).filter(Boolean);
+          const spacer = [...list.querySelectorAll('.track-spacer')]
+            .reduce((sum, item) => sum + item.getBoundingClientRect().height, 0);
+          const separators = [...list.querySelectorAll('.day-separator')];
+          return {
+            rows: rows.length,
+            unique: new Set(keys).size,
+            keyed: keys.length,
+            accounted: spacer + rows.length * 52 + separators.length * 28,
+          };
+        }""")
+        self.assertLessEqual(geometry["rows"], 80, "separator rows must not consume the 80-track budget")
+        self.assertEqual(geometry["keyed"], geometry["unique"], "a boundary duplicated a track row")
+        self.assertEqual(121 * 52 + 3 * 28, geometry["accounted"], "separator height drifted out of spacers")
+
+        page.select_option("#track-sort", "title")
+        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+        self.assertEqual(0, page.locator(".day-separator").count(), "non-posted sorts must suppress rules")
+
+    def test_expanded_now_header_is_capped_and_keeps_its_contents_visible(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                self.open_now_panel(page)
+                geometry = page.evaluate("""() => {
+                  const panel = document.getElementById('now-panel').getBoundingClientRect();
+                  const header = document.querySelector('.now-header').getBoundingClientRect();
+                  const selectors = ['.large-art-wrap', '.now-title', '.now-tabs', '#close-now'];
+                  const boxes = selectors.map((selector) => {
+                    const element = document.querySelector(selector);
+                    const box = element.getBoundingClientRect();
+                    return { selector, visible: box.width > 0 && box.height > 0,
+                      contained: box.top >= header.top - 1 && box.bottom <= header.bottom + 1 };
+                  });
+                  return { ratio: header.height / panel.height, overflow: header.scrollHeight > header.clientHeight + 1, boxes };
+                }""")
+                self.assertLessEqual(geometry["ratio"], .45 + .002)
+                self.assertFalse(geometry["overflow"], f"expanded header overflowed at {width}x{height}")
+                self.assertTrue(all(item["visible"] and item["contained"] for item in geometry["boxes"]), geometry["boxes"])
 
     def test_search_results_reuse_the_library_row_system(self):
         page = self.page(1440, 900)

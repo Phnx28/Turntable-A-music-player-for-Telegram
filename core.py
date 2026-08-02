@@ -998,10 +998,51 @@ class Database:
             ).fetchone()[0]
         else:
             count = total
+        all_music_total = reader.execute(
+            """
+            SELECT COUNT(*)
+            FROM tracks t
+            JOIN sources s ON s.chat_id = t.chat_id
+            WHERE t.available = 1 AND s.selected = 1
+            """
+        ).fetchone()[0]
+        day_breaks: list[dict[str, Any]] = []
+        if not chat_id and not liked and (sort or "posted") == "posted":
+            day_rows = reader.execute(
+                f"""
+                WITH ordered AS (
+                    SELECT ROW_NUMBER() OVER (ORDER BY {order}, t.rowid DESC) - 1 AS track_index,
+                           CASE WHEN t.sent_at > 0
+                             THEN strftime('%Y-%m-%d', t.sent_at, 'unixepoch')
+                           END AS day_key
+                    FROM tracks t
+                    JOIN sources s ON s.chat_id = t.chat_id
+                    LEFT JOIN metadata_overrides o
+                      ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                    WHERE {where}
+                ), boundaries AS (
+                    SELECT track_index, day_key,
+                           LAG(day_key) OVER (ORDER BY track_index) AS previous_day
+                    FROM ordered
+                )
+                SELECT track_index, day_key
+                FROM boundaries
+                WHERE day_key IS NOT NULL
+                  AND (previous_day IS NULL OR previous_day != day_key)
+                ORDER BY track_index
+                """,
+                parameters,
+            ).fetchall()
+            day_breaks = [
+                {"index": int(row["track_index"]), "dayKey": row["day_key"]}
+                for row in day_rows
+            ]
         return {
             "items": [self._track_summary(row) for row in rows],
             "offset": offset,
             "total": int(count),
+            "allMusicTotal": int(all_music_total),
+            "dayBreaks": day_breaks,
         }
 
     def track_position(

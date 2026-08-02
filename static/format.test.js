@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AppError, errorCopy, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
+import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
 
 test("source kinds render as human labels, never raw enums", () => {
   // The four kinds telegram_service.classify_entity can produce (telegram_service.py:602).
@@ -61,6 +61,13 @@ test("posted dates are relative under a week and absolute beyond it", () => {
 
   // A clock skew between server and browser must not print "-3m ago".
   assert.equal(formatPostedDate(NOW + 500, NOW), "Just now");
+});
+
+test("UTC day rules use the specified display and reject invalid keys", () => {
+  assert.equal(formatDayRule("2025-07-29"), "── 29 JUL ──");
+  assert.equal(formatDayRule("2024-02-29"), "── 29 FEB ──");
+  assert.equal(formatDayRule("2025-02-29"), "");
+  assert.equal(formatDayRule("not-a-day"), "");
 });
 
 test("ordinals pad to the width of the total", () => {

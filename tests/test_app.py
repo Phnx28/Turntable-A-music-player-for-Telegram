@@ -223,6 +223,21 @@ class TrackPositionRouteTests(AppTestCase):
         self.assertEqual({"index": 2}, response.json())
 
 
+class TrackListRouteTests(AppTestCase):
+    def test_track_route_exposes_additive_library_metadata(self) -> None:
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([
+            {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg", "title": "Needle", "sentAt": 1753835400},
+            {"chatId": "1", "messageId": "2", "fileName": "b.mp3", "mimeType": "audio/mpeg", "title": "Other", "sentAt": 1753749000},
+        ])
+
+        body = self.client.get("/api/tracks?q=Needle").json()
+
+        self.assertEqual(2, body["allMusicTotal"])
+        self.assertIn("dayBreaks", body)
+        self.assertEqual(1, body["total"])
+
+
 class PasswordPolicyTests(AppTestCase):
     SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
 

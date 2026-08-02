@@ -34,12 +34,52 @@ export function adjacentIndex(length, current, direction) {
 
 export function normalizeTrackPage(payload) {
   if (!payload || !Array.isArray(payload.items)) {
-    return { items: [], offset: 0, total: 0 };
+    return { items: [], offset: 0, total: 0, allMusicTotal: null, dayBreaks: [] };
   }
+  const seenBreaks = new Set();
+  const dayBreaks = Array.isArray(payload.dayBreaks) ? payload.dayBreaks
+    .filter((item) => Number.isInteger(item?.index) && item.index >= 0
+      && /^\d{4}-\d{2}-\d{2}$/.test(item.dayKey || ""))
+    .sort((a, b) => a.index - b.index)
+    .filter((item) => !seenBreaks.has(item.index) && seenBreaks.add(item.index))
+    .map(({ index, dayKey }) => ({ index, dayKey })) : [];
   return {
     items: payload.items.filter((item) => item && typeof item.key === "string"),
     offset: Math.max(0, Number(payload.offset) || 0),
     total: Math.max(0, Number(payload.total) || 0),
+    allMusicTotal: Number.isFinite(Number(payload.allMusicTotal))
+      ? Math.max(0, Number(payload.allMusicTotal)) : null,
+    dayBreaks,
+  };
+}
+
+export function virtualTrackWindow({ scrollTop, listTop, total, rowHeight, separatorHeight, dayBreaks }) {
+  const count = Math.max(0, Math.floor(Number(total) || 0));
+  const row = Math.max(1, Number(rowHeight) || 1);
+  const separator = Math.max(0, Number(separatorHeight) || 0);
+  const breaks = Array.isArray(dayBreaks)
+    ? dayBreaks.filter(({ index }) => Number.isInteger(index) && index >= 0 && index < count)
+    : [];
+  const y = Math.max(0, (Number(scrollTop) || 0) - (Number(listTop) || 0));
+  const breaksThrough = (index) => breaks.filter((item) => item.index <= index).length;
+  let low = 0;
+  let high = count;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const bottom = middle * row + breaksThrough(middle) * separator + row;
+    if (bottom <= y) low = middle + 1;
+    else high = middle;
+  }
+  const firstVisible = Math.min(count, low);
+  const start = Math.max(0, Math.floor(firstVisible / 40) * 40 - 40);
+  const end = Math.min(count, start + 80);
+  const before = breaks.filter(({ index }) => index < start).length;
+  const after = breaks.filter(({ index }) => index >= end).length;
+  return {
+    start,
+    end,
+    topHeight: start * row + before * separator,
+    bottomHeight: Math.max(0, count - end) * row + after * separator,
   };
 }
 
