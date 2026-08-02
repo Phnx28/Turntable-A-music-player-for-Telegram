@@ -4,7 +4,7 @@ import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 try:
     from playwright.sync_api import sync_playwright
@@ -548,6 +548,44 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_selector("#context-menu:not([hidden])")
         self.assertIn("Unlike", page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"))
 
+    def test_two_same_key_like_failures_roll_back_to_the_canonical_baseline(self):
+        page = self.page(390, 844)
+        patches = []
+
+        def pending_like(route):
+            if urlsplit(route.request.url).path.endswith("1000/like"):
+                patches.append(route)
+                return
+            return route.fallback()
+
+        page.route("**/api/**", pending_like)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        row = page.locator(".track-row:not(.track-placeholder)").nth(0)
+
+        for label in ("Like", "Unlike"):
+            row.locator(".row-menu").click()
+            page.wait_for_selector("#context-menu:not([hidden])")
+            page.get_by_role("menuitem", name=label, exact=True).click()
+            page.wait_for_timeout(100)
+
+        self.assertEqual(2, len(patches), "both rapid same-key operations must reach PATCH")
+        self.assertEqual({"liked": True}, json.loads(patches[0].request.post_data))
+        self.assertEqual({"liked": False}, json.loads(patches[1].request.post_data))
+        self.assertEqual("false", row.locator(".row-like").get_attribute("aria-pressed"))
+        self.assertEqual("27", page.locator("#liked-count").text_content())
+
+        for patch in patches:
+            patch.fulfill(status=500, content_type="application/json",
+                          body='{"error": {"message": "like failed", "retryable": true}}')
+        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'false'")
+        settled = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "false", "current": "false", "count": "27"}, settled)
+
     def test_latest_row_like_operation_wins_when_patch_responses_arrive_out_of_order(self):
         page = self.page(390, 844)
         patches = []
@@ -727,12 +765,33 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
         row = page.locator(".track-row:not(.track-placeholder)").nth(0)
-        rest_opacity = row.locator(".row-menu").evaluate("(button) => getComputedStyle(button).opacity")
-        self.assertEqual("0", rest_opacity, "desktop row actions should stay hidden until row hover/focus")
+        rest = page.evaluate("""() => {
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          const graphite = document.createElement('span');
+          graphite.style.color = 'var(--graphite)';
+          document.body.append(graphite);
+          const expected = getComputedStyle(graphite).color;
+          graphite.remove();
+          return {
+            menuOpacity: getComputedStyle(row.querySelector('.row-menu')).opacity,
+            menuColor: getComputedStyle(row.querySelector('.row-menu')).color,
+            actionsOpacity: getComputedStyle(row.querySelector('.track-row-actions')).opacity,
+            actionsColor: getComputedStyle(row.querySelector('.track-row-actions')).color,
+            expected,
+          };
+        }""")
+        self.assertEqual("1", rest["menuOpacity"], "desktop row menus must remain rendered at rest")
+        self.assertEqual("1", rest["actionsOpacity"], "desktop like actions must remain rendered at rest")
+        self.assertEqual(rest["expected"], rest["menuColor"])
+        self.assertEqual(rest["expected"], rest["actionsColor"])
         row.hover()
         page.wait_for_timeout(150)
-        hover_opacity = row.locator(".row-menu").evaluate("(button) => getComputedStyle(button).opacity")
-        self.assertEqual("1", hover_opacity, "desktop row actions should appear on row hover")
+        hover_color = row.locator(".row-menu").evaluate("(button) => getComputedStyle(button).color")
+        ink = page.evaluate("""() => {
+          const probe = document.createElement('span'); probe.style.color = 'var(--ink)'; document.body.append(probe);
+          const color = getComputedStyle(probe).color; probe.remove(); return color;
+        }""")
+        self.assertEqual(ink, hover_color, "desktop row actions should gain ink emphasis on hover")
         row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
         labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
@@ -773,8 +832,92 @@ class LayoutTests(unittest.TestCase):
         # Inside one source it repeats the h1 on every row and is the widest column (audit D5).
         page.evaluate("() => document.querySelector('.library').classList.add('single-source')")
         page.wait_for_timeout(80)
-        within = page.evaluate("() => getComputedStyle(document.querySelector('.track-source')).display")
-        self.assertEqual("none", within, "the source column repeats the page title inside a single source")
+        within = page.evaluate("""() => {
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          const visible = (element) => [...element.children]
+            .filter((child) => getComputedStyle(child).display !== 'none')
+            .map((child) => child.classList.contains('track-row-actions') ? 'track-row-actions' : child.classList.contains('row-menu') ? 'row-menu' : child.classList[0]);
+          return {
+            source: getComputedStyle(row.querySelector('.track-source')).display,
+            headSource: getComputedStyle(document.querySelector('.track-head').children[2]).display,
+            rowCells: visible(row),
+            rowColumns: getComputedStyle(row).gridTemplateColumns,
+          };
+        }""")
+        self.assertEqual("none", within["source"], "the source column repeats the page title inside a single source")
+        self.assertEqual("none", within["headSource"], "the desktop header must hide Source with its cells")
+        self.assertEqual(["track-ordinal", "track-main", "track-posted", "track-duration", "track-row-actions", "row-menu"], within["rowCells"])
+        self.assertEqual(6, len(within["rowColumns"].split()), "hidden Source must not leave a dead grid track")
+
+    def test_locate_current_sends_the_active_sort_to_position(self):
+        page = self.page(1440, 900)
+        current = {
+            **_tracks(1)[0],
+            "metadata": {"title": "Angels", "artist": "Burial"},
+            "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"},
+        }
+        positions = []
+
+        def locate_route(route):
+            path = urlsplit(route.request.url).path
+            decoded_path = unquote(path)
+            if decoded_path == "/api/playback/queue":
+                return route.fulfill(status=200, content_type="application/json", body='{"keys": ["-1001:1000"]}')
+            if decoded_path.startswith("/api/tracks/") and decoded_path.count("/") == 3:
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(current))
+            if path.endswith("/position"):
+                positions.append(route.request.url)
+                return route.fulfill(status=200, content_type="application/json", body='{"index": 0}')
+            return route.fallback()
+
+        page.route("**/api/**", locate_route)
+        page.locator(".track-row:not(.track-placeholder) .track-main").nth(0).click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        if page.evaluate("() => document.getElementById('error-dialog').open"):
+            page.locator("#error-dialog [data-close='error-dialog']").click()
+        page.evaluate("""() => {
+          const select = document.getElementById('track-sort');
+          select.value = 'title';
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          document.getElementById('player-locate').click();
+        }""")
+        page.wait_for_function("() => document.querySelector('#player-locate').getAttribute('aria-busy') === null")
+        self.assertTrue(positions, "locate did not request the current track position")
+        self.assertIn("sort=title", positions[-1])
+
+    def test_now_playing_tabs_have_bidirectional_aria_relationships(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        relationships = page.evaluate("""() => [...document.querySelectorAll('.now-tabs [role=tab]')].map((tab) => ({
+          id: tab.id,
+          controls: tab.getAttribute('aria-controls'),
+          panelRole: document.getElementById(tab.getAttribute('aria-controls'))?.getAttribute('role'),
+          labelledBy: document.getElementById(tab.getAttribute('aria-controls'))?.getAttribute('aria-labelledby'),
+        }))""")
+        self.assertEqual(3, len(relationships))
+        for relationship in relationships:
+            self.assertTrue(relationship["controls"])
+            self.assertEqual("tabpanel", relationship["panelRole"])
+            self.assertEqual(relationship["id"], relationship["labelledBy"])
+
+    def test_lyrics_panel_shows_lrclib_attribution(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        attribution = page.locator("#lyrics-attribution")
+        self.assertTrue(attribution.is_visible())
+        self.assertEqual("Lyrics from LRCLIB", attribution.text_content())
+
+    def test_non_classifying_eyebrows_are_removed(self):
+        page = self.page(1440, 900)
+        page.route("**/api/tracks*", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"items": [], "offset": 0, "total": 0}'))
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.fill("#track-search", "qqqqq")
+        page.wait_for_selector("#empty-library:not([hidden])")
+        self.assertEqual(0, page.locator("#empty-eyebrow").count(), "No matches is not a classifying eyebrow")
+        self.assertEqual(0, page.locator(".now-header .eyebrow").count(), "Now playing repeats the panel label")
+        self.assertIn("qqqqq", page.text_content("#empty-title"))
 
     def test_responsive_rows_keep_four_cells_at_800px(self):
         page = self.page(800, 900)

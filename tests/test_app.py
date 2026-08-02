@@ -205,6 +205,24 @@ class SettingsRouteTests(AppTestCase):
         self.assertEqual(body["prefetchCount"], 2)
 
 
+class TrackPositionRouteTests(AppTestCase):
+    def test_position_route_propagates_the_allowlisted_sort(self) -> None:
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([
+            {"chatId": "1", "messageId": "1", "fileName": "z.mp3", "mimeType": "audio/mpeg",
+             "title": "Zebra", "sentAt": 300},
+            {"chatId": "1", "messageId": "2", "fileName": "a.mp3", "mimeType": "audio/mpeg",
+             "title": "apple", "sentAt": 200},
+            {"chatId": "1", "messageId": "3", "fileName": "m.mp3", "mimeType": "audio/mpeg",
+             "title": "Mango", "sentAt": 100},
+        ])
+
+        response = self.client.get("/api/tracks/1:1/position?source=1&sort=title")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({"index": 2}, response.json())
+
+
 class PasswordPolicyTests(AppTestCase):
     SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
 

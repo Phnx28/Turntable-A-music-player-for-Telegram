@@ -704,10 +704,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         q: str = "",
         liked: bool = False,
         temporary: bool = False,
+        sort: str = "posted",
     ) -> dict[str, int]:
         return {
             "index": database(request).track_position(
-                key, source, q[:200], liked, temporary
+                key, source, q[:200], liked, temporary, sort
             )
         }
 

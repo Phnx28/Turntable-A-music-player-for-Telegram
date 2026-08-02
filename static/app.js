@@ -655,7 +655,6 @@ function renderTracks(force = false) {
     $("play-playlist").disabled = true;
     $("shuffle-playlist").disabled = true;
     const query = $("track-search").value.trim();
-    $("empty-eyebrow").textContent = query ? "No matches" : "No tracks here";
     $("empty-title").textContent = query ? `Nothing matches "${query}"` : "Add a channel, bot, or private chat";
     $("empty-body").textContent = query
       ? "Try fewer words, or search every chat with the search box in the sidebar."
@@ -1588,9 +1587,10 @@ function trackLikedState(key, representations = trackRepresentations(key)) {
 async function toggleTrackLike(key, { notify = false } = {}) {
   const representations = trackRepresentations(key);
   if (!representations.length) return;
+  const pending = rowLikeOperations.get(key);
   const previous = trackLikedState(key, representations);
   const requested = !previous;
-  const operation = { id: ++nextRowLikeOperation, desired: requested };
+  const operation = { id: ++nextRowLikeOperation, baseline: pending?.baseline ?? previous, desired: requested };
   rowLikeOperations.set(key, operation);
   const applyLiked = (liked) => {
     trackRepresentations(key).forEach((track) => { track.liked = liked; });
@@ -1602,8 +1602,14 @@ async function toggleTrackLike(key, { notify = false } = {}) {
   applyLiked(requested);
   try {
     const updated = await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: requested }) });
-    if (rowLikeOperations.get(key) !== operation) return;
     const canonical = typeof updated?.liked === "boolean" ? updated.liked : requested;
+    const latest = rowLikeOperations.get(key);
+    if (latest !== operation) {
+      // An older response cannot render over a newer optimistic intent, but its canonical
+      // answer is still the baseline that the newer operation must roll back to if it fails.
+      if (latest && typeof updated?.liked === "boolean") latest.baseline = canonical;
+      return;
+    }
     if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
     rowLikeOperations.delete(key);
     applyLiked(canonical);
@@ -1611,9 +1617,9 @@ async function toggleTrackLike(key, { notify = false } = {}) {
     if (state.likedMode) loadLibrary(true);
   } catch (error) {
     if (rowLikeOperations.get(key) !== operation) return;
-    state.likedCount += previous ? 1 : -1;
+    if (operation.baseline !== operation.desired) state.likedCount += operation.baseline ? 1 : -1;
     rowLikeOperations.delete(key);
-    applyLiked(previous);
+    applyLiked(operation.baseline);
     showError(error);
   }
 }
@@ -1720,7 +1726,7 @@ async function locateCurrent() {
       $("track-search").value = ""; $("library").scrollTop = 0; await loadLibrary();
     }
     const temporary = Boolean(state.temporarySource?.chatId === state.source && !state.sources.some((item) => item.chatId === state.source));
-    const result = await api(`/api/tracks/${encodeURIComponent(state.current.key)}/position?source=${encodeURIComponent(state.source)}&temporary=${temporary}`);
+    const result = await api(`/api/tracks/${encodeURIComponent(state.current.key)}/position?source=${encodeURIComponent(state.source)}&temporary=${temporary}&sort=${encodeURIComponent(state.sort)}`);
     await loadPage(Math.floor(result.index / 100) * 100);
     state.windowStart = -1; renderTracks(true);
     requestAnimationFrame(() => {

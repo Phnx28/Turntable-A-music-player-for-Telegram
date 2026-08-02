@@ -210,7 +210,6 @@
         </div>
         <div id="track-list" class="track-list"></div>
         <section id="empty-library" class="empty-state" hidden>
-          <p class="eyebrow" id="empty-eyebrow">No tracks here</p>
           <h2 id="empty-title">Add a channel, bot, or private chat</h2>
           <p id="empty-body">The app will find its audio and keep the playlist in sync.</p>
           <button class="button primary" type="button" data-action="add-source" id="empty-add">Choose a source</button>
@@ -223,7 +222,6 @@
       <section id="now-panel" class="now-panel" aria-label="Now playing" hidden>
         <div class="now-header">
           <header class="panel-header">
-            <p class="eyebrow">Now playing</p>
             <button id="close-now" class="icon-button" type="button" aria-label="Close now playing" title="Close now playing">
               <svg><use href="#i-close"/></svg>
             </button>
@@ -237,23 +235,24 @@
             <p id="now-artist" class="muted">Choose a track</p>
           </div>
           <div class="now-tabs" role="tablist">
-            <button id="lyrics-tab" class="tab active" type="button" role="tab" aria-selected="true">Lyrics</button>
-            <button id="queue-tab" class="tab" type="button" role="tab" aria-selected="false">Queue</button>
-            <button id="details-tab" class="tab" type="button" role="tab" aria-selected="false">Details</button>
+            <button id="lyrics-tab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="lyrics-pane">Lyrics</button>
+            <button id="queue-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="queue-pane">Queue</button>
+            <button id="details-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="details-pane">Details</button>
           </div>
         </div>
         <div id="now-content" class="now-content">
-          <div id="queue-pane" class="queue-pane" role="tabpanel" hidden>
+          <div id="queue-pane" class="queue-pane" role="tabpanel" aria-labelledby="queue-tab" hidden>
             <div class="queue-header"><span id="queue-summary" class="small-copy">Your queue is empty</span><button id="clear-queue" class="text-button" type="button">Clear</button></div>
             <div id="queue-list" class="queue-list"></div>
           </div>
-          <div id="lyrics-pane" class="lyrics-pane" role="tabpanel">
+          <div id="lyrics-pane" class="lyrics-pane" role="tabpanel" aria-labelledby="lyrics-tab">
+            <p id="lyrics-attribution" class="lyrics-attribution">Lyrics from LRCLIB</p>
             <div id="lyrics-lines" class="lyrics-lines"></div>
             <p id="lyrics-empty" class="empty-copy">Play a track to load lyrics.</p>
             <button id="add-lyrics-empty" class="button" type="button" hidden>Add lyrics</button>
             <button id="sync-lyrics" class="button sync-lyrics" type="button" hidden><svg><use href="#i-locate"/></svg>Sync to lyrics</button>
           </div>
-          <div id="details-pane" class="details-pane" role="tabpanel" hidden>
+          <div id="details-pane" class="details-pane" role="tabpanel" aria-labelledby="details-tab" hidden>
             <div class="detail-actions">
               <button id="edit-current" class="button" type="button"><svg><use href="#i-edit"/></svg>Edit metadata</button>
               <a id="download-current" class="button" href="#"><svg><use href="#i-download"/></svg>Download</a>

@@ -569,10 +569,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .playing-mark { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--stamp); }
 /* Inside a single source the column prints the h1 on every row, and it is the widest one. */
 .library.single-source .track-source { display: none; }
-.row-menu { opacity: 0; }
-.track-row:hover .row-menu, .track-row:focus-within .row-menu { opacity: 1; }
-.track-row-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-1) var(--ease-out); }
-.track-row:hover .track-row-actions, .track-row:focus-within .track-row-actions { opacity: 1; }
+@media (min-width: 1121px) {
+  .library.single-source .track-head,
+  .library.single-source .track-row { grid-template-columns: 44px minmax(200px, 1.5fr) 76px 64px 36px 46px; }
+  .library.single-source .track-head > :nth-child(3) { display: none; }
+}
+.row-menu { color: var(--graphite); transition: color var(--dur-1) var(--ease-out); }
+.track-row:hover .row-menu, .track-row:focus-within .row-menu { color: var(--ink); }
+.track-row-actions { display: flex; gap: 2px; color: var(--graphite); transition: color var(--dur-1) var(--ease-out); }
+.track-row-actions .icon-button { color: var(--graphite); }
+.track-row:hover .track-row-actions, .track-row:focus-within .track-row-actions,
+.track-row:hover .track-row-actions .icon-button, .track-row:focus-within .track-row-actions .icon-button { color: var(--ink); }
 .track-row-actions .icon-button { width: 32px; height: 32px; }
 
 .empty-state { display: grid; width: min(100%, 440px); min-height: 50vh; align-content: center; justify-items: center; margin: 0 auto; text-align: center; }
@@ -606,12 +613,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Collapsed: art shrinks and sits beside the title instead of above it. Transitions run on
    the wrapper's width/height and the title's font-size, all cheap to animate. */
 .now-header.is-compact { display: grid; grid-template-areas: "art title close" "tabs tabs tabs"; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 14px; height: var(--compact-header); }
-/* The eyebrow goes away when compact, but the close button must not: hiding the whole
-   .panel-header took the only way to dismiss the panel with it, and left it unreachable by
-   keyboard too (offsetParent null). Keep the header as a layout-only wrapper in the "close"
-   cell and hide just the "Now playing" label. */
+/* Keep the header as a layout-only wrapper in the compact header's "close" cell, so the close
+   button remains reachable even while the art/title grid is collapsed. */
 .now-header.is-compact .panel-header { display: contents; }
-.now-header.is-compact .panel-header .eyebrow { display: none; }
 .now-header.is-compact #close-now { grid-area: close; }
 .now-header.is-compact .large-art-wrap { width: 64px; margin: 8px 0; grid-area: art; }
 .now-header.is-compact .now-title { height: auto; grid-area: title; }
@@ -634,9 +638,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   .now-title h2, .now-title p { transition: none; }
 }
 
-/* Centre, not flex-start: the close button is 40px tall next to a 12px eyebrow line, so
-   flex-start left the X sitting 14px below the "NOW PLAYING" text it belongs to. Modal headers
-   keep their own alignment below, where the heading is multi-line. */
+/* Keep the close control centred in the panel header; modal headers keep their own alignment
+   below, where the heading is multi-line. */
 .panel-header, .modal-header { display: flex; justify-content: space-between; gap: 18px; }
 .panel-header { align-items: center; }
 .modal-header { align-items: flex-start; }
@@ -738,6 +741,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab.active::after { transform: scaleX(1); }
 
 .lyrics-pane { min-height: 300px; padding-top: 28px; }
+.lyrics-attribution { margin: 0 0 12px; color: var(--graphite); font-size: var(--text-micro); }
 /* min-width: 0 because a grid track defaults to min-width: auto, so it refuses to shrink
    below its longest word and pushes the whole pane wide. One stored sheet here has a 78
    character rule of hyphens, which overflowed the panel by 101px on mobile and 132px on a
@@ -1167,7 +1171,6 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .track-row:hover .track-play-overlay, .track-main:focus-visible .track-play-overlay, .track-row.current .track-play-overlay { opacity: 1; transform: scale(1); }
 .track-row.buffering .track-play-overlay::after { position: absolute; inset: -3px; border: 1.5px solid rgb(255 255 255 / .38); border-right-color: var(--paper); border-radius: 50%; content: ""; animation: spin .7s linear infinite; }
 .library.is-scrolling .track-row, .library.is-scrolling .track-play-overlay, .library.is-scrolling .row-menu { transition: none; }
-.library.is-scrolling .row-menu { opacity: 0; }
 .track-list.library-reveal { animation: library-in var(--dur-2) var(--ease-out) both; }
 @keyframes library-in { from { opacity: 0; transform: translateY(4px); } }
 /* A short stagger over the first rows only. The whole list already fades as one block, which
@@ -1380,15 +1383,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
   .track-placeholder { height: var(--row-height); }
 }
 
-/* The row menu is the only visible action cell in the mobile layout. Coarse pointers also need
-   it at wider widths, while the inline actions retain their own coarse-pointer rule below. */
-@media (max-width: 860px), (hover: none), (pointer: coarse) {
-  .row-menu { opacity: 1; }
-}
-
 @media (hover: none), (pointer: coarse) {
-  /* Coarse desktop-sized grids still expose the inline like action; mobile rows hide that cell. */
-  .track-row-actions { opacity: 1; }
   :where(.button, .icon-button, .play-button, .add-source, .text-button, .tab, .row-menu, .context-menu button) { min-width: 44px; min-height: 44px; }
   .progress { top: -10px; height: 20px; }
 }

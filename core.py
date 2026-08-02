@@ -1011,30 +1011,28 @@ class Database:
         query: str = "",
         liked: bool = False,
         include_unselected: bool = False,
+        sort: str = "posted",
     ) -> int:
         target_chat, target_message = split_track_key(key)
+        order = _TRACK_SORTS.get(sort or "posted", _TRACK_SORTS["posted"])
         clauses, parameters = self._library_filter(chat_id, query, liked, include_unselected)
-        base_clause_text = " AND ".join(clauses) if clauses else "1=1"
-        base_params = list(parameters)
-        clauses.extend(["t.chat_id = ?", "t.message_id = ?"])
+        where = " AND ".join(clauses) if clauses else "1=1"
         with self.lock:
             row = self.connection.execute(
                 f"""
-                SELECT (
-                    SELECT COUNT(*) FROM tracks t2
-                    JOIN sources s2 ON s2.chat_id = t2.chat_id
-                    LEFT JOIN metadata_overrides o2
-                      ON o2.chat_id = t2.chat_id AND o2.message_id = t2.message_id
-                    WHERE {base_clause_text}
-                      AND (t2.sent_at > t.sent_at OR (t2.sent_at = t.sent_at AND t2.rowid > t.rowid))
-                ) AS position
-                FROM tracks t
-                JOIN sources s ON s.chat_id = t.chat_id
-                LEFT JOIN metadata_overrides o
-                  ON o.chat_id = t.chat_id AND o.message_id = t.message_id
-                WHERE {' AND '.join(clauses)}
+                SELECT position
+                FROM (
+                    SELECT t.chat_id, t.message_id,
+                           ROW_NUMBER() OVER (ORDER BY {order}, t.rowid DESC) - 1 AS position
+                    FROM tracks t
+                    JOIN sources s ON s.chat_id = t.chat_id
+                    LEFT JOIN metadata_overrides o
+                      ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                    WHERE {where}
+                ) AS ordered
+                WHERE chat_id = ? AND message_id = ?
                 """,
-                (*base_params, *parameters, target_chat, target_message),
+                (*parameters, target_chat, target_message),
             ).fetchone()
             if not row:
                 raise KeyError("Track is not in this playlist")

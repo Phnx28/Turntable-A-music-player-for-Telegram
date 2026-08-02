@@ -188,6 +188,31 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(3, database.list_tracks()["total"])
             database.close()
 
+    def test_track_position_matches_each_allowlisted_track_sort(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "z.mp3", "mimeType": "audio/mpeg",
+                 "title": "Zebra", "artist": "Beta", "durationMs": 300_000, "sentAt": 300},
+                {"chatId": "1", "messageId": "2", "fileName": "a.mp3", "mimeType": "audio/mpeg",
+                 "title": "apple", "artist": "Alpha", "durationMs": 100_000, "sentAt": 200},
+                {"chatId": "1", "messageId": "3", "fileName": "m.mp3", "mimeType": "audio/mpeg",
+                 "title": "Mango", "artist": "Gamma", "durationMs": 200_000, "sentAt": 100},
+            ])
+            database.save_metadata_patch("1", "1", {"title": "Aardvark override"}, [])
+
+            self.assertEqual(0, database.track_position("1:1", chat_id="1", sort="posted"))
+            self.assertEqual(1, database.track_position("1:2", chat_id="1", sort="title"))
+            self.assertEqual(1, database.track_position("1:1", chat_id="1", sort="artist"))
+            self.assertEqual(2, database.track_position("1:2", chat_id="1", sort="duration"))
+            # Position uses the same allowlist fallback as list_tracks, never client SQL.
+            self.assertEqual(
+                database.track_position("1:1", chat_id="1", sort="posted"),
+                database.track_position("1:1", chat_id="1", sort="t.sent_at ASC"),
+            )
+            database.close()
+
     def test_unselected_source_still_lists_its_own_tracks(self):
         # Clicking the player title to locate a track asks for one chat_id. That is an explicit
         # choice, so the source must list its tracks even while unselected -- it used to come
