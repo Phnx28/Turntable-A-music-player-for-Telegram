@@ -98,15 +98,15 @@ uv run python -m unittest discover -s tests   # backend
 node --test static/player-core.test.js        # player logic
 ```
 
-The icon sprite in `static/index.html` is generated — edit `tools/build_icons.py` and rerun it,
-never the sprite by hand:
+The Hugeicons sprite in `static/index.html` is generated — edit `tools/build_icons.py` and rerun
+it, never the sprite by hand:
 
 ```sh
-npm install                      # Ionicons, build-time only
+npm install                      # Hugeicons, build-time only
 python3 tools/build_icons.py     # --check verifies without writing
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Icons are [Ionicons](https://ionic.io/ionicons) (MIT); see
+MIT — see [LICENSE](LICENSE). Icons are [Hugeicons](https://hugeicons.com/) (MIT); see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

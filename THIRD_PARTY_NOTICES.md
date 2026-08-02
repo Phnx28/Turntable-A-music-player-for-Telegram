@@ -2,17 +2,17 @@
 
 ## Icons
 
-Interface icons are [Ionicons](https://ionic.io/ionicons) by Ionic, licensed under the
-[MIT License](https://github.com/ionic-team/ionicons/blob/main/LICENSE) (outline weight, plus
-the filled `play` and `heart` for the primary transport button and the liked state).
+Interface icons are [Hugeicons](https://hugeicons.com/) Stroke Rounded icons, supplied by the
+MIT-licensed [`@hugeicons/core-free-icons`](https://www.npmjs.com/package/@hugeicons/core-free-icons)
+package (outline weight, plus filled `play` and `heart` variants for the primary transport button
+and liked state).
 
-They are inlined as `<symbol>` elements in `static/index.html` rather than loaded through
-Ionicons' web component: that component is an ESM bundle fetched from a CDN, which the app's
-`script-src 'self'` CSP blocks, and it would put a network dependency in front of the first
-paint of a local-first player. `ionicons` in `package.json` is a build-time source only —
-regenerate the sprite with `python3 tools/build_icons.py`.
+They are inlined as `<symbol>` elements in `static/index.html` rather than loaded through a web
+font or framework wrapper. This keeps the app's `script-src 'self'` CSP intact, avoids a network
+dependency before first paint, and keeps the local-first player usable offline. The Hugeicons
+package is a build-time source only — regenerate the sprite with `python3 tools/build_icons.py`.
 
-Ionicons license: https://github.com/ionic-team/ionicons/blob/main/LICENSE
+Hugeicons package license: https://www.npmjs.com/package/@hugeicons/core-free-icons
 
 ## Python dependencies
 

@@ -2,6 +2,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "ionicons": "^8.1.0"
+    "@hugeicons/core-free-icons": "^4.2.3"
   }
 }
