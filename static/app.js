@@ -1573,6 +1573,8 @@ function trackRepresentations(key) {
 }
 
 function trackLikedState(key, representations = trackRepresentations(key)) {
+  const pending = rowLikeOperations.get(key);
+  if (pending) return pending.desired;
   const current = state.current?.key === key ? state.current : null;
   const detail = state.trackCache.get(key);
   const summary = state.summaryCache.get(key);
@@ -1587,7 +1589,7 @@ async function toggleTrackLike(key, { notify = false } = {}) {
   if (!representations.length) return;
   const previous = trackLikedState(key, representations);
   const requested = !previous;
-  const operation = { id: ++nextRowLikeOperation };
+  const operation = { id: ++nextRowLikeOperation, desired: requested };
   rowLikeOperations.set(key, operation);
   const applyLiked = (liked) => {
     trackRepresentations(key).forEach((track) => { track.liked = liked; });

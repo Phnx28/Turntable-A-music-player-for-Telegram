@@ -456,6 +456,67 @@ class LayoutTests(unittest.TestCase):
         })""")
         self.assertEqual({"row": "true", "current": "true", "count": "28"}, settled)
 
+    def test_pending_row_like_then_player_heart_toggles_from_authoritative_desired_state(self):
+        page = self.page(390, 844)
+        patches = []
+        track = {**_tracks(1)[0], "metadata": {"title": "Angels", "artist": "Burial"},
+                 "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"}}
+
+        def detail_and_like(route):
+            path = urlsplit(route.request.url).path
+            if path.endswith("1000/like"):
+                patches.append(route)
+                return
+            if path.endswith("1000"):
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(track))
+            return route.fallback()
+
+        page.route("**/api/**", detail_and_like)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        row = page.locator(".track-row:not(.track-placeholder)").nth(0)
+
+        row.locator(".row-menu").click()
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.get_by_role("menuitem", name="Like", exact=True).click()
+        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'")
+        self.assertEqual(1, len(patches), "the row Like request did not remain pending")
+
+        row.locator(".track-main").click()
+        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_timeout(150)
+        if page.evaluate("() => document.getElementById('error-dialog').open"):
+            page.locator("#error-dialog [data-close='error-dialog']").click()
+        page.click("#like-current")
+        for _ in range(20):
+            if len(patches) == 2:
+                break
+            page.wait_for_timeout(25)
+        self.assertEqual(2, len(patches), "the player heart did not issue the intended second operation")
+        self.assertEqual({"liked": True}, json.loads(patches[0].request.post_data))
+        self.assertEqual({"liked": False}, json.loads(patches[1].request.post_data),
+                         "the player heart must invert the pending desired state")
+
+        # The older success is ignored by the latest-per-key guard; the newer failure rolls back
+        # to the first operation's desired state rather than the stale detail/current clone.
+        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        page.wait_for_timeout(80)
+        patches[1].fulfill(status=500, content_type="application/json",
+                           body='{"error": {"message": "like failed", "retryable": true}}')
+        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        settled = page.evaluate("""() => ({
+          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          count: document.getElementById('liked-count').textContent,
+        })""")
+        self.assertEqual({"row": "true", "current": "true", "count": "28"}, settled)
+
+        if page.evaluate("() => document.getElementById('error-dialog').open"):
+            page.locator("#error-dialog [data-close='error-dialog']").click()
+        page.locator(".track-row:not(.track-placeholder) .row-menu").nth(0).click()
+        page.wait_for_selector("#context-menu:not([hidden])")
+        self.assertIn("Unlike", page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"))
+
     def test_latest_row_like_operation_wins_when_patch_responses_arrive_out_of_order(self):
         page = self.page(390, 844)
         patches = []
