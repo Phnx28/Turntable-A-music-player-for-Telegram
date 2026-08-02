@@ -286,12 +286,14 @@ class LayoutTests(unittest.TestCase):
             postedHidden: hidden('.track-posted'),
             durationHidden: hidden('.track-duration'),
             likeHidden: hidden('.track-row-actions'),
+            menuOpacity: getComputedStyle(row.querySelector('.row-menu')).opacity,
           };
         }""")
         self.assertEqual(["track-ordinal", "track-main", "row-menu"], shape["visibleCells"], shape)
         self.assertTrue(shape["postedHidden"], "the date should yield before title space at 320px")
         self.assertTrue(shape["durationHidden"], "duration should move to the row sheet at 320px")
         self.assertTrue(shape["likeHidden"], "the like button should move to the row sheet at 320px")
+        self.assertEqual("1", shape["menuOpacity"], "the 320px row sheet trigger must remain reachable")
         self.assertLessEqual(shape["ordinalWidth"], 30, "the ordinal should shrink to ~3ch")
         self.assertGreater(shape["mainWidth"] / shape["rowWidth"], 0.7,
                            f"the main column is still starved: {shape}")
@@ -299,6 +301,8 @@ class LayoutTests(unittest.TestCase):
         # the 2px tolerance covers integer rounding of the browser's layout rectangles.
         self.assertGreaterEqual(shape["copyWidth"], shape["mainWidth"] - 54,
                                 f"text copy lost more than the artwork+gap budget: {shape}")
+        page.click(".track-row:not(.track-placeholder) .row-menu")
+        page.wait_for_selector("#context-menu:not([hidden])")
 
     def test_row_sheet_opens_with_reachable_targets(self):
         page = self.page(390, 844)
@@ -318,6 +322,7 @@ class LayoutTests(unittest.TestCase):
             visibleCells: [...row.children]
               .filter((child) => getComputedStyle(child).display !== 'none')
               .map((child) => child.classList.contains('row-menu') ? 'row-menu' : child.classList[0]),
+            menuOpacity: getComputedStyle(row.querySelector('.row-menu')).opacity,
             menuTop: menu.getBoundingClientRect().top,
             menuBottom: menu.getBoundingClientRect().bottom,
             playerTop: player.getBoundingClientRect().top,
@@ -331,6 +336,8 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(1, len(like_labels), f"the narrow row menu must expose exactly one Like/Unlike branch: {shape}")
         self.assertTrue(any(label.startswith("Duration ") for label in shape["labels"]),
                         f"the narrow row menu lacks formatted duration: {shape}")
+        self.assertEqual("1", shape["menuOpacity"],
+                         f"the row sheet trigger must remain visible on a phone: {shape}")
         self.assertGreaterEqual(shape["menuTop"], 0, f"sheet starts above the viewport: {shape}")
         self.assertLessEqual(shape["menuBottom"], shape["playerTop"] + 1,
                              f"sheet overlaps the player: {shape}")
@@ -444,17 +451,41 @@ class LayoutTests(unittest.TestCase):
         # This creates the current clone after toggleRowLike captured its initial representations.
         row.locator(".track-main").click()
         page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
-        self.assertEqual("false", page.locator("#like-current").get_attribute("aria-pressed"),
-                         "the fixture detail starts unliked while PATCH is pending")
+        pending = page.evaluate("""() => {
+          const rowLike = document.querySelector('.track-row:not(.track-placeholder) .row-like');
+          const current = document.getElementById('like-current');
+          return {
+            rowPressed: rowLike.getAttribute('aria-pressed'),
+            rowActive: rowLike.classList.contains('active'),
+            rowIcon: rowLike.querySelector('use').getAttribute('href'),
+            currentPressed: current.getAttribute('aria-pressed'),
+            currentActive: current.classList.contains('active'),
+            currentIcon: current.querySelector('use').getAttribute('href'),
+            count: document.getElementById('liked-count').textContent,
+          };
+        }""")
+        self.assertEqual({
+          "rowPressed": "true", "rowActive": True, "rowIcon": "#i-heart-filled",
+          "currentPressed": "true", "currentActive": True, "currentIcon": "#i-heart-filled",
+          "count": "28",
+        }, pending)
 
         patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
         page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
         settled = page.evaluate("""() => ({
-          row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
-          current: document.getElementById('like-current').getAttribute('aria-pressed'),
+          rowPressed: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
+          rowActive: document.querySelector('.track-row:not(.track-placeholder) .row-like').classList.contains('active'),
+          rowIcon: document.querySelector('.track-row:not(.track-placeholder) .row-like use').getAttribute('href'),
+          currentPressed: document.getElementById('like-current').getAttribute('aria-pressed'),
+          currentActive: document.getElementById('like-current').classList.contains('active'),
+          currentIcon: document.querySelector('#like-current use').getAttribute('href'),
           count: document.getElementById('liked-count').textContent,
         })""")
-        self.assertEqual({"row": "true", "current": "true", "count": "28"}, settled)
+        self.assertEqual({
+          "rowPressed": "true", "rowActive": True, "rowIcon": "#i-heart-filled",
+          "currentPressed": "true", "currentActive": True, "currentIcon": "#i-heart-filled",
+          "count": "28",
+        }, settled)
 
     def test_pending_row_like_then_player_heart_toggles_from_authoritative_desired_state(self):
         page = self.page(390, 844)
@@ -695,7 +726,14 @@ class LayoutTests(unittest.TestCase):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
-        page.click(".track-row:not(.track-placeholder) .row-menu")
+        row = page.locator(".track-row:not(.track-placeholder)").nth(0)
+        rest_opacity = row.locator(".row-menu").evaluate("(button) => getComputedStyle(button).opacity")
+        self.assertEqual("0", rest_opacity, "desktop row actions should stay hidden until row hover/focus")
+        row.hover()
+        page.wait_for_timeout(150)
+        hover_opacity = row.locator(".row-menu").evaluate("(button) => getComputedStyle(button).opacity")
+        self.assertEqual("1", hover_opacity, "desktop row actions should appear on row hover")
+        row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
         labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
         self.assertNotIn("Like", labels, f"desktop menu duplicated the row like control: {labels}")

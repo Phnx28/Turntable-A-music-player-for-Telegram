@@ -583,7 +583,7 @@ function renderSources() {
 
 function renderTrackRow(track, position = 0) {
   const playing = track.key === state.current?.key;
-  const liked = Boolean(track.liked);
+  const liked = trackLikedState(track.key);
   const now = Math.floor(Date.now() / 1000);
   return `<article class="track-row ${playing ? "current" : ""}" data-track-key="${escapeHtml(track.key)}" tabindex="-1">
     <span class="track-ordinal utility">${playing ? `<span class="playing-mark" aria-label="Now playing"></span>` : ordinal(position + 1, state.totalTracks)}</span>
@@ -931,6 +931,7 @@ function setTrackUi() {
   const track = state.current;
   if (!track) { $("progress").disabled = true; return; }
   $("progress").disabled = false;
+  const liked = trackLikedState(track.key);
   const metadata = track.metadata || {};
   const changed = lastUiTrackKey !== track.key;
   lastUiTrackKey = track.key;
@@ -957,10 +958,10 @@ function setTrackUi() {
     }
   }
   $("download-current").href = mediaUrl(track, "download");
-  $("like-current").classList.toggle("active", Boolean(track.liked));
-  $("like-current").querySelector("use").setAttribute("href", track.liked ? "#i-heart-filled" : "#i-heart");
-  $("like-current").setAttribute("aria-pressed", String(Boolean(track.liked)));
-  $("like-current").setAttribute("aria-label", track.liked ? "Unlike current track" : "Like current track");
+  $("like-current").classList.toggle("active", liked);
+  $("like-current").querySelector("use").setAttribute("href", liked ? "#i-heart-filled" : "#i-heart");
+  $("like-current").setAttribute("aria-pressed", String(liked));
+  $("like-current").setAttribute("aria-label", liked ? "Unlike current track" : "Like current track");
   const detailRows = detailRowsFor(track);
   // Removing the speed control took the only write of detailRows with it, so the Details tab
   // rendered its action buttons over an empty <dl>. The rows are the tab's actual content.
@@ -1604,15 +1605,15 @@ async function toggleTrackLike(key, { notify = false } = {}) {
     if (rowLikeOperations.get(key) !== operation) return;
     const canonical = typeof updated?.liked === "boolean" ? updated.liked : requested;
     if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
-    applyLiked(canonical);
     rowLikeOperations.delete(key);
+    applyLiked(canonical);
     if (notify) { toast(canonical ? "Added to Liked Songs" : "Removed from Liked Songs"); schedulePersist(); }
     if (state.likedMode) loadLibrary(true);
   } catch (error) {
     if (rowLikeOperations.get(key) !== operation) return;
     state.likedCount += previous ? 1 : -1;
-    applyLiked(previous);
     rowLikeOperations.delete(key);
+    applyLiked(previous);
     showError(error);
   }
 }

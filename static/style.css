@@ -1058,7 +1058,6 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   .track-row { height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
   .row-art { width: var(--art-row); height: var(--art-row); }
   .track-duration { text-align: right; }
-  .row-menu, .track-row-actions { opacity: 1; }
   .mini-art-wrap, .mini-art, .art-placeholder.mini { width: 42px; height: 42px; }
   .player-main { gap: 7px; }
   .metadata-form { grid-template-columns: 1fr; }
@@ -1384,8 +1383,15 @@ dialog.modal[open]::backdrop { opacity: 1; }
   .track-placeholder { height: var(--row-height); }
 }
 
+/* The row menu is the only visible action cell in the mobile layout. Coarse pointers also need
+   it at wider widths, while the inline actions retain their own coarse-pointer rule below. */
+@media (max-width: 860px), (hover: none), (pointer: coarse) {
+  .row-menu { opacity: 1; }
+}
+
 @media (hover: none), (pointer: coarse) {
-  .row-menu, .track-row-actions { opacity: 1; }
+  /* Coarse desktop-sized grids still expose the inline like action; mobile rows hide that cell. */
+  .track-row-actions { opacity: 1; }
   :where(.button, .icon-button, .play-button, .add-source, .text-button, .tab, .row-menu, .context-menu button) { min-width: 44px; min-height: 44px; }
   .progress { top: -10px; height: 20px; }
 }
