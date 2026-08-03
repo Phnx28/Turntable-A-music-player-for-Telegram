@@ -71,6 +71,14 @@ test("the queue summary counts the whole queue, and empty means empty", () => {
   // Thousands separators, matching the .toLocaleString() the summary already used.
   assert.equal(queueView(Array.from({ length: 54660 }, (_, index) => String(index)), 0).summary,
     "54,660 in queue · 54,659 up next");
+
+  // A server window reports the real total and absolute position even though the array holds
+  // only ~350 keys around the current track.
+  const windowed = queueView(Array.from({ length: 351 }, (_, index) => String(index)), 50, 54660, 2450);
+  assert.equal(windowed.total, 54660);
+  assert.equal(windowed.upcoming, 54660 - 2500 - 1);
+  assert.equal(windowed.summary, "54,660 in queue · 52,159 up next");
+  assert.equal(windowed.isEmpty, false);
 });
 
 test("the now-playing header collapses on the real measured geometry", () => {

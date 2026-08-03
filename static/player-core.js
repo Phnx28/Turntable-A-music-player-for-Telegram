@@ -105,17 +105,26 @@ export function normalizePlayerState(payload) {
     panelOpen: Boolean(payload.panelOpen),
     // Absent on v1, where queue held everything, so it falls back to the stored length.
     queueTotal: Math.max(queue.length, Number(payload.queueTotal) || 0),
+    // Absolute position of queue[0] in the full playlist; 0 for v1/full snapshots.
+    queueOffset: Math.max(0, Number(payload.queueOffset) || 0),
   };
 }
 
-export function queueView(queue, queueIndex) {
-  const total = Array.isArray(queue) ? queue.length : 0;
-  const cursor = Math.max(-1, Math.min(Number.isFinite(queueIndex) ? queueIndex : -1, total - 1));
-  const upcoming = Math.max(0, total - cursor - 1);
-  const summary = !total ? "Your queue is empty"
-    : upcoming ? `${total.toLocaleString()} in queue · ${upcoming.toLocaleString()} up next`
-    : `${total.toLocaleString()} in queue · last track`;
-  return { total, upcoming, isEmpty: total === 0, summary };
+export function queueView(queue, queueIndex, total = null, offset = 0) {
+  // A restored or server-windowed queue holds only part of the real playlist; the summary must
+  // read the server's total and absolute position, or 54,660 tracks display as "351 in queue".
+  const queueCount = Array.isArray(queue) ? queue.length : 0;
+  const count = total != null ? Math.max(queueCount, Number(total) || 0) : queueCount;
+  const relative = Math.max(-1, Number.isFinite(queueIndex) ? queueIndex : -1);
+  const absolute = (Number(offset) || 0) + relative;
+  // A cursor past the end is a stale index (full queue); with a window offset the absolute
+  // position is real and may legitimately exceed the stored slice, so only clamp the former.
+  const cursor = offset > 0 ? Math.max(-1, absolute) : Math.max(-1, Math.min(absolute, queueCount - 1));
+  const upcoming = Math.max(0, count - cursor - 1);
+  const summary = !count ? "Your queue is empty"
+    : upcoming ? `${count.toLocaleString()} in queue · ${upcoming.toLocaleString()} up next`
+    : `${count.toLocaleString()} in queue · last track`;
+  return { total: count, upcoming, isEmpty: count === 0, summary };
 }
 
 // The header is a flex sibling of the scroller, so collapsing it hands its freed height to
