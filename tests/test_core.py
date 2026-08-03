@@ -716,5 +716,121 @@ class ContactRankingTests(unittest.IsolatedAsyncioTestCase):
                 service.database.close()
 
 
+class QueueWindowTests(unittest.TestCase):
+    """playback_queue can return a slice around the current track instead of every key."""
+
+    # Tracks have no sentAt, so the library orders by rowid DESC: full[k] is "1:{count-1-k}".
+    def _full(self, database, count: int) -> list[str]:
+        return [f"1:{count - 1 - index}" for index in range(count)]
+
+    def test_no_window_returns_the_full_list_as_before(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(5001)
+            ])
+            try:
+                self.assertEqual(5001, len(database.playback_queue("1")))
+            finally:
+                database.close()
+
+    def test_window_slices_around_the_current_track(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(5001)
+            ])
+            try:
+                full = self._full(database, 5001)
+                current = "1:2500"
+                result = database.playback_queue(current_key=current, window_before=50, window_after=300)
+                self.assertIsInstance(result, dict)
+                self.assertEqual(5001, result["total"])
+                self.assertEqual(2450, result["offset"])
+                # The window is a contiguous slice of the full ordering, current track inside.
+                self.assertEqual(full[result["offset"]:result["offset"] + len(result["keys"])], result["keys"])
+                self.assertEqual(current, result["keys"][50])
+                self.assertEqual(351, len(result["keys"]))
+                # Slices must never reach past the ends of the library.
+                first = database.playback_queue(current_key="1:4999", window_before=50, window_after=300)
+                self.assertEqual(0, first["offset"])
+                self.assertEqual("1:5000", first["keys"][0])
+                self.assertIn("1:4999", first["keys"][:2])
+                last = database.playback_queue(current_key="1:0", window_before=50, window_after=300)
+                self.assertLessEqual(last["offset"] + len(last["keys"]), 5001)
+            finally:
+                database.close()
+
+    def test_window_respects_shuffle_geometry(self):
+        # weighted_shuffle_tracks excludes the current track from the result, so a shuffled
+        # window has nothing to centre on and starts at the top of the fresh order. The
+        # frontend prepends the current track itself when it wants it queued.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(50)
+            ])
+            try:
+                full = database.playback_queue("1", shuffle=True, current_key="1:25")
+                result = database.playback_queue(
+                    "1", shuffle=True, current_key="1:25", window_before=5, window_after=5
+                )
+                self.assertEqual(len(full), result["total"])
+                self.assertEqual(6, len(result["keys"]))
+                self.assertEqual(0, result["offset"])
+                self.assertNotIn("1:25", result["keys"])
+                self.assertEqual(len(result["keys"]), len(set(result["keys"])))
+                self.assertLessEqual(result["offset"] + len(result["keys"]), 50)
+            finally:
+                database.close()
+
+
+class SearchReconcileTests(unittest.TestCase):
+    def test_reconcile_rebuilds_a_drifted_fts_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(40)
+            ])
+            # Simulate a crash that dropped the in-memory dirty set: rows missing from FTS and
+            # no pending flush left to restore them. Any search between upsert and flush would
+            # have re-inserted them, so clear the set to mimic process death.
+            database._dirty_search_keys.clear()
+            with database.transaction() as connection:
+                connection.execute("DELETE FROM tracks_fts WHERE key LIKE '1:3_'")
+            self.assertEqual(0, database.list_tracks(query="Track 30")["total"])
+            # Returns the drift it found (40 tracks missing from the index) after rebuilding.
+            self.assertEqual(40, database.reconcile_search())
+            self.assertEqual(1, database.list_tracks(query="Track 30")["total"])
+            database.close()
+
+    def test_reconcile_leaves_an_up_to_date_index_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(10)
+            ])
+            # The dirty set is the index's working memory: flush it, then the counts agree and
+            # reconcile must find nothing to do.
+            database._flush_search()
+            self.assertEqual(0, database.reconcile_search())
+            database.close()
+
+
 if __name__ == "__main__":
     unittest.main()

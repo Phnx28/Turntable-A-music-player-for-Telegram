@@ -607,6 +607,16 @@ class Database:
             ).fetchone()
         return bool(row) and int(row["expires_at"]) > now_ts()
 
+    def is_authorized(self, token: str) -> bool:
+        """One call for the request gate: no password set, or a live session.
+
+        This runs on every /api request, so it must stay two short queries -- never
+        turn it into a per-request cookie re-issue or a table scan.
+        """
+        if not self.get_password_hash():
+            return True
+        return self.session_valid(token)
+
     def delete_session(self, token: str) -> None:
         with self.transaction() as connection:
             connection.execute(
@@ -1199,6 +1209,23 @@ class Database:
         with self.transaction() as connection:
             self._update_search(connection, keys)
 
+    def reconcile_search(self) -> int:
+        """Rebuild the FTS index if it has drifted from the tracks table.
+
+        The dirty set is in-memory only, so a crash can drop the keys that were queued
+        to be indexed, and deleting a source leaves orphaned FTS rows behind (no
+        triggers). Called once at startup in a thread: if the counts disagree at all,
+        the fresh process has no pending flush to explain it, so rebuild.
+        """
+        with self.lock:
+            tracks = self.connection.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+            fts = self.connection.execute("SELECT COUNT(*) FROM tracks_fts").fetchone()[0]
+        if tracks == fts:
+            return 0
+        with self.transaction() as connection:
+            self._rebuild_search(connection)
+        return tracks - fts
+
     def _rebuild_search(self, connection: sqlite3.Connection) -> None:
         connection.execute("DELETE FROM tracks_fts")
         rows = connection.execute("SELECT chat_id, message_id FROM tracks").fetchall()
@@ -1318,7 +1345,9 @@ class Database:
         current_key: str = "",
         liked: bool = False,
         include_unselected: bool = False,
-    ) -> list[str]:
+        window_before: int = 0,
+        window_after: int = 0,
+    ) -> list[str] | dict[str, Any]:
         clauses, parameters = self._library_filter(
             chat_id, query, liked, include_unselected
         )
@@ -1341,19 +1370,37 @@ class Database:
                 parameters,
             ).fetchall()
         if not shuffle:
-            return [str(row["key"]) for row in rows]
-        return weighted_shuffle_tracks(
-            [
-                {
-                    "key": row["key"],
-                    "playCount": row["play_count"],
-                    "lastStartedAt": row["last_started_at"],
-                    "lastPlayedAt": row["last_played_at"],
-                }
-                for row in rows
-            ],
-            current_key,
-        )
+            keys = [str(row["key"]) for row in rows]
+        else:
+            keys = weighted_shuffle_tracks(
+                [
+                    {
+                        "key": row["key"],
+                        "playCount": row["play_count"],
+                        "lastStartedAt": row["last_started_at"],
+                        "lastPlayedAt": row["last_played_at"],
+                    }
+                    for row in rows
+                ],
+                current_key,
+            )
+        if not window_before and not window_after:
+            return keys
+        # The client only draws queueIndex +/- a few hundred and rebuilds the window from the
+        # server when it runs past an edge, so materialising 54,660 keys as JSON on every play
+        # is wasted wire. Slice around the current track; total/offset keep the client honest
+        # about how much more the server still holds.
+        try:
+            index = keys.index(current_key) if current_key else 0
+        except ValueError:
+            index = 0
+        start = max(0, index - window_before)
+        end = min(len(keys), index + window_after + 1)
+        return {
+            "keys": keys[start:end],
+            "offset": start,
+            "total": len(keys),
+        }
 
     def shuffled_track_keys(self, chat_id: str | None = None, current_key: str = "") -> list[str]:
         return self.playback_queue(chat_id, shuffle=True, current_key=current_key)
