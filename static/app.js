@@ -1,6 +1,7 @@
 import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, virtualTrackWindow, windowFromResult } from "./player-core.js";
 import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
 import { beginLikeOperation, likedState, representationsFor, resolveLikeResponse, rollbackLikeOperation } from "./like-state.js";
+import { knownTotalParam, mergePageInto, pageCacheKey, shouldFetchPage } from "./library-pages.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -767,32 +768,28 @@ function renderTracks(force = false) {
   for (let offset = Math.floor(start / 100) * 100; offset < end; offset += 100) loadPage(offset);
 }
 
-function libraryParameters(offset) {
+function libraryCacheKey(offset) {
   const query = $("track-search").value.trim();
   const temporary = Boolean(state.temporarySource?.chatId === state.source && !state.sources.some((item) => item.chatId === state.source));
-  // This string is also the state.libraryCache key. Anything that changes which rows come back
-  // must appear here, or a sort change is served the previous sort's cached page.
-  return `source=${encodeURIComponent(state.likedMode ? "" : state.source)}&q=${encodeURIComponent(query)}&offset=${offset}&limit=100&liked=${state.likedMode}&temporary=${temporary}&sort=${encodeURIComponent(state.sort)}`;
+  return pageCacheKey(offset, {
+    likedMode: state.likedMode, source: state.source, query, temporary, sort: state.sort,
+  });
 }
 
 async function loadPage(offset, force = false, token = libraryRequest) {
   offset = Math.max(0, Math.floor(offset / 100) * 100);
-  if (state.loadedPages.has(offset) || state.pageRequests.has(offset)) return;
+  if (!shouldFetchPage(offset, state.loadedPages, state.pageRequests)) return;
   state.pageRequests.add(offset);
-  const cacheKey = libraryParameters(offset);
+  const cacheKey = libraryCacheKey(offset);
   try {
-    // The total only changes when the filter changes, and the cache key encodes the filter,
-    // so replaying it lets the server skip a COUNT(*) over the whole library on every page.
-    const known = offset > 0 && state.totalTracks > 0 ? `&total=${state.totalTracks}` : "";
-    const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}${known}`, { signal: requestController.signal });
+    const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}${knownTotalParam(offset, state.totalTracks)}`, { signal: requestController.signal });
     if (token !== libraryRequest) return;
     const page = normalizeTrackPage(raw);
     if (!state.libraryCache.has(cacheKey)) cacheSet(state.libraryCache, cacheKey, page, 8);
     state.totalTracks = page.total;
     state.allMusicTotal = page.allMusicTotal;
     state.dayBreaks = page.dayBreaks;
-    state.tracks.length = page.total;
-    page.items.forEach((track, index) => { state.tracks[page.offset + index] = track; cacheSet(state.summaryCache, track.key, track, 500); });
+    mergePageInto(state.tracks, page, (track) => cacheSet(state.summaryCache, track.key, track, 500));
     state.loadedPages.add(page.offset);
     renderTracks(true);
     renderSources();
