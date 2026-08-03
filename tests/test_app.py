@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from app import SESSION_COOKIE, Settings, create_app
+from core import media_digest, media_identity
 
 
 def _settings(data_directory: Path) -> Settings:
@@ -311,3 +312,67 @@ class PasswordPolicyTests(AppTestCase):
         self.assertEqual(response.status_code, 200)
         # set_password revokes all sessions, so the handler re-issues one for this caller.
         self.assertEqual(self.client.get("/api/settings").status_code, 200)
+
+
+class MediaStreamRouteTests(AppTestCase):
+    """The byte-serving path through the real route, with a real Media cache on disk.
+
+    TelegramService.start() is stubbed, so the app's MediaCache has no client; every assertion
+    here serves from the cache or .part files, which need no Telegram at all.
+    """
+
+    SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([{
+            "chatId": "1", "messageId": "2", "fileName": "song.mp3", "mimeType": "audio/mpeg",
+            "fileSize": 1000, "title": "Track", "artist": "Artist", "documentId": "9",
+        }])
+        self.media = self.app.state.telegram.media
+        self.identity = media_identity("9", 1000)
+        self.digest = media_digest("1:2", self.identity)
+
+    def _seed_cached_file(self) -> None:
+        destination = self.media.media_directory / f"{self.digest}.audio"
+        destination.write_bytes(b"x" * 1000)
+        self.media.database.save_media_cache("1:2", self.identity, destination.name, 1000)
+
+    def test_audio_serves_a_cached_range(self) -> None:
+        self._seed_cached_file()
+        response = self.client.get("/api/tracks/1:2/audio", headers={"range": "bytes=100-199"})
+        self.assertEqual(206, response.status_code)
+        self.assertEqual("bytes 100-199/1000", response.headers["content-range"])
+        self.assertEqual("100", response.headers["content-length"])
+        self.assertEqual(b"x" * 100, response.content)
+
+    def test_audio_serves_the_full_file_without_a_range(self) -> None:
+        self._seed_cached_file()
+        response = self.client.get("/api/tracks/1:2/audio")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("1000", response.headers["content-length"])
+        self.assertEqual(b"x" * 1000, response.content)
+
+    def test_audio_out_of_range_is_416_with_the_real_total(self) -> None:
+        self._seed_cached_file()
+        response = self.client.get("/api/tracks/1:2/audio", headers={"range": "bytes=5000-"})
+        self.assertEqual(416, response.status_code)
+        self.assertEqual("bytes */1000", response.headers["content-range"])
+
+    def test_audio_head_returns_headers_without_a_body(self) -> None:
+        self._seed_cached_file()
+        response = self.client.head("/api/tracks/1:2/audio")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("1000", response.headers["content-length"])
+        self.assertEqual(b"", response.content)
+
+    def test_audio_serves_the_covered_part_of_a_growing_download(self) -> None:
+        # A partial file holds 600 of 1000 bytes; the covered range comes from disk with the
+        # real total in Content-Range, and an uncovered range must not be served short.
+        partial = self.media.media_directory / f"{self.digest}.part"
+        partial.write_bytes(b"p" * 600)
+        covered = self.client.get("/api/tracks/1:2/audio", headers={"range": "bytes=0-499"})
+        self.assertEqual(206, covered.status_code)
+        self.assertEqual("bytes 0-499/1000", covered.headers["content-range"])
+        self.assertEqual(b"p" * 500, covered.content)

@@ -109,6 +109,21 @@ def split_track_key(value: str) -> tuple[str, str]:
     return chat_id, message_id
 
 
+def media_identity(document_id: Any, size: int) -> str:
+    """The stable identity of a Track's media on Telegram.
+
+    Every consumer that keys the media cache off document id + file size builds this string
+    (the media cache, thumbnails, artwork versioning). One formula, six call sites: change the
+    scheme here, not in each module.
+    """
+    return f"{document_id}:{int(size or 0)}"
+
+
+def media_digest(key: str, identity: str) -> str:
+    """The cache-filename digest for a Track's media, derived from its key and identity."""
+    return hashlib.sha256(f"{key}:{identity}".encode()).hexdigest()
+
+
 def normalize_text(value: str | None) -> str:
     value = unicodedata.normalize("NFKC", value or "").casefold()
     return " ".join(re.sub(r"[^\w]+", " ", value).split())
@@ -910,7 +925,7 @@ class Database:
         chat_id = str(value["chat_id"])
         message_id = str(value["message_id"])
         artwork = str(override.get("artworkPath") or "")
-        fingerprint = artwork or f"{value.get('document_id', '')}:{value.get('file_size', 0)}"
+        fingerprint = artwork or media_identity(value.get("document_id", ""), value.get("file_size", 0))
         return {
             "key": track_key(chat_id, message_id),
             "title": override.get("title") or value["telegram_title"] or value["file_name"],

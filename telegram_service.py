@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
-import math
 import os
 import secrets
 import time
@@ -25,7 +23,8 @@ from telethon.tl.types import (
 )
 from telethon.tl.types import contacts as contacts_types
 
-from core import Database, is_audio_file, normalize_text, track_key
+from core import Database, is_audio_file, media_identity, normalize_text, track_key
+from media import MediaCache
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,18 +33,6 @@ FLOW_TTL_SECONDS = 300
 # How many frequent-forward peers to ask Telegram for. Only the handful that are also saved
 # contacts get shown, so this is deliberately larger than the row can hold.
 TOP_PEER_LIMIT = 20
-MEDIA_CHUNK_SIZE = 512 * 1024
-PARTIAL_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
-# A single 512 KiB download chunk that does not arrive within this long means the Telegram
-# connection is gone; fail the stream instead of hanging a request forever.
-TELEGRAM_CHUNK_TIMEOUT_SECONDS = 120
-# Document lookup (a single message fetch) must not stall an audio request indefinitely.
-TELEGRAM_MESSAGE_TIMEOUT_SECONDS = 60
-# ffmpeg remuxing a track with -c copy is fast; anything over this is a wedged process.
-FFMPEG_TIMEOUT_SECONDS = 600
-# A .part file untouched for this long is a dead download, not an active one; only those are
-# evicted when the cache budget is exceeded.
-PARTIAL_EVICTION_GRACE_SECONDS = 5 * 60
 # Corner radius of each QR module, as a fraction of the module size. Kept well under .5 (a full
 # circle) so the modules stay square enough for scanners to read reliably.
 QR_MODULE_RADIUS = 0.28
@@ -186,27 +173,27 @@ class TelegramService:
         # ponytail: caps concurrent scans to avoid FloodWait; bump if profiling shows idle headroom.
         self.sync_semaphore = asyncio.Semaphore(3)
         self.global_search_lock = asyncio.Lock()
-        # ponytail: one global transfer gate is enough for one owner; split by DC only if profiling proves it.
-        self.media_semaphore = asyncio.Semaphore(4)
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.avatar_directory = data_directory / "avatars"
         self.thumbnail_directory = data_directory / "thumbnails"
-        self.media_directory = data_directory / "media-cache"
-        self.download_directory = data_directory / "tagged-downloads"
         self.avatar_directory.mkdir(parents=True, exist_ok=True)
         self.thumbnail_directory.mkdir(parents=True, exist_ok=True)
-        self.media_directory.mkdir(parents=True, exist_ok=True)
-        self.download_directory.mkdir(parents=True, exist_ok=True)
-        self.cache_lock = asyncio.Lock()
         self.prefetch_job: BackgroundJob | None = None
         self.prefetch_keys: set[str] = set()
         self.prefetch_order: list[str] = []
-        self.document_cache: dict[str, tuple[float, str, Any, Any]] = {}
         self.discovery_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._watched_chat_ids: set[str] = set()
         self._countries: list[dict[str, str]] | None = None
         self._countries_updated: float = 0
-        self._clean_partial_cache()
+        # The media cache owns the .part protocol, eviction, and byte sourcing. It shares the
+        # prefetch-key set by reference so eviction never deletes a track being prefetched.
+        self.media = MediaCache(
+            database,
+            media_directory=data_directory / "media-cache",
+            download_directory=data_directory / "tagged-downloads",
+            client_provider=lambda: self.client,
+            protected_keys=self.prefetch_keys,
+        )
 
     @property
     def linked(self) -> bool:
@@ -241,6 +228,7 @@ class TelegramService:
             task.cancel()
         await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
+        await self.media.shutdown()
         for flow in list(self.flows.values()):
             if flow.task:
                 flow.task.cancel()
@@ -254,16 +242,6 @@ class TelegramService:
         task = asyncio.create_task(coroutine)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-
-    def _clean_partial_cache(self) -> None:
-        cutoff = time.time() - PARTIAL_CACHE_TTL_SECONDS
-        for candidate in self.media_directory.glob("*.part"):
-            try:
-                details = candidate.stat()
-                if not details.st_size or details.st_mtime < cutoff:
-                    candidate.unlink(missing_ok=True)
-            except OSError:
-                candidate.unlink(missing_ok=True)
 
     def _start_job(self, job: BackgroundJob, coroutine: Any) -> dict[str, Any]:
         self._prune_jobs()
@@ -925,72 +903,6 @@ class TelegramService:
             "documentId": str(document.id),
         }
 
-    async def get_message_document(self, chat_id: str, message_id: str) -> tuple[Any, Any]:
-        client = self.require_client()
-        track = self.database.get_track(chat_id, message_id)
-        if not track or not track["available"]:
-            raise KeyError("Track is unavailable")
-        key = track_key(chat_id, message_id)
-        fingerprint = f"{track.get('documentId')}:{track['file']['size']}"
-        cached = self.document_cache.get(key)
-        if cached and cached[0] > time.monotonic() and cached[1] == fingerprint:
-            self.document_cache.pop(key)
-            self.document_cache[key] = cached
-            return cached[2], cached[3]
-        message = await asyncio.wait_for(
-            client.get_messages(int(chat_id), ids=int(message_id)),
-            timeout=TELEGRAM_MESSAGE_TIMEOUT_SECONDS,
-        )
-        document = getattr(message, "document", None) if message else None
-        if not document:
-            self.document_cache.pop(key, None)
-            self.database.mark_unavailable(chat_id, [message_id])
-            raise KeyError("Telegram media is no longer available")
-        self.document_cache[key] = (time.monotonic() + 600, fingerprint, message, document)
-        while len(self.document_cache) > 128:
-            self.document_cache.pop(next(iter(self.document_cache)))
-        return message, document
-
-    async def iter_media(
-        self, document: Any, start: int, length: int
-    ) -> AsyncIterator[bytes]:
-        client = self.require_client()
-        request_size = MEDIA_CHUNK_SIZE
-        chunks = math.ceil(length / request_size)
-        remaining = length
-        async with self.media_semaphore:
-            iterator = client.iter_download(
-                document,
-                offset=start,
-                limit=chunks,
-                chunk_size=request_size,
-                request_size=request_size,
-                file_size=int(document.size or 0),
-            )
-            try:
-                while remaining > 0:
-                    try:
-                        chunk = await asyncio.wait_for(
-                            iterator.__anext__(),
-                            timeout=TELEGRAM_CHUNK_TIMEOUT_SECONDS,
-                        )
-                    except StopAsyncIteration:
-                        break
-                    data = bytes(chunk[:remaining])
-                    remaining -= len(data)
-                    if data:
-                        yield data
-            except asyncio.TimeoutError as error:
-                # The response is already streaming; raising mid-generator just ends the body,
-                # which the client's audio retry handles. Do not let the request hang forever.
-                raise RuntimeError(
-                    "Telegram download timed out mid-stream; check the connection"
-                ) from error
-            finally:
-                close = getattr(iterator, "close", None)
-                if close:
-                    await close()
-
     async def thumbnail(self, chat_id: str, message_id: str, quality: str = "default") -> bytes | None:
         client = self.require_client()
         track = self.database.get_track(chat_id, message_id)
@@ -998,7 +910,7 @@ class TelegramService:
             raise KeyError("Track is unavailable")
         key_digest = hashlib.sha256(track["key"].encode()).hexdigest()[:20]
         quality_tag = "hi" if quality == "high" else "lo"
-        fingerprint = f"{track.get('documentId')}:{track['file']['size']}:{quality}"
+        fingerprint = f"{media_identity(track.get('documentId'), track['file']['size'])}:{quality}"
         version = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
         destination = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.jpg"
         missing = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.missing"
@@ -1009,7 +921,7 @@ class TelegramService:
         for stale in self.thumbnail_directory.glob(f"{key_digest}-{quality_tag}-*"):
             if stale not in {destination, missing}:
                 stale.unlink(missing_ok=True)
-        message, document = await self.get_message_document(chat_id, message_id)
+        message, document = await self.media.get_message_document(chat_id, message_id)
         if not getattr(document, "thumbs", None):
             missing.touch()
             return None
@@ -1083,181 +995,6 @@ class TelegramService:
             job.error = self._friendly_sync_error(error)
             job.state = "error"
 
-    def _cache_path(self, name: str) -> Path | None:
-        candidate = (self.media_directory / Path(name).name).resolve()
-        return candidate if candidate.parent == self.media_directory.resolve() else None
-
-    def cached_media(self, track: dict[str, Any]) -> Path | None:
-        fingerprint = (
-            f"{track.get('documentId')}:{track['file']['size']}" if track.get("documentId") else ""
-        )
-        entry = self.database.get_media_cache(track["key"], fingerprint)
-        if not entry or not (candidate := self._cache_path(entry["path"])) or not candidate.is_file():
-            return None
-        if candidate.stat().st_size != int(track["file"]["size"]):
-            self.database.delete_media_cache([track["key"]])
-            candidate.unlink(missing_ok=True)
-            return None
-        return candidate
-
-    def partial_media(self, track: dict[str, Any]) -> Path | None:
-        """The growing .part file for *track*, if one exists and holds bytes.
-
-        cache_media writes `{digest}.part` while downloading, so a playing track often has a
-        partial file long before it completes. media_response serves the ranges the file
-        already covers from disk; only uncached offsets fall back to Telegram streaming.
-        """
-        document_id = track.get("documentId")
-        size = int(track["file"]["size"] or 0)
-        if not document_id or size <= 0:
-            return None
-        fingerprint = f"{document_id}:{size}"
-        digest = hashlib.sha256(f"{track['key']}:{fingerprint}".encode()).hexdigest()
-        candidate = self.media_directory / f"{digest}.part"
-        try:
-            if candidate.is_file() and candidate.stat().st_size > 0:
-                return candidate
-        except OSError:
-            return None
-        return None
-
-    async def cache_media(self, track: dict[str, Any]) -> Path:
-        if cached := self.cached_media(track):
-            return cached
-        async with self.cache_lock:
-            if cached := self.cached_media(track):
-                return cached
-            _, document = await self.get_message_document(track["chatId"], track["messageId"])
-            expected_size = int(document.size or 0)
-            if expected_size <= 0:
-                raise RuntimeError("Telegram reported an empty media file")
-            fingerprint = f"{document.id}:{expected_size}"
-            digest = hashlib.sha256(f"{track['key']}:{fingerprint}".encode()).hexdigest()
-            temporary = self.media_directory / f"{digest}.part"
-            destination = self.media_directory / f"{digest}.audio"
-            stale_entry = self.database.get_media_cache(track["key"])
-            if destination.is_file() and destination.stat().st_size == expected_size:
-                os.chmod(destination, 0o600)
-                if stale_entry and stale_entry["path"] != destination.name:
-                    if stale := self._cache_path(stale_entry["path"]):
-                        stale.unlink(missing_ok=True)
-                self.database.save_media_cache(track["key"], fingerprint, destination.name, expected_size)
-                return destination
-            destination.unlink(missing_ok=True)
-            offset = temporary.stat().st_size if temporary.is_file() else 0
-            if offset > expected_size:
-                temporary.unlink(missing_ok=True)
-                offset = 0
-            elif offset < expected_size and offset % MEDIA_CHUNK_SIZE:
-                offset -= offset % MEDIA_CHUNK_SIZE
-                with temporary.open("r+b") as output:
-                    output.truncate(offset)
-            if offset < expected_size:
-                with temporary.open("ab") as output:
-                    os.chmod(temporary, 0o600)
-                    async for chunk in self.iter_media(document, offset, expected_size - offset):
-                        output.write(chunk)
-            if temporary.stat().st_size != expected_size:
-                raise RuntimeError("Telegram media download ended before the file was complete")
-            temporary.replace(destination)
-            os.chmod(destination, 0o600)
-            if stale_entry and stale_entry["path"] != destination.name:
-                if stale := self._cache_path(stale_entry["path"]):
-                    stale.unlink(missing_ok=True)
-            self.database.save_media_cache(
-                track["key"], fingerprint, destination.name, destination.stat().st_size
-            )
-            await self._evict_cache()
-            return destination
-
-    def start_cache_current(self, key: str) -> dict[str, Any]:
-        """Background-cache the playing track without touching the prefetch job."""
-        if key:
-            self._spawn(self._cache_current(key))
-        return {"ok": True}
-
-    async def _cache_current(self, key: str) -> None:
-        try:
-            chat_id, message_id = key.split(":", 1)
-            track = await asyncio.to_thread(self.database.get_track, chat_id, message_id)
-            if not track or not track["available"]:
-                return
-            await self.cache_media(track)
-        except Exception:
-            # Streaming still works without the cache; never let a failed background cache
-            # surface as an error dialog.
-            LOGGER.exception("Could not cache the current track %s", key)
-
-    async def tagged_download(self, track: dict[str, Any]) -> Path | None:
-        if not track.get("overrides"):
-            return None
-        source = await self.cache_media(track)
-        metadata = track["metadata"]
-        fingerprint = json.dumps(
-            [track["key"], track.get("documentId"), track["file"]["size"], track["overrides"]],
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        digest = hashlib.sha256(fingerprint.encode()).hexdigest()
-        suffix = Path(track["file"]["name"]).suffix or ".mp3"
-        destination = self.download_directory / f"{digest}{suffix}"
-        if destination.is_file():
-            return destination
-        temporary = self.download_directory / f"{digest}.part{suffix}"
-        fields = {
-            "title": metadata.get("title"),
-            "artist": metadata.get("artist"),
-            "album": metadata.get("album"),
-            "album_artist": metadata.get("albumArtist"),
-            "genre": metadata.get("genre"),
-            "date": metadata.get("year"),
-            "track": metadata.get("trackNumber"),
-            "disc": metadata.get("discNumber"),
-        }
-        command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(source), "-map", "0", "-c", "copy"]
-        for name, value in fields.items():
-            if value not in (None, "", 0):
-                command.extend(["-metadata", f"{name}={value}"])
-        command.append(str(temporary))
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
-            )
-        except OSError as error:
-            # Almost always ffmpeg missing from PATH. The caller falls back to the untagged
-            # original, which is the right behaviour but indistinguishable from success unless it
-            # is said out loud -- edits appear to be silently discarded.
-            LOGGER.warning(
-                "Cannot tag %s for download: ffmpeg could not be run (%s). "
-                "Serving the original file, so edited metadata will be missing. "
-                "Install ffmpeg to include it.",
-                track["key"],
-                error,
-            )
-            return None
-        try:
-            _, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=FFMPEG_TIMEOUT_SECONDS
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
-            temporary.unlink(missing_ok=True)
-            LOGGER.warning("Cannot tag %s for download: ffmpeg timed out", track["key"])
-            return None
-        if process.returncode:
-            temporary.unlink(missing_ok=True)
-            LOGGER.warning(
-                "Cannot tag %s for download: ffmpeg exited %s. %s",
-                track["key"],
-                process.returncode,
-                stderr.decode("utf-8", "replace").strip() or "No error output.",
-            )
-            return None
-        temporary.replace(destination)
-        os.chmod(destination, 0o600)
-        return destination
-
     def start_prefetch(self, keys: list[str]) -> dict[str, Any]:
         count = int(self.database.get_settings()["prefetchCount"])
         selected = list(dict.fromkeys(keys))[:count]
@@ -1288,10 +1025,10 @@ class TelegramService:
                 track = self.database.get_track(chat_id, message_id)
                 if not track or not track["available"]:
                     return "unavailable"
-                if self.cached_media(track):
+                if self.media.cached_media(track):
                     job.processed += 1
                     return "ready"
-                await self.cache_media(track)
+                await self.media.cache_media(track)
                 job.found += 1
                 job.processed += 1
                 return "ready"
@@ -1307,45 +1044,6 @@ class TelegramService:
         except Exception as error:
             job.error = self._friendly_sync_error(error)
             job.state = "error"
-
-    async def _evict_cache(self, maximum: int = 5 * 1024 * 1024 * 1024) -> None:
-        await asyncio.to_thread(self._evict_cache_sync, maximum)
-
-    def _evict_cache_sync(self, maximum: int = 5 * 1024 * 1024 * 1024) -> None:
-        entries = self.database.media_cache_entries()
-        total = sum(int(entry["size"]) for entry in entries)
-        now = time.time()
-        partials: list[tuple[float, int, Path]] = []
-        for candidate in self.media_directory.glob("*.part"):
-            try:
-                details = candidate.stat()
-            except OSError:
-                candidate.unlink(missing_ok=True)
-                continue
-            total += details.st_size
-            partials.append((details.st_mtime, details.st_size, candidate))
-        # Oldest dead downloads first; the completion order of cache entries is less relevant
-        # than never interrupting a download that is actively writing.
-        partials.sort()
-        remove: list[str] = []
-        for entry in entries:
-            if total <= maximum:
-                break
-            if entry["track_key"] in self.prefetch_keys:
-                continue
-            total -= int(entry["size"])
-            remove.append(entry["track_key"])
-            if candidate := self._cache_path(entry["path"]):
-                candidate.unlink(missing_ok=True)
-        for mtime, size, candidate in partials:
-            if total <= maximum:
-                break
-            if now - mtime < PARTIAL_EVICTION_GRACE_SECONDS:
-                continue
-            total -= size
-            candidate.unlink(missing_ok=True)
-        if remove:
-            self.database.delete_media_cache(remove)
 
     def cache_status(self, keys: list[str] | None = None) -> dict[str, Any]:
         entries = self.database.media_cache_entries()
@@ -1363,23 +1061,11 @@ class TelegramService:
         }
 
     def clear_media_cache(self) -> dict[str, int]:
+        # Cancelling the prefetch is a job-lifecycle concern, so it stays here; the file and
+        # database deletion belongs to the media cache.
         if self.prefetch_job and self.prefetch_job.task:
             self.prefetch_job.task.cancel()
         self.prefetch_job = None
         self.prefetch_keys.clear()
         self.prefetch_order.clear()
-        paths = self.database.delete_media_cache()
-        removed = 0
-        for name in paths:
-            if candidate := self._cache_path(name):
-                if candidate.exists():
-                    removed += candidate.stat().st_size
-                    candidate.unlink()
-        for candidate in self.media_directory.glob("*.part"):
-            try:
-                size = candidate.stat().st_size
-                candidate.unlink()
-                removed += size
-            except OSError:
-                candidate.unlink(missing_ok=True)
-        return {"removedBytes": removed}
+        return self.media.clear_cache()

@@ -303,7 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await asyncio.to_thread(database._flush_search)
                     if time.monotonic() >= next_partial_cleanup:
                         next_partial_cleanup = time.monotonic() + 60 * 60
-                        await asyncio.to_thread(telegram._clean_partial_cache)
+                        await asyncio.to_thread(telegram.media.clean_partial_cache)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -779,25 +779,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def media_response(request: Request, key: str, download: bool = False) -> Response:
         item = await get_track_async(request, key)
-        chat_id, message_id = item["chatId"], item["messageId"]
-        cached = telegram(request).cached_media(item)
-        partial = None
-        document = None
-        if cached:
-            size = cached.stat().st_size
-        else:
-            partial = telegram(request).partial_media(item)
-            if partial:
-                size = int(item["file"]["size"] or 0)
-            else:
-                _, document = await telegram(request).get_message_document(chat_id, message_id)
-                size = int(document.size or item["file"]["size"] or 0)
+        source = await telegram(request).media.media_source(item)
         try:
-            byte_range = parse_range_header(None if download else request.headers.get("range"), size)
+            byte_range = parse_range_header(None if download else request.headers.get("range"), source.size)
         except RangeNotSatisfiable as error:
             return Response(
                 status_code=416,
-                headers={"Content-Range": f"bytes */{size}"},
+                headers={"Content-Range": f"bytes */{source.size}"},
                 content=str(error),
             )
         headers = {
@@ -812,7 +800,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         status_code = 206 if byte_range.partial else 200
         if byte_range.partial:
-            headers["Content-Range"] = f"bytes {byte_range.start}-{byte_range.end}/{size}"
+            headers["Content-Range"] = f"bytes {byte_range.start}-{byte_range.end}/{source.size}"
         if download:
             name = safe_filename(item["file"]["name"], "telegram-track")
             ascii_name = safe_filename(name.encode("ascii", "ignore").decode() or "telegram-track")
@@ -821,37 +809,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         if request.method == "HEAD":
             return Response(status_code=status_code, media_type=item["file"]["mimeType"], headers=headers)
-        source_file = cached
-        if not source_file and partial:
-            # The .part file is still growing: serve from it only for ranges it already holds.
-            # A seek past the current end must go to Telegram, not return a short body.
-            try:
-                covered = byte_range.start + byte_range.length <= partial.stat().st_size
-            except OSError:
-                covered = False  # evicted between the check above and now; stream from Telegram
-            if covered:
-                source_file = partial
-        if not source_file:
-            _, document = await telegram(request).get_message_document(chat_id, message_id)
-
-        def file_chunks():
-            # shared by complete-cache and growing-.part serving
-            remaining = byte_range.length
-            with source_file.open("rb") as output:
-                output.seek(byte_range.start)
-                while remaining:
-                    chunk = output.read(min(512 * 1024, remaining))
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-                    yield chunk
-
-        if source_file:
-            content = file_chunks()
-        else:
-            content = telegram(request).iter_media(document, byte_range.start, byte_range.length)
         return StreamingResponse(
-            content,
+            source.iter_range(byte_range),
             status_code=status_code,
             media_type=item["file"]["mimeType"],
             headers=headers,
@@ -865,7 +824,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/tracks/{key}/download")
     async def download(request: Request, key: str) -> Response:
         item = await get_track_async(request, key)
-        if tagged := await telegram(request).tagged_download(item):
+        if tagged := await telegram(request).media.tagged_download(item):
             name = safe_filename(item["file"]["name"], "telegram-track")
             ascii_name = safe_filename(name.encode("ascii", "ignore").decode() or "telegram-track")
             return FileResponse(
@@ -1003,7 +962,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # prefetch job: it must not cancel or be cancelled by the upcoming-track prefetch.
         if body.key:
             await get_track_async(request, body.key)
-        return telegram(request).start_cache_current(body.key)
+        return telegram(request).media.start_cache_current(body.key)
 
     @application.get("/api/cache/status")
     async def cache_status(request: Request, keys: str = "") -> dict[str, Any]:

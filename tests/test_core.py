@@ -12,7 +12,8 @@ from telethon.tl.types import User
 from telethon.tl.types import contacts as contacts_types
 
 from core import Database, RangeNotSatisfiable, now_ts, parse_lrc, parse_range_header, weighted_shuffle_tracks
-from telegram_service import QR_QUIET_MODULES, LoginFlow, MEDIA_CHUNK_SIZE, TelegramService, render_qr_svg
+from media import MEDIA_CHUNK_SIZE
+from telegram_service import QR_QUIET_MODULES, LoginFlow, TelegramService, render_qr_svg
 
 
 class CoreTests(unittest.TestCase):
@@ -428,7 +429,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             service = self.service(directory)
             original = Path(directory) / "original.audio"
             original.write_bytes(b"original")
-            service.cache_media = AsyncMock(return_value=original)
+            service.media.cache_media = AsyncMock(return_value=original)
             track = {
                 "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
                 "file": {"name": "song.mp3", "size": 8},
@@ -443,7 +444,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b"", b"")))
 
             with patch("asyncio.create_subprocess_exec", fake_exec):
-                result = await service.tagged_download(track)
+                result = await service.media.tagged_download(track)
             self.assertEqual(b"original", original.read_bytes())
             self.assertEqual(b"tagged", result.read_bytes())
             self.assertIn("title=Edited title", commands[0])
@@ -458,7 +459,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             service = self.service(directory)
             original = Path(directory) / "original.audio"
             original.write_bytes(b"original")
-            service.cache_media = AsyncMock(return_value=original)
+            service.media.cache_media = AsyncMock(return_value=original)
             track = {
                 "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
                 "file": {"name": "song.mp3", "size": 8},
@@ -470,8 +471,8 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
                 raise FileNotFoundError(2, "No such file or directory", "ffmpeg")
 
             with patch("asyncio.create_subprocess_exec", missing_ffmpeg):
-                with self.assertLogs("telegram_service", level="WARNING") as logs:
-                    result = await service.tagged_download(track)
+                with self.assertLogs("media", level="WARNING") as logs:
+                    result = await service.media.tagged_download(track)
             self.assertIsNone(result)
             self.assertEqual(b"original", original.read_bytes())
             output = "\n".join(logs.output)
@@ -484,7 +485,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             service = self.service(directory)
             original = Path(directory) / "original.audio"
             original.write_bytes(b"original")
-            service.cache_media = AsyncMock(return_value=original)
+            service.media.cache_media = AsyncMock(return_value=original)
             track = {
                 "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
                 "file": {"name": "song.mp3", "size": 8},
@@ -503,8 +504,8 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             with patch("asyncio.create_subprocess_exec", failing_exec):
-                with self.assertLogs("telegram_service", level="WARNING") as logs:
-                    result = await service.tagged_download(track)
+                with self.assertLogs("media", level="WARNING") as logs:
+                    result = await service.media.tagged_download(track)
             self.assertIsNone(result)
             self.assertEqual(b"original", original.read_bytes())
             # The partial output must not be left lying around to be served later.
@@ -516,50 +517,51 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_media_cache_resumes_partial_and_separates_changed_documents(self):
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
+            media = service.media
             total = MEDIA_CHUNK_SIZE + 17
             track = {
                 "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "9",
                 "file": {"name": "song.mp3", "size": total},
             }
-            service.get_message_document = AsyncMock(return_value=(None, SimpleNamespace(id=9, size=total)))
+            media.get_message_document = AsyncMock(return_value=(None, SimpleNamespace(id=9, size=total)))
 
             async def interrupted(_, start, length):
                 self.assertEqual((0, total), (start, length))
                 yield b"a" * MEDIA_CHUNK_SIZE
                 raise asyncio.CancelledError
 
-            service.iter_media = interrupted
+            media.iter_media = interrupted
             with self.assertRaises(asyncio.CancelledError):
-                await service.cache_media(track)
-            partial = next(service.media_directory.glob("*.part"))
+                await media.cache_media(track)
+            partial = next(media.media_directory.glob("*.part"))
             self.assertEqual(MEDIA_CHUNK_SIZE, partial.stat().st_size)
 
             async def resumed(_, start, length):
                 self.assertEqual((MEDIA_CHUNK_SIZE, 17), (start, length))
                 yield b"b" * length
 
-            service.iter_media = resumed
-            result = await service.cache_media(track)
+            media.iter_media = resumed
+            result = await media.cache_media(track)
             self.assertEqual(b"a" * MEDIA_CHUNK_SIZE + b"b" * 17, result.read_bytes())
-            self.assertEqual([], list(service.media_directory.glob("*.part")))
+            self.assertEqual([], list(media.media_directory.glob("*.part")))
 
             changed = {**track, "documentId": "10"}
-            service.get_message_document = AsyncMock(return_value=(None, SimpleNamespace(id=10, size=total)))
+            media.get_message_document = AsyncMock(return_value=(None, SimpleNamespace(id=10, size=total)))
 
             async def fresh(_, start, length):
                 self.assertEqual((0, total), (start, length))
                 yield b"c" * MEDIA_CHUNK_SIZE
                 yield b"d" * (length - MEDIA_CHUNK_SIZE)
 
-            service.iter_media = fresh
-            replacement = await service.cache_media(changed)
+            media.iter_media = fresh
+            replacement = await media.cache_media(changed)
             self.assertNotEqual(result, replacement)
             self.assertFalse(result.exists())
-            abandoned = service.media_directory / "abandoned.part"
+            abandoned = media.media_directory / "abandoned.part"
             abandoned.write_bytes(b"partial")
-            removed = service.clear_media_cache()
+            removed = media.clear_cache()
             self.assertGreaterEqual(removed["removedBytes"], total + len(b"partial"))
-            self.assertEqual([], list(service.media_directory.iterdir()))
+            self.assertEqual([], list(media.media_directory.iterdir()))
             service.database.close()
 
     async def test_sync_source_runs_per_source_in_parallel_and_caps_total(self):
