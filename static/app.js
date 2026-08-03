@@ -1,5 +1,6 @@
 import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, virtualTrackWindow, windowFromResult } from "./player-core.js";
 import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
+import { beginLikeOperation, likedState, representationsFor, resolveLikeResponse, rollbackLikeOperation } from "./like-state.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -28,7 +29,6 @@ const GLOBAL_SEARCH_LIMIT = 30;
 let lastAudibleVolume = .8;
 const pendingCovers = new Set();
 const rowLikeOperations = new Map();
-let nextRowLikeOperation = 0;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -1671,36 +1671,25 @@ function updateRowLikeUi(key, liked) {
 }
 
 function trackRepresentations(key) {
-  const representations = new Set();
-  const add = (track) => { if (track) representations.add(track); };
-  state.tracks.filter((track) => track?.key === key).forEach(add);
-  state.globalTracks.filter((track) => track?.key === key).forEach(add);
-  add(state.summaryCache.get(key));
-  add(state.trackCache.get(key));
-  if (state.current?.key === key) add(state.current);
-  return [...representations];
+  return representationsFor(key, {
+    tracks: state.tracks, globalTracks: state.globalTracks,
+    summaryCache: state.summaryCache, trackCache: state.trackCache, current: state.current,
+  });
 }
 
 function trackLikedState(key, representations = trackRepresentations(key)) {
-  const pending = rowLikeOperations.get(key);
-  if (pending) return pending.desired;
-  const current = state.current?.key === key ? state.current : null;
-  const detail = state.trackCache.get(key);
-  const summary = state.summaryCache.get(key);
-  // Detail/current are the richest representations. A search summary may omit liked entirely,
-  // so only a real boolean participates; rows and global results are the final fallback.
-  return [current, detail, summary, ...representations]
-    .find((track) => typeof track?.liked === "boolean")?.liked ?? false;
+  return likedState(key, {
+    pending: rowLikeOperations.get(key), current: state.current,
+    trackCache: state.trackCache, summaryCache: state.summaryCache, representations,
+  });
 }
 
 async function toggleTrackLike(key, { notify = false } = {}) {
   const representations = trackRepresentations(key);
   if (!representations.length) return;
-  const pending = rowLikeOperations.get(key);
   const previous = trackLikedState(key, representations);
-  const requested = !previous;
-  const operation = { id: ++nextRowLikeOperation, baseline: pending?.baseline ?? previous, desired: requested };
-  rowLikeOperations.set(key, operation);
+  const operation = beginLikeOperation(rowLikeOperations, key, previous);
+  const requested = operation.desired;
   const applyLiked = (liked) => {
     trackRepresentations(key).forEach((track) => { track.liked = liked; });
     updateRowLikeUi(key, liked);
@@ -1712,23 +1701,17 @@ async function toggleTrackLike(key, { notify = false } = {}) {
   try {
     const updated = await api(`/api/tracks/${encodeURIComponent(key)}/like`, { method: "PATCH", body: JSON.stringify({ liked: requested }) });
     const canonical = typeof updated?.liked === "boolean" ? updated.liked : requested;
-    const latest = rowLikeOperations.get(key);
-    if (latest !== operation) {
-      // An older response cannot render over a newer optimistic intent, but its canonical
-      // answer is still the baseline that the newer operation must roll back to if it fails.
-      if (latest && typeof updated?.liked === "boolean") latest.baseline = canonical;
-      return;
-    }
+    const resolved = resolveLikeResponse(rowLikeOperations, key, operation, canonical);
+    if (!resolved.applied) return;
     if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
-    rowLikeOperations.delete(key);
     applyLiked(canonical);
     if (notify) { toast(canonical ? "Added to Liked Songs" : "Removed from Liked Songs"); schedulePersist(); }
     if (state.likedMode) loadLibrary(true);
   } catch (error) {
-    if (rowLikeOperations.get(key) !== operation) return;
+    const baseline = rollbackLikeOperation(rowLikeOperations, key, operation);
+    if (baseline === null) return;
     if (operation.baseline !== operation.desired) state.likedCount += operation.baseline ? 1 : -1;
-    rowLikeOperations.delete(key);
-    applyLiked(operation.baseline);
+    applyLiked(baseline);
     showError(error);
   }
 }
