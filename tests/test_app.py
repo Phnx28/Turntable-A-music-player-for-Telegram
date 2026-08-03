@@ -155,6 +155,29 @@ class PasswordGateTests(AppTestCase):
         )
         self.assertEqual(self.client.get("/api/settings").status_code, 401)
 
+    def test_login_is_rate_limited_after_repeated_failures(self) -> None:
+        # The throttle is module-level in-memory, so other tests can leave failures behind --
+        # and this test's own failures must not leak into them either.
+        from app import _clear_login_failures
+
+        try:
+            _clear_login_failures("testclient")
+            self.database.set_password("correct horse battery")
+            for _ in range(5):
+                response = self.client.post(
+                    "/api/auth/login", json={"password": "wrong"}, headers=self.SAME_ORIGIN
+                )
+                self.assertEqual(response.status_code, 401)
+            blocked = self.client.post(
+                "/api/auth/login",
+                json={"password": "correct horse battery"},
+                headers=self.SAME_ORIGIN,
+            )
+            self.assertEqual(blocked.status_code, 429)
+            self.assertEqual(blocked.json()["error"]["code"], "rate_limited")
+        finally:
+            _clear_login_failures("testclient")
+
     def test_changing_the_password_signs_other_sessions_out(self) -> None:
         # The README claims this; it happens via an inline DELETE in set_password.
         self.database.set_password("first password")

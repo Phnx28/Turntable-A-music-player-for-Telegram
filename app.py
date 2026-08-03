@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -207,6 +208,8 @@ class QueueBody(ShuffleBody):
     shuffle: bool = False
     liked: bool = False
     temporary: bool = False
+    windowBefore: int = Field(default=0, ge=0, le=2000)
+    windowAfter: int = Field(default=0, ge=0, le=5000)
 
 
 class TrackKeysBody(BaseModel):
@@ -228,6 +231,10 @@ class ShareBody(BaseModel):
 
 class PrefetchBody(BaseModel):
     keys: list[str] = Field(max_length=20)
+
+
+class CacheCurrentBody(BaseModel):
+    key: str = ""
 
 
 # Login throttle: in-memory is correct here because sessions live in SQLite and a
@@ -284,12 +291,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.telegram = telegram
         application.state.external = external
         application.state.startup_error = None
+
+        async def _housekeeping() -> None:
+            # The FTS dirty set is in-memory only, so a long-running process would lose a crash
+            # window of search updates if nothing flushed between library reads. A 15 s timer
+            # keeps the lag small; the same loop sweeps stale .part files hourly.
+            next_partial_cleanup = time.monotonic() + 60 * 60
+            while True:
+                try:
+                    await asyncio.sleep(15)
+                    await asyncio.to_thread(database._flush_search)
+                    if time.monotonic() >= next_partial_cleanup:
+                        next_partial_cleanup = time.monotonic() + 60 * 60
+                        await asyncio.to_thread(telegram._clean_partial_cache)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception("Housekeeping task failed")
+
         try:
             await telegram.start()
         except Exception:
             LOGGER.exception("Could not open the stored Telegram session")
             application.state.startup_error = "The stored Telegram session could not be opened"
+        try:
+            drift = await asyncio.to_thread(database.reconcile_search)
+            if drift:
+                LOGGER.info("Search index rebuilt at startup (tracks vs FTS drift: %+d)", drift)
+        except Exception:
+            LOGGER.exception("Search index reconcile failed at startup")
+        housekeeping = asyncio.create_task(_housekeeping())
         yield
+        housekeeping.cancel()
+        await asyncio.gather(housekeeping, return_exceptions=True)
         await external.close()
         await telegram.stop()
         database.close()
@@ -322,8 +356,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if path.startswith("/api/") and path not in PUBLIC_PATHS:
             database_ = request.app.state.database
-            if database_.get_password_hash() and not database_.session_valid(
-                request.cookies.get(SESSION_COOKIE, "")
+            # Runs on every /api request, so the two SQLite lookups must not block the loop.
+            if not await asyncio.to_thread(
+                database_.is_authorized, request.cookies.get(SESSION_COOKIE, "")
             ):
                 return JSONResponse(
                     {"error": {"code": "unauthorized", "message": "Sign in to continue", "retryable": False}},
@@ -413,6 +448,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise KeyError("Track not found")
         return item
 
+    async def get_track_async(request: Request, key: str) -> dict[str, Any]:
+        # Sync sqlite3 must not run on the event loop; every async route that needs a track
+        # goes through here (the sync routes already run in the threadpool).
+        return await asyncio.to_thread(get_track, request, key)
+
     @application.get("/", response_class=HTMLResponse)
     async def index() -> FileResponse:
         return FileResponse(ROOT / "static" / "index.html")
@@ -481,11 +521,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/auth/status")
     async def auth_status(request: Request) -> dict[str, Any]:
         store = database(request)
-        enabled = bool(store.get_password_hash())
+        enabled = await asyncio.to_thread(store.get_password_hash)
+        authenticated = not enabled or await asyncio.to_thread(
+            store.session_valid, request.cookies.get(SESSION_COOKIE, "")
+        )
         return {
             "passwordEnabled": enabled,
-            "authenticated": not enabled
-            or store.session_valid(request.cookies.get(SESSION_COOKIE, "")),
+            "authenticated": authenticated,
         }
 
     @application.post("/api/auth/login")
@@ -714,7 +756,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/tracks/{key}")
     async def track_detail(request: Request, key: str) -> dict[str, Any]:
-        return get_track(request, key)
+        return await get_track_async(request, key)
 
     @application.patch("/api/tracks/{key}/like")
     def track_like(request: Request, key: str, body: LikeBody) -> dict[str, Any]:
@@ -727,22 +769,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/tracks/{key}/saved-messages")
     async def save_to_telegram(request: Request, key: str) -> dict[str, Any]:
-        return await telegram(request).forward_track(get_track(request, key))
+        return await telegram(request).forward_track(await get_track_async(request, key))
 
     @application.post("/api/tracks/{key}/share")
     async def share_track(request: Request, key: str, body: ShareBody) -> dict[str, Any]:
-        return await telegram(request).forward_track(get_track(request, key), body.recipientId)
+        return await telegram(request).forward_track(
+            await get_track_async(request, key), body.recipientId
+        )
 
     async def media_response(request: Request, key: str, download: bool = False) -> Response:
-        item = get_track(request, key)
+        item = await get_track_async(request, key)
         chat_id, message_id = item["chatId"], item["messageId"]
         cached = telegram(request).cached_media(item)
+        partial = None
         document = None
         if cached:
             size = cached.stat().st_size
         else:
-            _, document = await telegram(request).get_message_document(chat_id, message_id)
-            size = int(document.size or item["file"]["size"] or 0)
+            partial = telegram(request).partial_media(item)
+            if partial:
+                size = int(item["file"]["size"] or 0)
+            else:
+                _, document = await telegram(request).get_message_document(chat_id, message_id)
+                size = int(document.size or item["file"]["size"] or 0)
         try:
             byte_range = parse_range_header(None if download else request.headers.get("range"), size)
         except RangeNotSatisfiable as error:
@@ -772,19 +821,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         if request.method == "HEAD":
             return Response(status_code=status_code, media_type=item["file"]["mimeType"], headers=headers)
-        if cached:
-            def cached_chunks():
-                remaining = byte_range.length
-                with cached.open("rb") as source_file:
-                    source_file.seek(byte_range.start)
-                    while remaining:
-                        chunk = source_file.read(min(512 * 1024, remaining))
-                        if not chunk:
-                            break
-                        remaining -= len(chunk)
-                        yield chunk
+        source_file = cached
+        if not source_file and partial:
+            # The .part file is still growing: serve from it only for ranges it already holds.
+            # A seek past the current end must go to Telegram, not return a short body.
+            try:
+                covered = byte_range.start + byte_range.length <= partial.stat().st_size
+            except OSError:
+                covered = False  # evicted between the check above and now; stream from Telegram
+            if covered:
+                source_file = partial
+        if not source_file:
+            _, document = await telegram(request).get_message_document(chat_id, message_id)
 
-            content = cached_chunks()
+        def file_chunks():
+            # shared by complete-cache and growing-.part serving
+            remaining = byte_range.length
+            with source_file.open("rb") as output:
+                output.seek(byte_range.start)
+                while remaining:
+                    chunk = output.read(min(512 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        if source_file:
+            content = file_chunks()
         else:
             content = telegram(request).iter_media(document, byte_range.start, byte_range.length)
         return StreamingResponse(
@@ -801,7 +864,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/tracks/{key}/download")
     async def download(request: Request, key: str) -> Response:
-        item = get_track(request, key)
+        item = await get_track_async(request, key)
         if tagged := await telegram(request).tagged_download(item):
             name = safe_filename(item["file"]["name"], "telegram-track")
             ascii_name = safe_filename(name.encode("ascii", "ignore").decode() or "telegram-track")
@@ -819,7 +882,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/tracks/{key}/cover")
     async def cover(request: Request, key: str, quality: str = "default") -> Response:
-        item = get_track(request, key)
+        item = await get_track_async(request, key)
         artwork = item["metadata"].get("artworkPath")
         if artwork:
             candidate = (settings.data_directory / "artwork" / Path(artwork).name).resolve()
@@ -843,24 +906,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.patch("/api/tracks/{key}/metadata")
     async def metadata_patch(request: Request, key: str, body: MetadataPatchBody) -> dict[str, Any]:
-        item = get_track(request, key)
-        return database(request).save_metadata_patch(
-            item["chatId"], item["messageId"], body.set, body.clear
-        )
+        item = await get_track_async(request, key)
+        return await asyncio.to_thread(database(request).save_metadata_patch,
+            item["chatId"], item["messageId"], body.set, body.clear)
 
     @application.post("/api/tracks/{key}/metadata/search")
     async def metadata_search(
         request: Request, key: str, body: MetadataSearchBody
     ) -> list[dict[str, Any]]:
-        return await external(request).metadata_candidates(get_track(request, key), body.refresh)
+        return await external(request).metadata_candidates(
+            await get_track_async(request, key), body.refresh
+        )
 
     @application.post("/api/tracks/{key}/metadata/apply")
     async def metadata_apply(request: Request, key: str, body: CandidateBody) -> dict[str, Any]:
+        cover_quality = body.coverQuality or str(
+            (await asyncio.to_thread(database(request).get_settings))["coverQuality"]
+        )
         return await external(request).apply_candidate(
-            get_track(request, key),
+            await get_track_async(request, key),
             body.candidateId,
             body.fields,
-            body.coverQuality or str(database(request).get_settings()["coverQuality"]),
+            cover_quality,
         )
 
     @application.get(
@@ -868,31 +935,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def metadata_candidate_cover(request: Request, key: str, candidate_id: str) -> Response:
         content, mime_type = await external(request).candidate_cover(
-            get_track(request, key), candidate_id
+            await get_track_async(request, key), candidate_id
         )
         return Response(content, media_type=mime_type, headers={"Cache-Control": "private, max-age=3600"})
 
     @application.get("/api/tracks/{key}/lyrics")
     async def lyrics_get(request: Request, key: str, refresh: bool = False) -> dict[str, Any]:
-        return await external(request).lyrics(get_track(request, key), refresh)
+        return await external(request).lyrics(await get_track_async(request, key), refresh)
 
     @application.put("/api/tracks/{key}/lyrics")
     async def lyrics_save(request: Request, key: str, body: LyricsBody) -> dict[str, Any]:
-        return external(request).save_manual_lyrics(get_track(request, key), body.text)
+        return external(request).save_manual_lyrics(await get_track_async(request, key), body.text)
 
     @application.delete("/api/tracks/{key}/lyrics")
     async def lyrics_reset(request: Request, key: str) -> dict[str, Any]:
-        item = get_track(request, key)
-        database(request).delete_lyrics(item["chatId"], item["messageId"])
+        item = await get_track_async(request, key)
+        await asyncio.to_thread(database(request).delete_lyrics, item["chatId"], item["messageId"])
         return await external(request).lyrics(item, refresh=True)
 
     @application.get("/api/settings")
     async def settings_get(request: Request) -> dict[str, Any]:
-        return database(request).get_settings()
+        return await asyncio.to_thread(database(request).get_settings)
 
     @application.patch("/api/settings")
     async def settings_save(request: Request, body: SettingsBody) -> dict[str, Any]:
-        return database(request).save_settings(body.model_dump(exclude_none=True))
+        return await asyncio.to_thread(
+            database(request).save_settings, body.model_dump(exclude_none=True)
+        )
 
     @application.post(
         "/api/settings/musicbrainz/test"    )
@@ -901,8 +970,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/playback/events")
     async def playback_event(request: Request, body: PlaybackEventBody) -> dict[str, bool]:
-        get_track(request, body.key)
-        database(request).record_playback(body.key, body.event)
+        await get_track_async(request, body.key)
+        await asyncio.to_thread(database(request).record_playback, body.key, body.event)
         return {"ok": True}
 
     @application.post("/api/playback/shuffle")
@@ -913,22 +982,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/playback/queue")
     def playback_queue(request: Request, body: QueueBody) -> dict[str, Any]:
-        return {
-            "keys": database(request).playback_queue(
-                body.source, body.query, body.shuffle, body.currentKey,
-                body.liked, body.temporary,
-            )
-        }
+        result = database(request).playback_queue(
+            body.source, body.query, body.shuffle, body.currentKey,
+            body.liked, body.temporary,
+            body.windowBefore, body.windowAfter,
+        )
+        return {"keys": result} if isinstance(result, list) else result
 
     @application.post("/api/playback/prefetch")
     async def playback_prefetch(request: Request, body: PrefetchBody) -> dict[str, Any]:
-        for key in body.keys:
-            get_track(request, key)
+        await asyncio.to_thread(
+            lambda: [get_track(request, key) for key in body.keys]
+        )
         return telegram(request).start_prefetch(body.keys)
+
+    @application.post("/api/playback/cache-current")
+    async def playback_cache_current(request: Request, body: CacheCurrentBody) -> dict[str, Any]:
+        # Cache the playing track while it streams, so seeks and retries can be served from
+        # disk instead of reopening ranges against Telegram. Deliberately separate from the
+        # prefetch job: it must not cancel or be cancelled by the upcoming-track prefetch.
+        if body.key:
+            await get_track_async(request, body.key)
+        return telegram(request).start_cache_current(body.key)
 
     @application.get("/api/cache/status")
     async def cache_status(request: Request, keys: str = "") -> dict[str, Any]:
-        return telegram(request).cache_status([value for value in keys.split(",") if value])
+        return await asyncio.to_thread(
+            telegram(request).cache_status, [value for value in keys.split(",") if value]
+        )
 
     @application.delete("/api/cache")
     async def cache_clear(request: Request) -> dict[str, int]:
