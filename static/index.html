@@ -122,7 +122,7 @@
               <svg aria-hidden="true"><use href="#i-search"/></svg>
             </button>
             <span class="sr-only">Search all Telegram music and selected sources</span>
-            <input id="global-search" type="search" placeholder="Search all Telegram" autocomplete="off" aria-controls="global-results" aria-expanded="false" title="Search all Telegram">
+            <input id="global-search" type="search" placeholder="Search all Telegram" autocomplete="off" aria-controls="global-results" aria-expanded="false" aria-label="Search all Telegram" title="Search all Telegram">
           </div>
           <section id="global-results" class="global-results" aria-label="Telegram search results" hidden>
             <header class="global-results-head">
@@ -375,9 +375,9 @@
       <div id="contact-list" class="contact-list"></div>
     </dialog>
 
-    <dialog id="settings-dialog" class="modal settings-modal wide-modal">
+    <dialog id="settings-dialog" class="modal settings-modal wide-modal" aria-labelledby="settings-title">
       <header class="modal-header">
-        <h2>Settings</h2>
+        <h2 id="settings-title">Settings</h2>
         <button class="icon-button" type="button" data-close="settings-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="network">Network</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
@@ -397,6 +397,7 @@
       </section>
       <section data-settings-pane="playback" hidden>
         <div class="setting-block narrow"><label for="prefetch-count"><strong>Songs to prefetch</strong><span>Cache upcoming tracks for gapless starts. Set 0 to disable.</span></label><input id="prefetch-count" type="number" min="0" max="20" value="1"></div>
+        <div class="setting-block narrow"><label for="sleep-timer"><strong>Sleep timer</strong><span>Pause playback after the chosen time. Survives a page reload.</span></label><select id="sleep-timer"><option value="off">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option></select></div>
         <div class="cache-row"><span id="cache-usage" class="small-copy">Checking cache…</span><button id="clear-cache" class="button" type="button">Clear prefetched songs</button></div>
       </section>
       <section data-settings-pane="metadata" hidden>

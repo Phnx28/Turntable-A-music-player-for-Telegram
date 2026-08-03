@@ -4,14 +4,14 @@ import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, o
 const $ = (id) => document.getElementById(id);
 const state = {
   sources: [], tracks: [], discovered: [], source: "", likedMode: false, sort: "posted", current: null, editing: null,
-  lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1, queueTruncated: false, queueTotal: 0,
+  lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1, queueTruncated: false, queueTotal: 0, queueOffset: 0,
   shuffle: localStorage.getItem("tm-shuffle") === "1",
   repeat: localStorage.getItem("tm-repeat") || "off",
   cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
-  loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, allMusicTotal: null, dayBreaks: [], windowStart: -1, libraryLoading: false,
+  loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, allMusicTotal: null, dayBreaks: [], windowStart: -1, rowFocusIndex: 0, libraryLoading: false,
   globalTracks: [], globalSources: [], summaryRequests: new Set(),
-  temporarySource: null, temporaryJob: null, keepingSource: false, likedCount: 0, historyVisible: 50,
+  temporarySource: null, temporaryJob: null, keepingSource: false, likedCount: 0, historyVisible: 200,
   lyricsFollow: true, lyricScrollTimer: 0, restored: false, contacts: [],
   bulk: false, selectedSources: new Set(),
   countriesLoaded: false,
@@ -110,6 +110,50 @@ function cacheSet(cache, key, value, maximum) {
 const PERSIST_BEHIND = 50;
 const PERSIST_AHEAD = 300;
 
+// Sleep timer: client-only (pause is a browser action), but the deadline survives reloads via
+// localStorage so a closed laptop mid-countdown does not silently lose the "stop" promise.
+let sleepEndsAt = 0, sleepTimerHandle = 0;
+function setSleepTimer(value, silent = false) {
+  localStorage.setItem("tm-sleep", value);
+  clearTimeout(sleepTimerHandle);
+  const minutes = Number(value) || 0;
+  const select = $("sleep-timer");
+  if (!minutes) {
+    localStorage.removeItem("tm-sleep-ends");
+    sleepEndsAt = 0;
+    if (select) select.value = "off";
+    if (!silent) toast("Sleep timer off");
+    return;
+  }
+  sleepEndsAt = Date.now() + minutes * 60000;
+  localStorage.setItem("tm-sleep-ends", String(sleepEndsAt));
+  sleepTimerHandle = setTimeout(() => {
+    audio.pause(); setBuffering(false);
+    toast("Sleep timer ended playback");
+    setSleepTimer("off", true);
+  }, minutes * 60000);
+  if (!silent) toast(`Playback stops in ${minutes} minutes`);
+}
+function restoreSleepTimer() {
+  const saved = localStorage.getItem("tm-sleep") || "off";
+  const select = $("sleep-timer");
+  if (!select) return;
+  const remaining = (Number(localStorage.getItem("tm-sleep-ends")) || 0) - Date.now();
+  if (saved !== "off" && remaining > 0) {
+    select.value = saved;
+    sleepEndsAt = Date.now() + remaining;
+    sleepTimerHandle = setTimeout(() => {
+      audio.pause(); setBuffering(false);
+      toast("Sleep timer ended playback");
+      setSleepTimer("off", true);
+    }, remaining);
+  } else if (saved !== "off") {
+    localStorage.removeItem("tm-sleep-ends");
+    localStorage.setItem("tm-sleep", "off");
+    select.value = "off";
+  }
+}
+
 function playerSnapshot() {
   const start = Math.max(0, state.queueIndex - PERSIST_BEHIND);
   const queue = state.queue.slice(start, state.queueIndex + PERSIST_AHEAD);
@@ -119,7 +163,9 @@ function playerSnapshot() {
     // When state.queue is itself a restored window, its length is NOT the real total -- taking it
     // would collapse 54,660 to 300 on the first re-save and lose the rest of the library.
     queueTotal: Math.max(state.queue.length, state.queueTruncated ? state.queueTotal || 0 : 0),
-    queueOffset: start,
+    // Absolute position of the first stored key, so a restored window's "up next" counts
+    // against the whole library, not against the slice that happens to be in memory.
+    queueOffset: (state.queueOffset || 0) + start,
     currentKey: state.current?.key || "", position: audio.currentTime || 0,
     source: state.source, liked: state.likedMode, temporarySource: state.temporarySource,
     panel: document.querySelector(".now-tabs .active")?.id?.replace("-tab", "") || "lyrics",
@@ -148,10 +194,11 @@ async function restorePlayerState(saved) {
   // keeps the real total so re-persisting does not shrink it to the window size.
   state.queueTruncated = saved.queueTotal > saved.queue.length;
   state.queueTotal = saved.queueTotal;
+  state.queueOffset = Number(saved.queueOffset) || 0;
   if (!saved.currentKey) { renderQueue(); return; }
   try {
     const track = await getTrack(saved.currentKey);
-    state.current = { ...track, qualified: false, restored: true };
+    state.current = { ...track, qualified: false, restored: true, _retried: false };
     if (state.queueIndex < 0 || state.queue[state.queueIndex] !== saved.currentKey) {
       state.queueIndex = state.queue.indexOf(saved.currentKey);
     }
@@ -167,6 +214,7 @@ async function restorePlayerState(saved) {
 }
 
 function applyPreferences() {
+  restoreSleepTimer();
   // The accent picker is gone, but a browser that used it still holds tm-accent and a
   // data-accent attribute in the served markup would keep overriding --accent. Drop both once
   // so an existing install lands on the single accent rather than whatever it last chose.
@@ -585,7 +633,7 @@ function renderTrackRow(track, position = 0) {
   const playing = track.key === state.current?.key;
   const liked = trackLikedState(track.key);
   const now = Math.floor(Date.now() / 1000);
-  return `<article class="track-row ${playing ? "current" : ""}" data-track-key="${escapeHtml(track.key)}" tabindex="-1">
+  return `<article class="track-row ${playing ? "current" : ""}" data-track-key="${escapeHtml(track.key)}" data-track-index="${position}" tabindex="${position === state.rowFocusIndex ? "0" : "-1"}">
     <span class="track-ordinal utility">${playing ? `<span class="playing-mark" aria-label="Now playing"></span>` : ordinal(position + 1, state.totalTracks)}</span>
     <button class="track-main" type="button" data-play-key="${escapeHtml(track.key)}">
       <span class="mini-art-wrap"><img class="mini-art row-art" data-src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt=""><span class="art-placeholder mini"><span></span></span><span class="track-play-overlay">${icon(playing && !audio.paused ? "pause" : "play-filled")}</span></span>
@@ -638,6 +686,25 @@ function revealLibrary() {
 }
 
 function trackRowHeight() { return 52; }
+
+function focusTrackRow(index) {
+  if (!state.totalTracks) return;
+  index = Math.max(0, Math.min(state.totalTracks - 1, index));
+  state.rowFocusIndex = index;
+  const row = document.querySelector(`.track-row[data-track-index="${index}"]`);
+  if (row) { row.focus(); return; }
+  // The target is outside the rendered window: scroll it into view; the scroll handler
+  // re-renders the window, then focus lands once the row exists.
+  const scroller = $("library");
+  scroller.scrollTop = Math.max(0, $("track-list").offsetTop + index * trackRowHeight() - scroller.clientHeight / 2);
+  let attempts = 0;
+  const tryFocus = () => {
+    const target = document.querySelector(`.track-row[data-track-index="${index}"]`);
+    if (target) target.focus();
+    else if (++attempts < 20) requestAnimationFrame(tryFocus);
+  };
+  requestAnimationFrame(tryFocus);
+}
 function daySeparatorHeight() {
   return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--day-separator-height")) || 28;
 }
@@ -708,6 +775,13 @@ function renderTracks(force = false) {
     spacers[0].style.height = `${topHeight}px`;
     spacers[1].style.height = `${bottomHeight}px`;
     list.querySelectorAll(".row-art[data-src]").forEach((image) => coverObserver.observe(image));
+    // Roving tabindex: the focused row keeps the only tab stop. If it is outside this window
+    // (Tab entered the list mid-scroll), fall back to the first real row so the list is
+    // keyboard-reachable at all.
+    if (!list.querySelector(".track-row:not(.track-placeholder)[tabindex='0']")) {
+      const fallback = list.querySelector(".track-row:not(.track-placeholder)");
+      if (fallback) fallback.tabIndex = 0;
+    }
   }
   for (let offset = Math.floor(start / 100) * 100; offset < end; offset += 100) loadPage(offset);
 }
@@ -750,7 +824,7 @@ async function loadLibrary(force = false, keepVisible = false) {
   requestController?.abort(); requestController = new AbortController();
   const token = ++libraryRequest;
   state.tracks = []; state.loadedPages.clear(); state.pageRequests.clear();
-  state.totalTracks = 0; state.dayBreaks = []; state.windowStart = -1; state.libraryLoading = true;
+  state.totalTracks = 0; state.dayBreaks = []; state.windowStart = -1; state.rowFocusIndex = 0; state.libraryLoading = true;
   // Refining a search should not blank the list. Keep the previous rows on screen, dimmed,
   // until the new page lands; a skeleton flash on every keystroke reads as the app breaking.
   if (keepVisible) $("library").classList.add("is-refreshing");
@@ -906,7 +980,13 @@ async function playKey(key, queue = null, explicitIndex = null) {
     await togglePlayback();
     return;
   }
-  if (queue) { state.queue = queue; state.queueIndex = explicitIndex ?? Math.max(0, queue.indexOf(key)); }
+  if (queue) {
+    state.queue = queue; state.queueIndex = explicitIndex ?? Math.max(0, queue.indexOf(key));
+    // An explicit queue (a global-search result, a temporary source) replaces the window: it
+    // is complete by definition, and stale truncation metadata would make move() rebuild
+    // against the wrong filter.
+    state.queueTotal = queue.length; state.queueTruncated = false; state.queueOffset = 0;
+  }
   else if (Number.isInteger(explicitIndex)) state.queueIndex = explicitIndex;
   // Playing a track that is not in the queue replaces the queue outright, so any restored window
   // is gone and there is nothing left to rebuild.
@@ -914,13 +994,16 @@ async function playKey(key, queue = null, explicitIndex = null) {
   else state.queueIndex = state.queue.indexOf(key);
   const track = await getTrack(key);
   if (state.current && state.current.key !== key && !state.current.qualified) api("/api/playback/events", { method: "POST", body: JSON.stringify({ key: state.current.key, event: "skipped" }) }).catch(() => {});
-  state.current = { ...track, qualified: false };
+  state.current = { ...track, qualified: false, _retried: false };
   if (track.source.selected === false) {
     state.temporarySource = { ...track.source, temporary: true, trackCount: 1 };
     renderSources();
   }
   state.lyricsFollow = true; $("sync-lyrics").hidden = true;
   state.lyric = -1; audio.src = mediaUrl(track, "audio"); setBuffering(true);
+  // Cache the playing track in the background so seeks, scrubs and the error retry below are
+  // served from disk instead of reopening ranges against Telegram.
+  api("/api/playback/cache-current", { method: "POST", body: JSON.stringify({ key }) }).catch(() => {});
   setTrackUi(); renderQueue(); schedulePrefetch();
   api("/api/playback/events", { method: "POST", body: JSON.stringify({ key, event: "started" }) }).catch(() => {});
   loadLyrics();
@@ -1029,6 +1112,8 @@ function updateProgress() {
   $("progress").value = String(played * 10);
   $("progress").style.setProperty("--progress", `${played}%`);
   $("progress").style.setProperty("--buffered", `${Math.max(played, bufferedPercent(audio.buffered, duration))}%`);
+  $("progress").setAttribute("aria-valuetext",
+    `${formatTime(audio.currentTime)} of ${formatTime(duration)}${Number.isFinite(duration) && duration > 0 ? ` (${Math.round(played)}%)` : ""}`);
 }
 
 async function loadLyrics(refresh = false) {
@@ -1071,20 +1156,30 @@ function stopFollowingLyrics() {
   state.lyricsFollow = false; $("sync-lyrics").hidden = false;
 }
 
-async function libraryQueue(shuffle, currentKey = "") {
+async function libraryQueue(shuffle, currentKey = "", windowed = true) {
+  const body = {
+    source: state.likedMode ? null : state.source || null,
+    query: $("track-search").value.trim(), shuffle, currentKey,
+    liked: state.likedMode,
+    temporary: Boolean(state.temporarySource?.chatId === state.source),
+  };
+  if (windowed) {
+    // The server returns a slice around currentKey (or the top of the library/shuffle when
+    // there is no current track) instead of all 54,660 keys. move() rebuilds at the edges.
+    body.windowBefore = 50;
+    body.windowAfter = 300;
+  }
   const result = await api("/api/playback/queue", {
     method: "POST",
-    body: JSON.stringify({
-      source: state.likedMode ? null : state.source || null,
-      query: $("track-search").value.trim(), shuffle, currentKey,
-      liked: state.likedMode,
-      temporary: Boolean(state.temporarySource?.chatId === state.source),
-    }),
+    body: JSON.stringify(body),
   });
-  // Every fresh queue comes from here and is complete by definition, so the truncated marker is
-  // cleared centrally rather than at each of the call sites that assign state.queue.
-  state.queueTruncated = false;
-  return Array.isArray(result?.keys) ? result.keys.filter((key) => typeof key === "string") : [];
+  const keys = Array.isArray(result?.keys) ? result.keys.filter((key) => typeof key === "string") : [];
+  // The window is complete by definition, but the *library* it came from may be larger. The
+  // truncated marker and total travel with the window so move() and the queue summary know.
+  state.queueTotal = Number.isInteger(result?.total) ? result.total : keys.length;
+  state.queueOffset = Number.isInteger(result?.offset) ? result.offset : 0;
+  state.queueTruncated = state.queueTotal > keys.length;
+  return keys;
 }
 
 async function startPlaylist(shuffle = false) {
@@ -1103,9 +1198,15 @@ async function toggleShuffle() {
   const enabled = !state.shuffle;
   const keys = await libraryQueue(enabled, enabled ? state.current?.key || "" : "");
   state.shuffle = enabled; updateModes();
-  state.queue = enabled && state.current ? [state.current.key, ...keys] : keys;
+  // A shuffled window excludes the current track (the server's shuffle drops it), so it is
+  // prepended; an ordered window includes it at position `windowBefore`, so the copy must be
+  // dropped before re-adding -- otherwise the track queues twice.
+  state.queue = enabled && state.current
+    ? [state.current.key, ...keys.filter((key) => key !== state.current.key)]
+    : keys;
   if (state.current && !state.queue.includes(state.current.key)) state.queue.unshift(state.current.key);
   state.queueIndex = state.current ? state.queue.indexOf(state.current.key) : -1;
+  state.queueTotal = Math.max(state.queueTotal, state.queue.length);
   renderQueue(); schedulePrefetch();
 }
 
@@ -1122,24 +1223,25 @@ async function move(direction, ended = false) {
   if (!state.queue.length) return;
   if (ended && state.repeat === "one") { audio.currentTime = 0; return startAudioPlayback(); }
   let next = state.queueIndex + direction;
-  // A restored session holds only a window of what was queued, so running past its end is not
-  // the end of the playlist. Rebuild from the server before deciding to stop or wrap, otherwise
-  // reopening the app would silently cut a 54,660-track queue down to the saved window.
-  if (next >= state.queue.length && state.queueTruncated) {
+  // A windowed queue holds only part of the playlist, so running past either edge is not the
+  // end of it -- rebuild from the server before deciding to stop or wrap. A restored session
+  // holds a window too, which is why the truncated marker travels with every snapshot.
+  if ((next < 0 || next >= state.queue.length) && state.queueTruncated) {
     const keys = await libraryQueue(state.shuffle, state.current?.key || "");
     const resumeAt = keys.indexOf(state.current?.key || "");
     if (keys.length) {
       state.queue = keys;
-      state.queueIndex = resumeAt >= 0 ? resumeAt : Math.min(state.queueIndex, keys.length - 1);
-      state.queueTruncated = false;
-      next = state.queueIndex + direction;
+      // Ordered windows contain the current track; a fresh shuffle does not, so fall back to
+      // starting at the top of the new order.
+      state.queueIndex = resumeAt >= 0 ? resumeAt : 0;
       renderQueue();
+      next = state.queueIndex + direction;
     }
   }
   if (next >= state.queue.length) {
     if (state.repeat !== "all") return;
     if (state.shuffle) {
-      state.queue = await libraryQueue(true, state.current?.key || ""); next = 0;
+      state.queue = await libraryQueue(true, state.current?.key || "", false); next = 0;
     } else next = 0;
   }
   if (next < 0) next = state.repeat === "all" ? state.queue.length - 1 : 0;
@@ -1164,7 +1266,11 @@ function renderQueue() {
   const historyStart = Math.max(0, state.queueIndex - state.historyVisible);
   const visibleStart = historyStart;
   const visibleEnd = Math.min(state.queue.length, state.queueIndex + 101);
-  const view = queueView(state.queue, state.queueIndex);
+  const view = queueView(
+    state.queue, state.queueIndex,
+    state.queueTruncated ? state.queueTotal : null,
+    state.queueTruncated ? state.queueOffset : 0,
+  );
   $("queue-summary").textContent = view.summary;
   if ($("queue-pane").hidden) return;
   const visible = state.queue.slice(visibleStart, visibleEnd);
@@ -1512,6 +1618,7 @@ function openMenu(actions, x, y) {
   // Re-opening while the previous menu is still fading would inherit the exit state.
   clearTimeout(menuCloseTimer); menu.classList.remove("is-leaving");
   menu.hidden = false; menu._actions = actions;
+  menu._returnFocus = document.activeElement;
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`; menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`; menu.querySelector("button")?.focus();
 }
 // Popovers get a quick fade on the way out too, so dismissing does not blink. Kept short
@@ -1520,17 +1627,26 @@ let menuCloseTimer = 0;
 function closeMenu() {
   const menu = $("context-menu");
   if (menu.hidden) return;
-  clearTimeout(menuCloseTimer);
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { menu.hidden = true; return; }
-  menu.classList.add("is-leaving");
-  menuCloseTimer = setTimeout(() => { menu.classList.remove("is-leaving"); menu.hidden = true; }, 120);
+  const returnFocus = menu._returnFocus;
+  menu._returnFocus = null;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { menu.hidden = true; }
+  else {
+    menu.classList.add("is-leaving");
+    menuCloseTimer = setTimeout(() => { menu.classList.remove("is-leaving"); menu.hidden = true; }, 120);
+  }
+  // Keyboard users opened this menu from somewhere; send focus back to it when it closes,
+  // whether they picked an item or dismissed with Escape/click-outside.
+  if (returnFocus?.isConnected) returnFocus.focus();
 }
 
 async function playFromLibrary(key) {
-  const keys = await libraryQueue(false);
+  // Fetch a window around the picked track rather than the whole library: the window is what
+  // the queue pane draws and what prefetch reads, and move() rebuilds at the edges.
+  const keys = await libraryQueue(false, key);
   if (!keys.includes(key)) keys.unshift(key);
   state.shuffle = false; updateModes();
-  return playKey(key, keys);
+  state.queue = keys;
+  return playKey(key);
 }
 
 async function selectCachedSource(chatId) {
@@ -2115,6 +2231,24 @@ $("source-list").addEventListener("drop", async (event) => {
 $("source-list").addEventListener("dragend", () => { cleanupSourceDrag(); draggedSource = ""; });
 
 $("track-list").addEventListener("click", (event) => { const play = event.target.closest("[data-play-key]"); const menu = event.target.closest("[data-track-menu]"); const like = event.target.closest("[data-row-like-key]"); if (play) playFromLibrary(play.dataset.playKey).catch(showError); if (menu) { const rect = menu.getBoundingClientRect(); trackMenu(menu.dataset.trackMenu, rect.right, rect.bottom); } if (like) { event.stopPropagation(); toggleRowLike(like.dataset.rowLikeKey).catch(showError); } });
+$("track-list").addEventListener("focusin", (event) => { const row = event.target.closest(".track-row"); if (row?.dataset.trackIndex != null) state.rowFocusIndex = parseInt(row.dataset.trackIndex, 10); });
+$("track-list").addEventListener("keydown", (event) => {
+  const row = event.target.closest(".track-row:not(.track-placeholder)");
+  if (!row || row.dataset.trackIndex == null) return;
+  const index = parseInt(row.dataset.trackIndex, 10);
+  if (event.key === "Enter") {
+    const play = row.querySelector("[data-play-key]");
+    if (play) { event.preventDefault(); play.click(); }
+    return;
+  }
+  if (event.key === "ArrowDown") { event.preventDefault(); focusTrackRow(index + 1); return; }
+  if (event.key === "ArrowUp") { event.preventDefault(); focusTrackRow(index - 1); return; }
+  if (event.key === "Home") { event.preventDefault(); focusTrackRow(0); return; }
+  if (event.key === "End") { event.preventDefault(); focusTrackRow(state.totalTracks - 1); return; }
+  // PageUp/PageDown: one viewport of rows.
+  if (event.key === "PageDown") { event.preventDefault(); focusTrackRow(index + Math.max(1, Math.floor($("library").clientHeight / trackRowHeight()))); return; }
+  if (event.key === "PageUp") { event.preventDefault(); focusTrackRow(index - Math.max(1, Math.floor($("library").clientHeight / trackRowHeight()))); return; }
+});
 $("track-sort").addEventListener("change", (event) => {
   state.sort = event.target.value;
   state.libraryCache.clear();
@@ -2177,6 +2311,7 @@ function setVolume(value) {
   audio.volume = Math.min(1, Math.max(0, Number(value) || 0));
   if (audio.volume) lastAudibleVolume = audio.volume;
   $("volume").value = audio.volume;
+  $("volume").setAttribute("aria-valuetext", `${Math.round(audio.volume * 100)} percent`);
   $("volume-toggle").classList.toggle("muted", !audio.volume);
   $("volume-toggle").setAttribute("aria-label", audio.volume ? "Mute" : "Restore volume");
   $("volume-pct").textContent = Math.round(audio.volume * 100);
@@ -2216,7 +2351,26 @@ for (const event of ["canplay", "playing"]) audio.addEventListener(event, () => 
 audio.addEventListener("play", () => { updateTransport(); schedulePersist(); });
 audio.addEventListener("pause", () => { setBuffering(false); schedulePersist(); renderQueue(); });
 audio.addEventListener("ended", () => { setBuffering(false); move(1, true).catch(showError); });
-audio.addEventListener("error", () => { setBuffering(false); if (state.current) showError(new AppError("This track couldn’t be streamed. Try syncing its source."), () => syncSource(state.current.chatId, false)); });
+audio.addEventListener("error", () => {
+  setBuffering(false);
+  const track = state.current;
+  if (!track) return;
+  if (track._retried) {
+    showError(new AppError("This track couldn’t be streamed. Try syncing its source."), () => syncSource(track.chatId, false));
+    return;
+  }
+  // One automatic resume-from-position retry before the dialog: transient Telegram hiccups
+  // usually clear, and the cache-current job may have just written the bytes that failed.
+  track._retried = true;
+  const at = Number.isFinite(audio.currentTime) && audio.currentTime > 0 ? audio.currentTime : 0;
+  audio.src = `${mediaUrl(track, "audio")}?retry=${Date.now()}`;
+  if (at) audio.addEventListener("loadedmetadata", () => { try { audio.currentTime = at; } catch {} }, { once: true });
+  audio.play().catch(() => {
+    if (state.current?.key === track.key) {
+      showError(new AppError("This track couldn’t be streamed. Try syncing its source."), () => syncSource(track.chatId, false));
+    }
+  });
+});
 audio.addEventListener("seeked", schedulePersist);
 if ("mediaSession" in navigator) { navigator.mediaSession.setActionHandler("play", () => startAudioPlayback().catch(showError)); navigator.mediaSession.setActionHandler("pause", () => audio.pause()); navigator.mediaSession.setActionHandler("previoustrack", () => move(-1).catch(showError)); navigator.mediaSession.setActionHandler("nexttrack", () => move(1).catch(showError)); }
 
@@ -2240,6 +2394,7 @@ for (const id of ["contact-list", "frequent-list"]) {
 $("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata").addEventListener("click", resetMetadata); $("fetch-metadata").addEventListener("click", fetchMetadata); $("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); }); $("lyrics-form").addEventListener("submit", saveLyrics); $("reset-lyrics").addEventListener("click", async () => { if (await confirmAction("Fetch lyrics again?", "Saved lyrics will be replaced by a new internet lookup.", "Fetch again")) { try { $("lyrics-status").textContent = "Looking for lyrics…"; state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" }); renderLyrics(); $("lyrics-status").textContent = "Lyrics lookup finished."; } catch (error) { $("lyrics-status").textContent = error.message; } } });
 
 $("open-settings").addEventListener("click", openSettings); document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll("[data-settings-tab]").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll("[data-settings-pane]").forEach((pane) => { pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab; }); })); $("prefetch-count").addEventListener("change", () => commitSettings(currentSettingsValues()));
+$("sleep-timer").addEventListener("change", () => setSleepTimer($("sleep-timer").value));
 $("default-cover-quality").addEventListener("change", () => commitSettings(currentSettingsValues()));
 $("musicbrainz-contact").addEventListener("input", () => saveSettingsSoon(currentSettingsValues()));
 // Leaving the field flushes the pending debounce, so closing the dialog straight after typing
@@ -2254,6 +2409,22 @@ $("error-retry").addEventListener("click", () => { $("error-dialog").close(); co
 document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => { const dialog = $(button.dataset.close); dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } }));
 document.querySelectorAll("dialog").forEach((dialog) => { dialog.addEventListener("click", (event) => { if (event.target !== dialog) return; const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) { dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } } }); dialog.addEventListener("cancel", () => { if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } }); });
 document.addEventListener("error", (event) => { const image = event.target; if (image.matches?.("img.source-avatar")) { const replacement = document.createElement("span"); replacement.className = "source-avatar"; replacement.textContent = image.dataset.avatarFallback || "♪"; image.replaceWith(replacement); } }, true);
+$("context-menu").addEventListener("keydown", (event) => {
+  const items = [...$("context-menu").querySelectorAll("[data-menu-index]")];
+  if (!items.length) return;
+  const index = items.indexOf(document.activeElement);
+  if (event.key === "Tab") {
+    // Focus trap: the menu is a plain div, not a dialog, so Tab would escape it.
+    event.preventDefault();
+    const next = items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length];
+    next.focus();
+    return;
+  }
+  if (event.key === "ArrowDown") { event.preventDefault(); items[(index + 1) % items.length].focus(); return; }
+  if (event.key === "ArrowUp") { event.preventDefault(); items[(index - 1 + items.length) % items.length].focus(); return; }
+  if (event.key === "Home") { event.preventDefault(); items[0].focus(); return; }
+  if (event.key === "End") { event.preventDefault(); items[items.length - 1].focus(); return; }
+});
 $("context-menu").addEventListener("click", (event) => { const button = event.target.closest("[data-menu-index]"); if (button) { const action = $("context-menu")._actions[Number(button.dataset.menuIndex)]?.action; closeMenu(); action?.(); } }); document.addEventListener("pointerdown", (event) => { if (!event.target.closest("#context-menu") && !$("context-menu").hidden) closeMenu(); if (!event.target.closest(".global-search-wrap") && !$("global-results").hidden) closeGlobalSearch(); }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); closeGlobalSearch(); } });
 document.addEventListener("keydown", (event) => {
   if (event.target.matches("input, textarea, [contenteditable]")) return;
