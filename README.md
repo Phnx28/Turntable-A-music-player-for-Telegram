@@ -16,6 +16,11 @@ second copy of your collection.
 
 A fun side project, not a product. Single user.
 
+> **Security first:** the player binds to `127.0.0.1` with no password by default — safe on a
+> personal machine, unsafe the moment it is reachable from a network. Anyone who reaches this
+> app is logged into **your** Telegram account. Set a password and bind to `0.0.0.0` only
+> behind a VPN or a reverse proxy with TLS. See [Security](#security).
+
 ## What it does
 
 - **Indexes any chat, channel, bot or Saved Messages** you choose, and syncs new tracks
@@ -74,6 +79,17 @@ last 30 days; changing or removing the password signs every other browser out.
 There is no HTTPS here. Over anything other than localhost, put it behind a reverse proxy or a
 VPN — the session cookie is only marked `Secure` when the request already arrived over HTTPS.
 
+Example Caddy (TLS, forwarded headers for the `Secure` cookie flag):
+
+```caddyfile
+music.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+With nginx or Traefik, forward `X-Forwarded-Proto: https` — the app reads it via
+`--proxy-headers --forwarded-allow-ips=127.0.0.1` (both already set in the Docker image).
+
 ## Your data
 
 Everything lives in `DATA_DIR` (`./data` by default): the SQLite library, the media cache, and
@@ -94,9 +110,12 @@ together in `.env` — half a pair is rejected at startup rather than silently m
 ## Development
 
 ```sh
-uv run python -m unittest discover -s tests   # backend
-node --test static/player-core.test.js        # player logic
+uv run python -m unittest discover -s tests   # backend (layout tests need playwright + chromium)
+node --test static/*.test.js                  # player + format + tokens + icons
+node --check static/app.js                    # syntax gate
 ```
+
+CI runs all of the above on every push (`.github/workflows/tests.yml`).
 
 The Hugeicons sprite in `static/index.html` is generated — edit `tools/build_icons.py` and rerun
 it, never the sprite by hand:

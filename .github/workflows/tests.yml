@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install .
+      - name: Run tests
+        run: python -m unittest discover -s tests -q
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install icon build deps
+        run: npm ci
+      - name: Syntax check
+        run: node --check static/app.js && node --check static/player-core.js && node --check static/format.js
+      - name: Unit tests
+        run: node --test static/*.test.js
+      - name: Icon sprite audit
+        run: python3 tools/build_icons.py --check
+
+  layout:
+    name: Layout tests (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install . playwright
+      - name: Install Chromium
+        run: python -m playwright install chromium --with-deps
+      - name: Run layout tests
+        run: python -m unittest tests.test_layout -q
