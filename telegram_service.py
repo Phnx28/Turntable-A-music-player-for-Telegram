@@ -24,6 +24,7 @@ from telethon.tl.types import (
 from telethon.tl.types import contacts as contacts_types
 
 from core import Database, is_audio_file, media_identity, normalize_text, track_key
+from jobs import BackgroundJob, JobRunner
 from media import MediaCache
 
 LOGGER = logging.getLogger(__name__)
@@ -123,34 +124,6 @@ class LoginFlow:
     error: str = ""
 
 
-@dataclass
-class BackgroundJob:
-    id: str
-    kind: str
-    chat_id: str = ""
-    mode: str = ""
-    state: str = "queued"
-    processed: int = 0
-    found: int = 0
-    error: str = ""
-    result: Any = None
-    created_at: float = field(default_factory=time.monotonic)
-    task: asyncio.Task[Any] | None = None
-
-    def public(self) -> dict[str, Any]:
-        return {
-            "jobId": self.id,
-            "kind": self.kind,
-            "chatId": self.chat_id or None,
-            "mode": self.mode or None,
-            "state": self.state,
-            "processed": self.processed,
-            "found": self.found,
-            "error": self.error or None,
-            "result": self.result,
-        }
-
-
 class TelegramService:
     def __init__(
         self,
@@ -167,18 +140,17 @@ class TelegramService:
         self.fernet = Fernet(encryption_key.encode())
         self.client: TelegramClient | None = None
         self.flows: dict[str, LoginFlow] = {}
-        self.jobs: dict[str, BackgroundJob] = {}
+        # The job runner owns every background task this service spawns; stop() cancels it all.
+        self.jobs = JobRunner()
         # ponytail: per-source locks beat one global lock; same chat_id can't double-sync, different ones run in parallel.
         self.sync_locks: dict[str, asyncio.Lock] = {}
         # ponytail: caps concurrent scans to avoid FloodWait; bump if profiling shows idle headroom.
         self.sync_semaphore = asyncio.Semaphore(3)
         self.global_search_lock = asyncio.Lock()
-        self._background_tasks: set[asyncio.Task[Any]] = set()
         self.avatar_directory = data_directory / "avatars"
         self.thumbnail_directory = data_directory / "thumbnails"
         self.avatar_directory.mkdir(parents=True, exist_ok=True)
         self.thumbnail_directory.mkdir(parents=True, exist_ok=True)
-        self.prefetch_job: BackgroundJob | None = None
         self.prefetch_keys: set[str] = set()
         self.prefetch_order: list[str] = []
         self.discovery_cache: tuple[float, list[dict[str, Any]]] | None = None
@@ -221,13 +193,10 @@ class TelegramService:
         self.client = client
         self._refresh_watched_ids()
         self._install_handlers(client)
-        self._spawn(self.sync_all())
+        self.jobs.spawn(self.sync_all())
 
     async def stop(self) -> None:
-        for task in list(self._background_tasks):
-            task.cancel()
-        await asyncio.gather(*self._background_tasks, return_exceptions=True)
-        self._background_tasks.clear()
+        await self.jobs.cancel_all()
         await self.media.shutdown()
         for flow in list(self.flows.values()):
             if flow.task:
@@ -238,50 +207,11 @@ class TelegramService:
             await self.client.disconnect()
             self.client = None
 
-    def _spawn(self, coroutine: Any) -> None:
-        task = asyncio.create_task(coroutine)
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-
-    def _start_job(self, job: BackgroundJob, coroutine: Any) -> dict[str, Any]:
-        self._prune_jobs()
-        self.jobs[job.id] = job
-        task = asyncio.create_task(coroutine)
-        job.task = task
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-        return job.public()
-
     def job_status(self, job_id: str) -> dict[str, Any]:
-        self._prune_jobs()
-        job = self.jobs.get(job_id)
-        if not job:
-            raise KeyError("Background job not found")
-        return job.public()
+        return self.jobs.status(job_id)
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
-        job = self.jobs.get(job_id)
-        if not job:
-            raise KeyError("Background job not found")
-        if job.state in {"queued", "running"} and job.task:
-            job.task.cancel()
-        return job.public()
-
-    def _prune_jobs(self) -> None:
-        now = time.monotonic()
-        terminal = [
-            job for job in self.jobs.values()
-            if job.state not in {"queued", "running"}
-        ]
-        remove = {job.id for job in terminal if now - job.created_at > 15 * 60}
-        survivors = sorted(
-            (job for job in terminal if job.id not in remove),
-            key=lambda job: job.created_at,
-            reverse=True,
-        )
-        remove.update(job.id for job in survivors[100:])
-        for job_id in remove:
-            self.jobs.pop(job_id, None)
+        return self.jobs.cancel_by_id(job_id)
 
     def _new_client(self, session: str = "") -> TelegramClient:
         return TelegramClient(
@@ -455,7 +385,7 @@ class TelegramService:
         self._install_handlers(flow.client)
         flow.error = ""
         flow.state = "ready"
-        self._spawn(self.sync_all())
+        self.jobs.spawn(self.sync_all())
 
     async def countries(self) -> list[dict[str, str]]:
         if self._countries is not None and time.monotonic() - self._countries_updated < 3600:
@@ -642,30 +572,18 @@ class TelegramService:
         source = self.database.get_source(chat_id)
         if not source:
             raise KeyError("Source not found")
-        active = next((
-            job for job in self.jobs.values()
-            if job.kind == "preview" and job.chat_id == chat_id
-            and job.state in {"queued", "running"}
-        ), None)
-        if active:
+        if active := self.jobs.active("preview", chat_id):
             return active.public()
         job = BackgroundJob(secrets.token_urlsafe(12), "preview", chat_id=chat_id, mode="full")
-        return self._start_job(job, self._run_preview(job))
+        return self.jobs.start(job, self._run_preview(job), error_mapper=self._friendly_sync_error)
 
     async def _run_preview(self, job: BackgroundJob) -> None:
-        try:
-            # Only scan the whole history the first time. Once a preview has completed,
-            # lastMessageId is set and an incremental pass picks up just the new messages,
-            # so returning to a temporary source is fast instead of a full rescan.
-            source = self.database.get_source(job.chat_id)
-            first_visit = not int((source or {}).get("lastMessageId") or 0)
-            await self.sync_source(job.chat_id, full=first_visit, job=job, temporary=True)
-            job.state = "complete"
-        except asyncio.CancelledError:
-            job.state = "cancelled"
-        except Exception as error:
-            job.error = self._friendly_sync_error(error)
-            job.state = "error"
+        # Only scan the whole history the first time. Once a preview has completed,
+        # lastMessageId is set and an incremental pass picks up just the new messages,
+        # so returning to a temporary source is fast instead of a full rescan.
+        source = self.database.get_source(job.chat_id)
+        first_visit = not int((source or {}).get("lastMessageId") or 0)
+        await self.sync_source(job.chat_id, full=first_visit, job=job, temporary=True)
 
     async def add_source(self, chat_id: str) -> dict[str, Any]:
         source = next(
@@ -691,9 +609,8 @@ class TelegramService:
         self._refresh_watched_ids()
         self.discovery_cache = None
         if not selected:
-            for job in self.jobs.values():
-                if job.chat_id == chat_id and job.state in {"queued", "running"} and job.task:
-                    job.task.cancel()
+            self.jobs.cancel("sync", chat_id)
+            self.jobs.cancel("preview", chat_id)
             return {"source": self.database.get_source(chat_id), "job": None}
         return {"source": self.database.get_source(chat_id), "job": self.start_sync(chat_id, True)}
 
@@ -705,29 +622,15 @@ class TelegramService:
         source = self.database.get_source(chat_id)
         if not source or not source["selected"]:
             raise KeyError("Selected source not found")
-        active = next(
-            (
-                job for job in self.jobs.values()
-                if job.kind == "sync" and job.chat_id == chat_id and job.state in {"queued", "running"}
-            ),
-            None,
-        )
-        if active:
+        if active := self.jobs.active("sync", chat_id):
             return active.public()
         job = BackgroundJob(
             secrets.token_urlsafe(12), "sync", chat_id=chat_id, mode="full" if full else "incremental"
         )
-        return self._start_job(job, self._run_sync(job, full))
+        return self.jobs.start(job, self._run_sync(job, full), error_mapper=self._friendly_sync_error)
 
     async def _run_sync(self, job: BackgroundJob, full: bool) -> None:
-        try:
-            await self.sync_source(job.chat_id, full=full, job=job)
-            job.state = "complete"
-        except asyncio.CancelledError:
-            job.state = "cancelled"
-        except Exception as error:
-            job.error = self._friendly_sync_error(error)
-            job.state = "error"
+        await self.sync_source(job.chat_id, full=full, job=job)
 
     async def sync_source(
         self, chat_id: str, full: bool = False, job: BackgroundJob | None = None,
@@ -962,94 +865,69 @@ class TelegramService:
         return data
 
     def start_source_counts(self, sources: list[dict[str, Any]]) -> dict[str, Any]:
-        active = next(
-            (job for job in self.jobs.values() if job.kind == "source-counts" and job.state in {"queued", "running"}),
-            None,
-        )
-        if active:
+        if active := self.jobs.active("source-counts"):
             return active.public()
         job = BackgroundJob(secrets.token_urlsafe(12), "source-counts")
-        return self._start_job(job, self._run_source_counts(job, sources))
+        return self.jobs.start(job, self._run_source_counts(job, sources), error_mapper=self._friendly_sync_error)
 
     async def _run_source_counts(self, job: BackgroundJob, sources: list[dict[str, Any]]) -> None:
-        job.state = "running"
         job.result = {}
-        try:
-            client = self.require_client()
-            for source in sources:
-                chat_id = source["chatId"]
-                cached = self.database.cache_get(f"source-count:{chat_id}")
-                if cached is None:
-                    entity = await client.get_entity(int(chat_id))
-                    result = await client.get_messages(
-                        entity, limit=0, filter=InputMessagesFilterMusic()
-                    )
-                    cached = int(getattr(result, "total", 0))
-                    self.database.cache_set(f"source-count:{chat_id}", cached, 600)
-                job.result[chat_id] = int(cached)
-                job.processed += 1
-            job.state = "complete"
-        except asyncio.CancelledError:
-            job.state = "cancelled"
-        except Exception as error:
-            job.error = self._friendly_sync_error(error)
-            job.state = "error"
+        client = self.require_client()
+        for source in sources:
+            chat_id = source["chatId"]
+            cached = self.database.cache_get(f"source-count:{chat_id}")
+            if cached is None:
+                entity = await client.get_entity(int(chat_id))
+                result = await client.get_messages(
+                    entity, limit=0, filter=InputMessagesFilterMusic()
+                )
+                cached = int(getattr(result, "total", 0))
+                self.database.cache_set(f"source-count:{chat_id}", cached, 600)
+            job.result[chat_id] = int(cached)
+            job.processed += 1
 
     def start_prefetch(self, keys: list[str]) -> dict[str, Any]:
         count = int(self.database.get_settings()["prefetchCount"])
         selected = list(dict.fromkeys(keys))[:count]
-        if (
-            selected == self.prefetch_order
-            and self.prefetch_job
-            and self.prefetch_job.state in {"queued", "running"}
-        ):
-            return self.prefetch_job.public()
+        if active := self.jobs.active("prefetch"):
+            if selected == self.prefetch_order:
+                return active.public()
+            # A different selection replaces the running prefetch; the runner owns the cancel.
+            self.jobs.cancel("prefetch")
         self.prefetch_order = selected
         self.prefetch_keys = set(selected)
-        if self.prefetch_job and self.prefetch_job.state in {"queued", "running"} and self.prefetch_job.task:
-            self.prefetch_job.task.cancel()
         job = BackgroundJob(secrets.token_urlsafe(12), "prefetch", result={})
-        self.prefetch_job = job
         if not selected:
             job.state = "complete"
-            self._prune_jobs()
-            self.jobs[job.id] = job
-            return job.public()
-        return self._start_job(job, self._run_prefetch(job, selected))
+            return self.jobs.register(job)
+        return self.jobs.start(job, self._run_prefetch(job, selected), error_mapper=self._friendly_sync_error)
 
     async def _run_prefetch(self, job: BackgroundJob, keys: list[str]) -> None:
-        job.state = "running"
-        try:
-            async def _prefetch_one(key):
-                chat_id, message_id = key.split(":", 1)
-                track = self.database.get_track(chat_id, message_id)
-                if not track or not track["available"]:
-                    return "unavailable"
-                if self.media.cached_media(track):
-                    job.processed += 1
-                    return "ready"
-                await self.media.cache_media(track)
-                job.found += 1
+        async def _prefetch_one(key):
+            chat_id, message_id = key.split(":", 1)
+            track = self.database.get_track(chat_id, message_id)
+            if not track or not track["available"]:
+                return "unavailable"
+            if self.media.cached_media(track):
                 job.processed += 1
                 return "ready"
+            await self.media.cache_media(track)
+            job.found += 1
+            job.processed += 1
+            return "ready"
 
-            results = await asyncio.gather(
-                *[_prefetch_one(key) for key in keys], return_exceptions=True
-            )
-            for i, result in enumerate(results):
-                job.result[keys[i]] = "error" if isinstance(result, Exception) else result
-            job.state = "complete"
-        except asyncio.CancelledError:
-            job.state = "cancelled"
-        except Exception as error:
-            job.error = self._friendly_sync_error(error)
-            job.state = "error"
+        results = await asyncio.gather(
+            *[_prefetch_one(key) for key in keys], return_exceptions=True
+        )
+        for i, result in enumerate(results):
+            job.result[keys[i]] = "error" if isinstance(result, Exception) else result
 
     def cache_status(self, keys: list[str] | None = None) -> dict[str, Any]:
         entries = self.database.media_cache_entries()
         ready = {entry["track_key"] for entry in entries}
         wanted = keys or []
-        active_result = self.prefetch_job.result if self.prefetch_job and self.prefetch_job.result else {}
+        prefetch = self.jobs.active("prefetch")
+        active_result = prefetch.result if prefetch and prefetch.result else {}
         states = {
             key: "ready" if key in ready else active_result.get(key, "queued")
             for key in wanted
@@ -1063,9 +941,7 @@ class TelegramService:
     def clear_media_cache(self) -> dict[str, int]:
         # Cancelling the prefetch is a job-lifecycle concern, so it stays here; the file and
         # database deletion belongs to the media cache.
-        if self.prefetch_job and self.prefetch_job.task:
-            self.prefetch_job.task.cancel()
-        self.prefetch_job = None
+        self.jobs.cancel("prefetch")
         self.prefetch_keys.clear()
         self.prefetch_order.clear()
         return self.media.clear_cache()
