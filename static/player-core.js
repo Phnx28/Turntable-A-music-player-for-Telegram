@@ -127,6 +127,85 @@ export function queueView(queue, queueIndex, total = null, offset = 0) {
   return { total: count, upcoming, isEmpty: count === 0, summary };
 }
 
+// -- Queue-window transitions ---------------------------------------------------
+//
+// A full-library queue is 54,660 keys -- a 1.2 MB snapshot, a quarter of the localStorage
+// quota, costing milliseconds of synchronous work on every play, pause and seek. Only a window
+// around the current track is worth persisting or drawing: the queue pane never renders more
+// than queueIndex+101 and prefetch reads a handful. Everything past the window is rebuilt from
+// the server on demand, which is where the ordering came from in the first place. The four-way
+// contract among the window, its total, its offset and its truncation marker lives here, in one
+// module, so the call sites in app.js cannot re-derive it with subtly different rules.
+
+export function snapshotWindow(queue, queueIndex, { total, truncated, offset, behind = 50, ahead = 300 }) {
+  const start = Math.max(0, queueIndex - behind);
+  const slice = queue.slice(start, queueIndex + ahead);
+  return {
+    queue: slice,
+    queueIndex: Math.max(-1, queueIndex - start),
+    // Records how many tracks were really queued, so move() knows there is more to rebuild.
+    // When queue is itself a restored window, its length is NOT the real total -- taking it
+    // would collapse 54,660 to 300 on the first re-save and lose the rest of the library.
+    queueTotal: Math.max(queue.length, truncated ? total || 0 : 0),
+    // Absolute position of the first stored key, so a restored window's "up next" counts
+    // against the whole library, not against the slice that happens to be in memory.
+    queueOffset: (offset || 0) + start,
+  };
+}
+
+export function windowFromResult(keys, total, offset) {
+  // The server returns {keys, offset, total}. The window is complete by definition, but the
+  // library it came from may be larger; the truncated marker and total travel with the window
+  // so move() and the queue summary know, and re-persisting does not shrink the real total.
+  const realTotal = Number.isInteger(total) ? total : keys.length;
+  const realOffset = Number.isInteger(offset) ? offset : 0;
+  return { total: realTotal, offset: realOffset, truncated: realTotal > keys.length };
+}
+
+export function resolveWindowEdge(direction, queue, queueIndex, truncated, currentKey, window) {
+  // A windowed queue holds only part of the playlist, so running past either edge is not the
+  // end of it. Returns {queue, queueIndex, next} for a fresh window fetched around currentKey,
+  // or null when no rebuild is needed. Ordered windows contain the current track; a fresh
+  // shuffle does not, so it falls back to starting at the top of the new order.
+  const next = queueIndex + direction;
+  if (!((next < 0 || next >= queue.length) && truncated)) return null;
+  if (!window?.keys?.length) return null;
+  const resumeAt = window.keys.indexOf(currentKey);
+  const resolvedIndex = resumeAt >= 0 ? resumeAt : 0;
+  return { queue: window.keys, queueIndex: resolvedIndex, next: resolvedIndex + direction };
+}
+
+export function toggleShuffleQueue(keys, currentKey, enableShuffle) {
+  // A shuffled window excludes the current track (the server's shuffle drops it), so it is
+  // prepended; an ordered window includes it at position `windowBefore`, so the copy must be
+  // dropped before re-adding -- otherwise the track queues twice. Without a shuffle, a window
+  // from the top may not contain the current track at all, so it is prepended too.
+  const queue = enableShuffle && currentKey
+    ? [currentKey, ...keys.filter((key) => key !== currentKey)]
+    : keys;
+  return currentKey && !queue.includes(currentKey) ? [currentKey, ...queue] : queue;
+}
+
+export function explicitQueue(queue, key, explicitIndex) {
+  // An explicit queue (a global-search result, a temporary source) replaces the window: it is
+  // complete by definition, and stale truncation metadata would make move() rebuild against
+  // the wrong filter.
+  const queueIndex = Number.isInteger(explicitIndex) ? explicitIndex : Math.max(0, queue.indexOf(key));
+  return { queue, queueIndex, queueTotal: queue.length, queueTruncated: false, queueOffset: 0 };
+}
+
+export function restoreWindow(savedQueue, savedQueueIndex, savedTotal, savedOffset) {
+  // Marks that more tracks existed than were stored, so move() rebuilds instead of wrapping,
+  // and keeps the real total so re-persisting does not shrink it to the window size.
+  return {
+    queue: savedQueue,
+    queueIndex: savedQueueIndex,
+    queueTruncated: savedTotal > savedQueue.length,
+    queueTotal: savedTotal,
+    queueOffset: Number(savedOffset) || 0,
+  };
+}
+
 // The header is a flex sibling of the scroller, so collapsing it hands its freed height to
 // .now-content and shrinks the maximum scrollTop by the same amount. Subtract only what the
 // collapse frees (measured: 546 -> 132 desktop, 515 -> 120 phone) and require the pane to

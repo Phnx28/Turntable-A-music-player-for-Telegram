@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adjacentIndex, bufferedPercent, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, shouldCompactHeader, virtualTrackWindow } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, virtualTrackWindow, windowFromResult } from "./player-core.js";
 
 test("player helpers", () => {
   assert.equal(formatTime(65.9), "1:05");
@@ -79,6 +79,75 @@ test("the queue summary counts the whole queue, and empty means empty", () => {
   assert.equal(windowed.upcoming, 54660 - 2500 - 1);
   assert.equal(windowed.summary, "54,660 in queue · 52,159 up next");
   assert.equal(windowed.isEmpty, false);
+});
+
+test("snapshotWindow keeps only the window, and remembers the real total", () => {
+  const queue = Array.from({ length: 351 }, (_, index) => `k${index}`);
+  // Mid-window: 50 behind, 300 ahead, absolute offset carried into the stored slice.
+  const snapshot = snapshotWindow(queue, 50, { total: 54660, truncated: true, offset: 2450, behind: 50, ahead: 300 });
+  assert.equal(snapshot.queue.length, 350);
+  assert.equal(snapshot.queueIndex, 50);
+  assert.equal(snapshot.queueTotal, 54660, "the truncated total survives the snapshot");
+  assert.equal(snapshot.queueOffset, 2450, "absolute position of the stored slice start");
+
+  // Near the start the window clamps instead of going negative.
+  const atStart = snapshotWindow(queue, 10, { total: 54660, truncated: true, offset: 2450 });
+  assert.equal(atStart.queueIndex, 10);
+  assert.equal(atStart.queueOffset, 2450);
+
+  // A complete queue is its own total; the stored length must not invent a larger one.
+  const complete = snapshotWindow(["a", "b", "c"], 1, { total: 3, truncated: false, offset: 0 });
+  assert.equal(complete.queueTotal, 3);
+});
+
+test("windowFromResult marks truncation from the server total", () => {
+  assert.deepEqual(windowFromResult(["a", "b"], 54660, 5), { total: 54660, offset: 5, truncated: true });
+  assert.deepEqual(windowFromResult(["a", "b"], 2, 0), { total: 2, offset: 0, truncated: false });
+  assert.deepEqual(windowFromResult(["a"], null, null), { total: 1, offset: 0, truncated: false });
+});
+
+test("resolveWindowEdge rebuilds only past a truncated edge", () => {
+  const window = { keys: ["k49", "k50", "k51"], offset: 2450, total: 54660 };
+  // Forward edge of a truncated window: current track repositions in the fresh window.
+  const forward = resolveWindowEdge(1, ["k50"], 0, true, "k50", window);
+  assert.deepEqual(forward, { queue: window.keys, queueIndex: 1, next: 2 });
+  // Backward edge of a truncated window.
+  const backward = resolveWindowEdge(-1, ["k50"], 0, true, "k50", window);
+  assert.deepEqual(backward, { queue: window.keys, queueIndex: 1, next: 0 });
+  // A shuffled window has no current track: restart at the top of the new order.
+  const shuffled = resolveWindowEdge(1, ["k50"], 0, true, "k50", { keys: ["z1", "z2", "z3"] });
+  assert.deepEqual(shuffled, { queue: ["z1", "z2", "z3"], queueIndex: 0, next: 1 });
+  // Not past the edge, or not truncated: nothing to rebuild.
+  assert.equal(resolveWindowEdge(1, ["a", "b"], 0, true, "a", window), null);
+  assert.equal(resolveWindowEdge(1, ["a"], 0, false, "a", window), null);
+  assert.equal(resolveWindowEdge(1, ["a"], 0, true, "a", { keys: [] }), null);
+});
+
+test("toggleShuffleQueue never queues the current track twice", () => {
+  // Enabling shuffle: the window excludes the current track, so it is prepended.
+  assert.deepEqual(toggleShuffleQueue(["b", "c"], "a", true), ["a", "b", "c"]);
+  // Enabling shuffle with a window that somehow includes it: the copy is dropped.
+  assert.deepEqual(toggleShuffleQueue(["a", "b"], "a", true), ["a", "b"]);
+  // Disabling shuffle: a window from the top may lack the current track.
+  assert.deepEqual(toggleShuffleQueue(["b", "c"], "a", false), ["a", "b", "c"]);
+  // No current track: the window is the queue.
+  assert.deepEqual(toggleShuffleQueue(["b", "c"], "", true), ["b", "c"]);
+});
+
+test("explicitQueue replaces the window and clears its truncation metadata", () => {
+  assert.deepEqual(explicitQueue(["a", "b", "c"], "b", null), { queue: ["a", "b", "c"], queueIndex: 1, queueTotal: 3, queueTruncated: false, queueOffset: 0 });
+  assert.equal(explicitQueue(["a", "b"], "z", null).queueIndex, 0, "unknown key starts the queue");
+  assert.equal(explicitQueue(["a", "b"], "a", 1).queueIndex, 1, "explicit index wins");
+});
+
+test("restoreWindow derives truncation from the stored total", () => {
+  const truncated = restoreWindow(["k50"], 0, 54660, 2450);
+  assert.equal(truncated.queueTruncated, true);
+  assert.equal(truncated.queueTotal, 54660);
+  assert.equal(truncated.queueOffset, 2450);
+  const complete = restoreWindow(["a", "b"], 1, 2, 0);
+  assert.equal(complete.queueTruncated, false);
+  assert.equal(complete.queueOffset, 0, "v1 snapshots have no offset");
 });
 
 test("the now-playing header collapses on the real measured geometry", () => {
