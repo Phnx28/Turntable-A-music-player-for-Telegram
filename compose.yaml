@@ -2,6 +2,10 @@ services:
   player:
     build: .
     env_file: .env
+    # To keep the player private on a multi-user or public network, bind to localhost only:
+    #   ports:
+    #     - "127.0.0.1:8000:8000"
+    # and have a reverse proxy (Caddy/nginx/Traefik) handle TLS. See README Security.
     ports:
       - "8000:8000"
     volumes:

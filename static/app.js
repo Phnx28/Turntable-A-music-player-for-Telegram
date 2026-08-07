@@ -16,6 +16,7 @@ const state = {
   temporarySource: null, temporaryJob: null, keepingSource: false, likedCount: 0, historyVisible: 200,
   lyricsFollow: true, lyricScrollTimer: 0, restored: false, contacts: [],
   bulk: false, selectedSources: new Set(),
+  syncingIds: new Set(),
   countriesLoaded: false,
   buffering: false,
 };
@@ -77,19 +78,22 @@ function toast(message, action = null, duration = 3200) {
   }, duration);
 }
 
+let dialogReturnFocus = null;
+function captureDialogFocus() { dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; }
+function restoreDialogFocus() { if (dialogReturnFocus?.isConnected) dialogReturnFocus.focus(); dialogReturnFocus = null; }
 function showError(error, retry = null, title = "Couldn’t complete that") {
   retryAction = retry;
   $("error-title").textContent = title;
   $("error-message").textContent = errorCopy(error);
   $("error-retry").hidden = !(retry && error?.retryable !== false);
-  if (!$("error-dialog").open) $("error-dialog").showModal();
+  if (!$("error-dialog").open) { captureDialogFocus(); $("error-dialog").showModal(); }
 }
 
 function confirmAction(title, message, accept = "Continue") {
   $("confirm-title").textContent = title;
   $("confirm-message").textContent = message;
   $("confirm-accept").textContent = accept;
-  if (!$("confirm-dialog").open) $("confirm-dialog").showModal();
+  if (!$("confirm-dialog").open) { captureDialogFocus(); $("confirm-dialog").showModal(); }
   return new Promise((resolve) => { confirmResolve = resolve; });
 }
 
@@ -578,7 +582,7 @@ function renderSources() {
     const draggable = $("sidebar-sort").value === "custom" && !state.bulk && !source.pinnedAt;
     return `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}${source.pinnedAt ? " pinned" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${draggable}"${!state.likedMode && source.chatId === state.source ? ' aria-current="page"' : ""}>
     ${state.bulk ? `<input class="source-select" type="checkbox" data-bulk-source="${source.chatId}" ${state.selectedSources.has(source.chatId) ? "checked" : ""} aria-label="Select ${escapeHtml(source.title)}">` : avatarMarkup(source)}
-    <span class="source-copy"><strong>${source.pinnedAt ? `<span class="source-pin-mark" aria-hidden="true">${icon("pin")}</span>` : ""}${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${source.syncError ? `<span class="source-error-dot" role="img" aria-label="Sync problem: ${escapeAttr(source.syncError)}" title="${escapeAttr(source.syncError)}"></span>` : ""}</small></span>
+    <span class="source-copy"><strong>${source.pinnedAt ? `<span class="source-pin-mark" aria-hidden="true">${icon("pin")}</span>` : ""}${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${state.syncingIds.has(source.chatId) ? `<span class="source-sync-spin" aria-label="Syncing" role="img"></span>` : source.syncError ? `<span class="source-error-dot" role="img" aria-label="Sync problem: ${escapeAttr(source.syncError)}" title="${escapeAttr(source.syncError)}"></span>` : ""}</small></span>
     <span class="source-count">${source.trackCount.toLocaleString()}</span>
     ${state.bulk ? "" : `<button class="icon-button source-menu" type="button" data-source-menu="${source.chatId}" aria-label="Actions for ${escapeHtml(source.title)}">${icon("more")}</button>`}
   </div>`;
@@ -1313,17 +1317,25 @@ function watchJob(job, onUpdate = () => {}, relevant = () => true) {
 }
 
 async function syncSource(chatId, full = false) {
+  state.syncingIds.add(String(chatId)); renderSources();
   try {
     const job = await api(`/api/sources/${encodeURIComponent(chatId)}/sync`, { method: "POST", body: JSON.stringify({ full }) });
-    watchJob(job);
-  } catch (error) { showError(error, () => syncSource(chatId, full)); }
+    watchJob(job, (current) => {
+      if (current && !["queued", "running"].includes(current.state)) {
+        state.syncingIds.delete(String(current.chatId || chatId)); renderSources();
+      }
+    });
+  } catch (error) { state.syncingIds.delete(String(chatId)); renderSources(); showError(error, () => syncSource(chatId, full)); }
 }
 
 async function syncAllSources() {
+  state.sources.forEach((s) => state.syncingIds.add(String(s.chatId))); renderSources();
   try {
     await api("/api/sources/sync-all", { method: "POST" });
     toast("Syncing all sources");
-  } catch (error) { showError(error, syncAllSources); }
+    // Clear the local spinner on the next library refresh; individual watchers will also clear.
+    setTimeout(() => { state.syncingIds.clear(); renderSources(); }, 3500);
+  } catch (error) { state.syncingIds.clear(); renderSources(); showError(error, syncAllSources); }
 }
 
 async function openSources() {
@@ -1435,6 +1447,21 @@ function metadataFailed(error) {
   $("candidate-list").innerHTML = "";
   $("candidate-section").hidden = true;
   $("metadata-status").textContent = errorCopy(error);
+}
+function setFieldError(input, message) {
+  const err = document.getElementById(input.id + "-error");
+  if (message) {
+    input.setAttribute("aria-invalid", "true");
+    if (err) { err.textContent = message; err.hidden = false; input.setAttribute("aria-describedby", err.id); }
+  } else {
+    input.removeAttribute("aria-invalid");
+    if (err) { err.textContent = ""; err.hidden = true; input.removeAttribute("aria-describedby"); }
+  }
+}
+function clearFormErrors(form) {
+  for (const el of form.elements) if (el.id) setFieldError(el, "");
+  const status = form.querySelector(".dialog-status, #password-status");
+  if (status) status.textContent = "";
 }
 
 async function saveMetadata(event) {
@@ -2001,9 +2028,10 @@ $("password-disable-cancel").addEventListener("click", () => showPasswordForm(nu
 $("password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const status = $("password-status");
+  clearFormErrors(event.currentTarget);
   const next = $("password-new").value;
-  if (next.length < 8) return void (status.textContent = "Use at least 8 characters.");
-  if (next !== $("password-confirm").value) return void (status.textContent = "Those passwords do not match.");
+  if (next.length < 8) { setFieldError($("password-new"), "Use at least 8 characters."); status.textContent = "Fix the highlighted field."; return; }
+  if (next !== $("password-confirm").value) { setFieldError($("password-confirm"), "Those passwords do not match."); status.textContent = "Fix the highlighted field."; return; }
   status.textContent = "Saving\u2026";
   try {
     const result = await api("/api/auth/password", {
@@ -2015,7 +2043,7 @@ $("password-form").addEventListener("submit", async (event) => {
     renderPasswordState();
     showPasswordForm(null);
     toast("Password saved");
-  } catch (error) { status.textContent = error.message; }
+  } catch (error) { status.textContent = error.message; if (/current/i.test(error.message)) setFieldError($("password-current"), error.message); }
 });
 
 $("password-disable-form").addEventListener("submit", async (event) => {
@@ -2032,7 +2060,7 @@ $("password-disable-form").addEventListener("submit", async (event) => {
     renderPasswordState();
     showPasswordForm(null);
     toast("Password removed");
-  } catch (error) { status.textContent = error.message; }
+  } catch (error) { status.textContent = error.message; setFieldError($("password-disable-current"), error.message); }
 });
 
 $("sign-out").addEventListener("click", async () => {
@@ -2369,9 +2397,9 @@ $("clear-cache").addEventListener("click", async () => { if (await confirmAction
 document.querySelectorAll("[data-setting] [data-value]").forEach((button) => button.addEventListener("click", () => { localStorage.setItem(`tm-${button.parentElement.dataset.setting}`, button.dataset.value); applyPreferences(); }));
 $("disconnect-telegram").addEventListener("click", async () => { if (await confirmAction("Disconnect Telegram?", "This signs out the stored Telegram session and clears the local library. It does not leave or delete any Telegram chats.", "Disconnect")) { try { await api("/api/telegram/session", { method: "DELETE" }); location.reload(); } catch (error) { showError(error); } } });
 
-$("error-retry").addEventListener("click", () => { $("error-dialog").close(); const action = retryAction; retryAction = null; action?.(); }); $("confirm-accept").addEventListener("click", () => { $("confirm-dialog").close(); confirmResolve?.(true); confirmResolve = null; });
-document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => { const dialog = $(button.dataset.close); dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } }));
-document.querySelectorAll("dialog").forEach((dialog) => { dialog.addEventListener("click", (event) => { if (event.target !== dialog) return; const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) { dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } } }); dialog.addEventListener("cancel", () => { if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } }); });
+$("error-retry").addEventListener("click", () => { $("error-dialog").close(); restoreDialogFocus(); const action = retryAction; retryAction = null; action?.(); }); $("confirm-accept").addEventListener("click", () => { $("confirm-dialog").close(); restoreDialogFocus(); confirmResolve?.(true); confirmResolve = null; });
+document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => { const dialog = $(button.dataset.close); dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus(); }));
+document.querySelectorAll("dialog").forEach((dialog) => { dialog.addEventListener("click", (event) => { if (event.target !== dialog) return; const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) { dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } restoreDialogFocus(); } }); dialog.addEventListener("cancel", () => { if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } restoreDialogFocus(); }); dialog.addEventListener("close", () => { if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus(); }); });
 document.addEventListener("error", (event) => { const image = event.target; if (image.matches?.("img.source-avatar")) { const replacement = document.createElement("span"); replacement.className = "source-avatar"; replacement.textContent = image.dataset.avatarFallback || "♪"; image.replaceWith(replacement); } }, true);
 $("context-menu").addEventListener("keydown", (event) => {
   const items = [...$("context-menu").querySelectorAll("[data-menu-index]")];

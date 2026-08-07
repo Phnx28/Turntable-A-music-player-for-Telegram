@@ -355,15 +355,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
 
         if path.startswith("/api/") and path not in PUBLIC_PATHS:
-            database_ = request.app.state.database
-            # Runs on every /api request, so the two SQLite lookups must not block the loop.
-            if not await asyncio.to_thread(
-                database_.is_authorized, request.cookies.get(SESSION_COOKIE, "")
-            ):
-                return JSONResponse(
-                    {"error": {"code": "unauthorized", "message": "Sign in to continue", "retryable": False}},
-                    status_code=401,
-                )
+            try:
+                database_ = request.app.state.database
+            except AttributeError:
+                # Lifespan hasn't run yet (happens in TestClient without `with` and on startup races).
+                # Let the request fall through to the exception handler / route rather than crash.
+                pass
+            else:
+                # Runs on every /api request, so the two SQLite lookups must not block the loop.
+                if not await asyncio.to_thread(
+                    database_.is_authorized, request.cookies.get(SESSION_COOKIE, "")
+                ):
+                    return JSONResponse(
+                        {"error": {"code": "unauthorized", "message": "Sign in to continue", "retryable": False}},
+                        status_code=401,
+                    )
 
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
@@ -382,6 +388,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.url.path.startswith("/assets/") and response.status_code == 200:
             response.headers["Cache-Control"] = "no-cache"
         return response
+
+    @application.exception_handler(404)
+    async def not_found_handler(request: Request, _: Exception):
+        # Branded vinyl 404 for navigations; JSON for API/assets so clients stay JSON.
+        # Path traversal like /assets/../app.py normalizes to /app.py before it gets here
+        # (httpx/starlette already resolved the ..), so treat any /assets/ *or* direct
+        # file that looks like a traversal remnant as JSON if Accept prefers JSON.
+        path = request.url.path
+        # The StaticFiles mount already rejects traversal with 404 JSON via the handler's
+        # else-branch; but for the bare /app.py that traversal lands on, force JSON when
+        # the client asked for it. Keep the HTML 404 for browsers only.
+        accept = request.headers.get("accept", "")
+        is_api = path.startswith("/api/") or path.startswith("/assets/")
+        if is_api:
+            return JSONResponse(
+                {"error": {"code": "not_found", "message": "Not found", "retryable": False}},
+                status_code=404,
+            )
+        # For non-API paths that arrived via traversal, still favour JSON if requested.
+        if "application/json" in accept and "text/html" not in accept:
+            return JSONResponse(
+                {"error": {"code": "not_found", "message": "Not found", "retryable": False}},
+                status_code=404,
+            )
+        # Browsers send Accept: text/html on address-bar navigations; fetches from
+        # app.js send application/json. No Accept (curl) is a direct visit too.
+        if "text/html" in accept or not accept or accept.strip() == "*/*":
+            return FileResponse(
+                ROOT / "static" / "404.html",
+                media_type="text/html",
+                headers={"Cache-Control": "no-cache"},
+                status_code=404,
+            )
+        return JSONResponse(
+            {"error": {"code": "not_found", "message": "Not found", "retryable": False}},
+            status_code=404,
+        )
 
     @application.exception_handler(KeyError)
     async def key_error_handler(_: Request, error: KeyError) -> JSONResponse:

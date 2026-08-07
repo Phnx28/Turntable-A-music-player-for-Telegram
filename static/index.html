@@ -437,15 +437,18 @@
           <form id="password-form" class="stack compact password-form" hidden>
             <div id="password-current-block" class="setting-block" hidden>
               <label for="password-current"><strong>Current password</strong></label>
-              <input id="password-current" type="password" autocomplete="current-password" placeholder="Current password">
+              <input id="password-current" type="password" autocomplete="current-password" placeholder="Current password" aria-describedby="password-current-error">
+              <p id="password-current-error" class="form-error" hidden></p>
             </div>
             <div class="setting-block">
               <label for="password-new"><strong>New password</strong><span>At least 8 characters. Saving signs out every other device.</span></label>
-              <input id="password-new" type="password" autocomplete="new-password" placeholder="New password" minlength="8">
+              <input id="password-new" type="password" autocomplete="new-password" placeholder="New password" minlength="8" aria-describedby="password-new-error">
+              <p id="password-new-error" class="form-error" hidden></p>
             </div>
             <div class="setting-block">
               <label for="password-confirm"><strong>Confirm new password</strong></label>
-              <input id="password-confirm" type="password" autocomplete="new-password" placeholder="Repeat new password" minlength="8">
+              <input id="password-confirm" type="password" autocomplete="new-password" placeholder="Repeat new password" minlength="8" aria-describedby="password-confirm-error">
+              <p id="password-confirm-error" class="form-error" hidden></p>
             </div>
             <div class="form-actions">
               <button class="button primary" type="submit">Save password</button>
@@ -456,7 +459,8 @@
           <form id="password-disable-form" class="stack compact password-form" hidden>
             <div class="setting-block">
               <label for="password-disable-current"><strong>Confirm your password</strong><span>Removing the password lets anyone who can reach this player use it.</span></label>
-              <input id="password-disable-current" type="password" autocomplete="current-password" placeholder="Current password">
+              <input id="password-disable-current" type="password" autocomplete="current-password" placeholder="Current password" aria-describedby="password-disable-current-error">
+              <p id="password-disable-current-error" class="form-error" hidden></p>
             </div>
             <div class="form-actions">
               <button class="button danger" type="submit">Remove password</button>
