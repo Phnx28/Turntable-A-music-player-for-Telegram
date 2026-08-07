@@ -18,8 +18,8 @@
   --radius-pill: 999px;
   --elev-0: none;
   --elev-1: 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent);
-  --elev-2: 0 8px 28px rgb(0 0 0 / .12);
-  --elev-3: 0 24px 80px rgb(0 0 0 / .2);
+  --elev-2: 0 8px 28px color-mix(in srgb, var(--ink) 14%, transparent);
+  --elev-3: 0 24px 80px color-mix(in srgb, var(--ink) 20%, transparent);
   --focus-ring: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink);
   --ease-out: cubic-bezier(.2, .8, .2, 1);
   --ease-spring: cubic-bezier(.34, 1.2, .64, 1);
@@ -62,8 +62,8 @@ html[data-theme="dark"] {
   --danger: #e0796a;
   --ok: #6fbf8a;
   --elev-1: 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent);
-  --elev-2: 0 8px 28px rgb(0 0 0 / .24);
-  --elev-3: 0 24px 80px rgb(0 0 0 / .4);
+  --elev-2: 0 8px 28px color-mix(in srgb, var(--ink) 22%, transparent);
+  --elev-3: 0 24px 80px color-mix(in srgb, var(--ink) 34%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -82,10 +82,34 @@ html[data-theme="dark"] {
     --danger: #e0796a;
     --ok: #6fbf8a;
     --elev-1: 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent);
-    --elev-2: 0 8px 28px rgb(0 0 0 / .24);
-    --elev-3: 0 24px 80px rgb(0 0 0 / .4);
+    --elev-2: 0 8px 28px color-mix(in srgb, var(--ink) 22%, transparent);
+    --elev-3: 0 24px 80px color-mix(in srgb, var(--ink) 34%, transparent);
   }
 }
+
+/* Paper grain — a single fixed film-grain layer over the whole viewport.
+   3.5% in light / 5.5% in dark, pointer-events:none so it never blocks clicks.
+   180px SVG feTurbulence tile — no extra asset, no request. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  /* static grain — no animation, so no reduced-motion override needed */
+}
+html[data-theme="dark"] body::before { opacity: .055; }
+body { isolation: isolate; }
+@media (prefers-color-scheme: dark) {
+  html[data-theme="system"] body::before { opacity: .055; }
+}
+
+/* Smooth anchor jumps (skip-link). Per-element scrollers inherit it; reduce-motion disables it below. */
+html { scroll-behavior: smooth; }
+.library, .now-content, .global-results, .settings-content, .combo-list { scroll-behavior: smooth; }
 
 /* Four of these can be on screen at once (rail, library, now-content, modal) and none were
    styled, so they painted native chrome over the segmented control, the discover checkboxes
@@ -592,9 +616,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 .track-row:hover .track-row-actions .icon-button, .track-row:focus-within .track-row-actions .icon-button { color: var(--ink); }
 .track-row-actions .icon-button { width: 32px; height: 32px; }
 
-.empty-state { display: grid; width: min(100%, 440px); min-height: 50vh; align-content: center; justify-items: center; margin: 0 auto; text-align: center; }
+.empty-state { position: relative; display: grid; width: min(100%, 440px); min-height: 50vh; align-content: center; justify-items: center; margin: 0 auto; padding: 40px 24px; border-radius: var(--radius-panel); overflow: hidden; text-align: center; isolation: isolate; }
+/* Ambient film: 6% blurred image only behind the empty state, masked so text stays crisp.
+   No extra element — the pseudo-element sits behind the grid content (z-index:-1) and is
+   clipped by overflow:hidden. Fails gracefully: image 404 = plain paper + grain. */
+.empty-state::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--paper); background-image: radial-gradient(ellipse 72% 58% at 34% 28%, color-mix(in srgb, var(--graphite) 7%, transparent) 0%, transparent 62%), radial-gradient(ellipse 58% 52% at 82% 72%, color-mix(in srgb, var(--ink) 5%, transparent) 0%, transparent 58%); opacity: .9; }
+.empty-state::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: radial-gradient(ellipse 85% 70% at 50% 42%, transparent 38%, var(--paper) 78%); }
 .empty-state h2 { margin: 12px 0 10px; font-size: 28px; font-weight: 500; letter-spacing: -.035em; }
 .empty-state p:not(.eyebrow) { margin: 0 0 22px; color: var(--graphite); }
+.empty-art { display: grid; width: 56px; height: 56px; place-items: center; border: 1px solid var(--rule); border-radius: 50%; background: var(--surface); color: var(--graphite); }
 
 .now-panel {
   grid-row: 1;

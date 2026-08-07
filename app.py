@@ -109,7 +109,7 @@ SESSION_COOKIE = "tt_session"
 
 # Endpoints reachable without a session: the gate itself, the health probe, and the
 # static shell that renders the login form.
-PUBLIC_PATHS = {"/", "/healthz", "/sw.js", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login"}
+PUBLIC_PATHS = {"/", "/favicon.ico", "/healthz", "/sw.js", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login"}
 
 
 class LoginBody(BaseModel):
@@ -471,6 +471,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ROOT / "static" / "manifest.webmanifest",
             media_type="application/manifest+json",
             headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @application.get("/favicon.ico")
+    async def favicon() -> FileResponse:
+        # Browsers request /favicon.ico by default; static is mounted under /assets so
+        # that path 404s. Serve the PWA icon so the 404 disappears rather than keeping a
+        # stray link in the HTML for a file that does not exist.
+        return FileResponse(
+            ROOT / "static" / "icon-192.png",
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
         )
 
     @application.get("/healthz")

@@ -716,12 +716,28 @@ function renderTracks(force = false) {
     $("play-playlist").disabled = true;
     $("shuffle-playlist").disabled = true;
     const query = $("track-search").value.trim();
-    $("empty-title").textContent = query ? `Nothing matches "${query}"` : "Add a channel, bot, or private chat";
-    $("empty-body").textContent = query
-      ? "Try fewer words, or search every chat with the search box in the sidebar."
-      : "The app will find its audio and keep the playlist in sync.";
-    $("empty-add").hidden = Boolean(query);
-    $("empty-clear-search").hidden = !query;
+    // Three composed empty states: no sources vs liked empty vs no search results.
+    // Liked mode and filtered queries read as different problems to the user; the
+    // generic "Add a channel" copy made a filtered empty feel like a setup prompt.
+    let title, body, showAdd, showClear;
+    if (query) {
+      title = `Nothing matches \"${query}\"`;
+      body = "Try fewer words, or search every chat with the search box in the sidebar.";
+      showAdd = false; showClear = true;
+    } else if (state.likedMode) {
+      title = "No liked songs yet";
+      body = "Tap the heart on any row or in the player to save it here.";
+      showAdd = false; showClear = false;
+    } else {
+      title = "Add a channel, bot, or private chat";
+      body = "The app will find its audio and keep the playlist in sync.";
+      showAdd = true; showClear = false;
+    }
+    $("empty-title").textContent = title;
+    $("empty-body").textContent = body;
+    $("empty-add").hidden = !showAdd;
+    $("empty-clear-search").hidden = !showClear;
+    // Use textContent on the h2, not innerHTML — the query is user input.
     list.replaceChildren(); renderSources(); return;
   }
   $("library").classList.remove("is-empty");

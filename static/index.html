@@ -4,7 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" content="#f7f7f4">
+    <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#12100e" media="(prefers-color-scheme: dark)">
+    <meta name="description" content="A private web player for music stored in Telegram — browse, search, and stream your chats, channels and Saved Messages.">
+    <meta property="og:title" content="Telegram Turntable">
+    <meta property="og:description" content="A private web player for music stored in Telegram.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/assets/icon-512.png">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="preload" href="/assets/fonts/archivo-variable.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
@@ -210,6 +218,7 @@
         </div>
         <div id="track-list" class="track-list"></div>
         <section id="empty-library" class="empty-state" hidden>
+          <div class="empty-art" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg></div>
           <h2 id="empty-title">Add a channel, bot, or private chat</h2>
           <p id="empty-body">The app will find its audio and keep the playlist in sync.</p>
           <button class="button primary" type="button" data-action="add-source" id="empty-add">Choose a source</button>
