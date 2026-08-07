@@ -87,6 +87,7 @@ html[data-theme="dark"] {
   }
 }
 
+
 /* Paper grain — a single fixed film-grain layer over the whole viewport.
    3.5% in light / 5.5% in dark, pointer-events:none so it never blocks clicks.
    180px SVG feTurbulence tile — no extra asset, no request. */
@@ -148,6 +149,7 @@ html { scroll-behavior: smooth; }
 }
 
 html[data-font="serif"] { --font-ui: var(--font-serif); }
+html[data-font="serif"] .library-heading h1 { --font-display: var(--font-serif); letter-spacing: -.02em; }
 html[data-font="mono"] { --font-ui: var(--font-mono); }
 
 * { box-sizing: border-box; }
@@ -836,9 +838,11 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: grid;
   grid-template-rows: auto 1fr;
   padding: 0;
-  border-top: 1px solid var(--rule);
-  background: var(--surface);
-  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 -10px 24px color-mix(in srgb, var(--ink) 7%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(14px) saturate(1.05);
+  -webkit-backdrop-filter: blur(14px) saturate(1.05);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 -10px 24px color-mix(in srgb, var(--ink) 7%, transparent), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 80%, transparent);
 }
 
 .progress-row {
@@ -967,6 +971,14 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
 .modal > .small-copy { margin: 12px 0 22px; }
 
 .discover-list { border-top: 1px solid var(--rule); }
+.discover-list.is-revealing .discover-row { animation: row-in var(--dur-2) var(--ease-out) both; }
+.discover-list.is-revealing .discover-row:nth-child(1) { animation-delay: 0ms; }
+.discover-list.is-revealing .discover-row:nth-child(2) { animation-delay: 22ms; }
+.discover-list.is-revealing .discover-row:nth-child(3) { animation-delay: 44ms; }
+.discover-list.is-revealing .discover-row:nth-child(4) { animation-delay: 66ms; }
+.discover-list.is-revealing .discover-row:nth-child(5) { animation-delay: 88ms; }
+.discover-list.is-revealing .discover-row:nth-child(6) { animation-delay: 110ms; }
+.discover-list.is-revealing .discover-row:nth-child(n+7) { animation-delay: 132ms; }
 .discover-row { display: grid; min-height: 58px; grid-template-columns: 1fr auto; align-items: center; gap: 16px; border-bottom: 1px solid var(--rule-soft); }
 .discover-copy strong, .discover-copy small { display: block; }
 .discover-copy small { margin-top: 3px; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); text-transform: uppercase; }

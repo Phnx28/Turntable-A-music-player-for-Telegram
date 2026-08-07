@@ -214,6 +214,7 @@ function applyPreferences() {
       button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
     });
   }
+
   $("app-shell").classList.toggle("sidebar-collapsed", localStorage.getItem("tm-sidebar") === "collapsed");
   document.documentElement.style.setProperty("--rail-width", `${Math.max(220, Math.min(420, Number(localStorage.getItem("tm-rail-width")) || 260))}px`);
   document.documentElement.style.setProperty("--panel-width", `${Math.max(300, Math.min(640, Number(localStorage.getItem("tm-panel-width")) || 368))}px`);
@@ -1341,12 +1342,14 @@ async function syncAllSources() {
 async function openSources() {
   $("source-dialog").showModal(); $("discover-list").innerHTML = '<div class="list-skeleton"><span></span><span></span><span></span></div>';
   try {
-    state.discovered = await api("/api/sources/discover"); renderDiscovered();
+    state.discovered = await api("/api/sources/discover"); renderDiscovered(); $("discover-list").classList.add("is-revealing"); setTimeout(() => $("discover-list").classList.remove("is-revealing"), 420);
     const job = await api("/api/sources/discover/counts", { method: "POST" });
     watchJob(job, (current) => {
       $("discover-progress").textContent = current.state === "complete" ? "Counts ready" : `Counting ${current.processed}/${state.discovered.length}`;
       for (const item of state.discovered) if (current.result?.[item.chatId] != null) item.musicFileCount = current.result[item.chatId];
       renderDiscovered();
+      $("discover-list").classList.add("is-revealing");
+      setTimeout(() => $("discover-list").classList.remove("is-revealing"), 500);
     }, () => $("source-dialog").open);
   } catch (error) { showError(error, openSources); }
 }
