@@ -322,7 +322,7 @@ class MediaCache:
                 with temporary.open("ab") as output:
                     os.chmod(temporary, 0o600)
                     async for chunk in self.iter_media(document, offset, expected_size - offset):
-                        output.write(chunk)
+                        await asyncio.to_thread(output.write, chunk)
             if temporary.stat().st_size != expected_size:
                 raise RuntimeError("Telegram media download ended before the file was complete")
             temporary.replace(destination)

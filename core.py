@@ -353,6 +353,9 @@ class Database:
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
             self.connection.execute("PRAGMA wal_autocheckpoint = 1000")
+            self.connection.execute("PRAGMA synchronous = NORMAL")
+            self.connection.execute("PRAGMA temp_store = MEMORY")
+            self.connection.execute("PRAGMA cache_size = -20000")
             self._migrate()
         # Now that WAL has created them, tighten the sidecars too.
         for suffix in ("-wal", "-shm"):
@@ -370,6 +373,8 @@ class Database:
             connection = sqlite3.connect(self.path, check_same_thread=False)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA temp_store = MEMORY")
+            connection.execute("PRAGMA cache_size = -20000")
             self._local.connection = connection
         return connection
 

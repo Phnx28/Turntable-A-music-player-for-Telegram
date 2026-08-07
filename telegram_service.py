@@ -669,9 +669,9 @@ class TelegramService:
                                 if job:
                                     job.found = len(seen)
                                 if len(items) >= 100:
-                                    self.database.upsert_tracks(list(items.values()))
+                                    await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
                                     items.clear()
-                    self.database.upsert_tracks(list(items.values()))
+                    await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
                     if full and not temporary:
                         self.database.mark_missing_unavailable(chat_id, seen)
                     highest = max(highest_scanned, minimum)
