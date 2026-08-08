@@ -34,10 +34,23 @@ const pendingCovers = new Set();
 const rowLikeOperations = new Map();
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-  });
+  const { quiet = false, ...init } = options;
+  let response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init.headers || {}) },
+    });
+  } catch (error) {
+    // Background requests (prefetch, lyrics, status polling) failing to reach the server
+    // must not interrupt playback with a modal. Tag the failure; quiet callers ignore it.
+    if (quiet) {
+      const failure = new AppError("The music service is unreachable.", true, "quiet");
+      failure.quiet = true;
+      throw failure;
+    }
+    throw error;
+  }
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
     const failure = body?.error;
@@ -48,7 +61,9 @@ async function api(path, options = {}) {
       $("lock-status").textContent = "Your session expired. Sign in again.";
       $("lock-password").focus();
     }
-    throw new AppError(failure?.message || body?.detail || `Request failed (${response.status})`, failure?.retryable, failure?.code);
+    const appError = new AppError(failure?.message || body?.detail || `Request failed (${response.status})`, failure?.retryable, failure?.code);
+    if (quiet) appError.quiet = true;
+    throw appError;
   }
   return body;
 }
@@ -1140,11 +1155,13 @@ async function loadLyrics(refresh = false) {
   const key = state.current.key;
   $("lyrics-lines").innerHTML = '<div class="lyrics-skeleton"><span></span><span></span><span></span><span></span></div>'; $("lyrics-empty").hidden = true;
   try {
-    const lyrics = await api(`${mediaUrl(state.current, "lyrics")}${refresh ? "?refresh=true" : ""}`, { signal: lyricsController.signal });
+    const lyrics = await api(`${mediaUrl(state.current, "lyrics")}${refresh ? "?refresh=true" : ""}`, { signal: lyricsController.signal, quiet: true });
     if (state.current?.key !== key) return;
     state.lyrics = lyrics; renderLyrics();
   } catch (error) {
-    if (error.name !== "AbortError") { $("lyrics-empty").hidden = true; showError(error, () => loadLyrics(refresh)); }
+    // Lyrics are non-critical: a transient lookup failure must not pause the music with a
+    // modal. The empty state already covers "no lyrics", so quiet failures just stay quiet.
+    if (error.name !== "AbortError" && !error?.quiet) { $("lyrics-empty").hidden = true; showError(error, () => loadLyrics(refresh)); }
   }
 }
 
@@ -1261,10 +1278,10 @@ async function ensureSummaries(keys) {
   if (!missing.length) return;
   missing.forEach((key) => state.summaryRequests.add(key));
   try {
-    const result = await api("/api/tracks/summaries", { method: "POST", body: JSON.stringify({ keys: missing }) });
+    const result = await api("/api/tracks/summaries", { method: "POST", body: JSON.stringify({ keys: missing }), quiet: true });
     for (const track of result?.items || []) cacheSet(state.summaryCache, track.key, track, 500);
     if (!$("queue-pane").hidden) renderQueue();
-  } catch (error) { showError(error); }
+  } catch (error) { if (!error?.quiet) showError(error); }
   finally { missing.forEach((key) => state.summaryRequests.delete(key)); }
 }
 
@@ -1315,14 +1332,14 @@ async function schedulePrefetch() {
   const keys = state.queue.slice(state.queueIndex + 1, state.queueIndex + 1 + count);
   if (!keys.length) return;
   keys.forEach((key) => { state.cacheStates[key] = "queued"; }); renderQueue();
-  try { const job = await api("/api/playback/prefetch", { method: "POST", body: JSON.stringify({ keys }) }); watchJob(job, (current) => {
+  try { const job = await api("/api/playback/prefetch", { method: "POST", body: JSON.stringify({ keys }), quiet: true }); watchJob(job, (current) => {
     state.cacheStates = { ...state.cacheStates, ...(current.result || {}) };
     if (!$("queue-pane").hidden) for (const [key, value] of Object.entries(current.result || {})) {
       const badge = document.querySelector(`.queue-row[data-queue-key="${CSS.escape(key)}"] .cache-state`);
       if (badge) { badge.className = `cache-state ${value}`; badge.textContent = value; }
     }
   }); }
-  catch (error) { showError(error, schedulePrefetch); }
+  catch (error) { if (!error?.quiet) showError(error, schedulePrefetch); }
 }
 
 function watchJob(job, onUpdate = () => {}, relevant = () => true) {
@@ -1332,7 +1349,7 @@ function watchJob(job, onUpdate = () => {}, relevant = () => true) {
     try {
       if (!relevant()) return;
       if (document.hidden) return setTimeout(poll, 2000);
-      const current = await api(`/api/jobs/${encodeURIComponent(job.jobId)}`); onUpdate(current);
+      const current = await api(`/api/jobs/${encodeURIComponent(job.jobId)}`, { quiet: true }); onUpdate(current);
       if (["sync", "preview"].includes(current.kind)) {
         const strip = $("sync-strip");
         const active = ["queued", "running"].includes(current.state);
@@ -1353,7 +1370,7 @@ function watchJob(job, onUpdate = () => {}, relevant = () => true) {
         // mediaUrl changes with it, so re-running the art block refetches the sharper cover.
         setTrackUi();
       }
-    } catch (error) { showError(error); }
+    } catch (error) { if (!error?.quiet) showError(error); }
   };
   poll();
 }
@@ -2468,6 +2485,11 @@ audio.addEventListener("pause", () => { setBuffering(false); schedulePersist(); 
 audio.addEventListener("ended", () => { setBuffering(false); move(1, true).catch(showError); });
 audio.addEventListener("error", () => {
   setBuffering(false);
+  // A src swap aborts the previous element's load (MEDIA_ERR_ABORTED) and an intact buffer
+  // means the transient error didn't cost us audio: neither is a failure the user caused.
+  const aborted = audio.error?.code === MediaError.MEDIA_ERR_ABORTED;
+  if (aborted) return;
+  if (audio.readyState >= 2) return; // HAVE_CURRENT_DATA
   const track = state.current;
   if (!track) return;
   if (track._retried) {
