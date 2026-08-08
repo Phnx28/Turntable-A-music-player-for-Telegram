@@ -10,6 +10,7 @@ __pycache__/
 # Never commit this — it authenticates as your Telegram account.
 data/
 library.sqlite3*
+backups/
 
 # Build-time only, restored by npm install
 node_modules/

@@ -811,7 +811,10 @@ class SearchReconcileTests(unittest.TestCase):
             # have re-inserted them, so clear the set to mimic process death.
             database._dirty_search_keys.clear()
             with database.transaction() as connection:
-                connection.execute("DELETE FROM tracks_fts WHERE key LIKE '1:3_'")
+                # rowid-based FTS v7 has no key column
+                connection.execute(
+                    "DELETE FROM tracks_fts WHERE rowid IN (SELECT rowid FROM tracks WHERE chat_id='1' AND message_id LIKE '3_')"
+                )
             self.assertEqual(0, database.list_tracks(query="Track 30")["total"])
             # Returns the drift it found (40 tracks missing from the index) after rebuilding.
             self.assertEqual(40, database.reconcile_search())

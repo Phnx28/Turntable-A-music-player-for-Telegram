@@ -509,7 +509,7 @@ class Database:
                 );
 
                 CREATE VIRTUAL TABLE tracks_fts USING fts5(
-                    key UNINDEXED, title, artist, album, file_name, tokenize='trigram'
+                    title, artist, album, file_name, tokenize='trigram'
                 );
 
                 PRAGMA user_version = 2;
@@ -567,6 +567,23 @@ class Database:
                 PRAGMA user_version = 6;
                 """
             )
+            self.connection.commit()
+            version = 6
+        if version < 7:
+            self.connection.executescript(
+                """
+                -- FTSv2: rowid-based, no string key column. The old `key UNINDEXED`
+                -- + `(chat_id || ':' || message_id) IN (SELECT key ...)` forced a string
+                -- concat + bloom-filter per query (7-18ms on 65k). Rowid is an integer
+                -- primary key lookup (0.2-1.6ms, 10-40x). Backup is at
+                -- backups/library-before-p2-2026-08-08.sqlite3 (WAL-safe .backup).
+                DROP TABLE IF EXISTS tracks_fts;
+                CREATE VIRTUAL TABLE tracks_fts USING fts5(title, artist, album, file_name, tokenize='trigram');
+
+                PRAGMA user_version = 7;
+                """
+            )
+            self._rebuild_search(self.connection)
             self.connection.commit()
 
     def ping(self) -> bool:
@@ -912,10 +929,7 @@ class Database:
             return ""
         if len(cleaned) >= 3:
             parameters.append(f'"{cleaned.replace(chr(34), chr(34) * 2)}"')
-            return (
-                "(t.chat_id || ':' || t.message_id) IN "
-                "(SELECT key FROM tracks_fts WHERE tracks_fts MATCH ?)"
-            )
+            return "t.rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)"
         escaped = cleaned.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         parameters.extend([f"%{escaped}%"] * 2)
         return (
@@ -1278,24 +1292,47 @@ class Database:
             parameters,
         ).fetchall()
         if delete:
-            placeholders = ",".join("?" for _ in ordered)
-            connection.execute(f"DELETE FROM tracks_fts WHERE key IN ({placeholders})", ordered)
+            placeholders = ", ".join("?" for _ in ordered)
+            # v6 used a string `key` column; v7 is rowid-based (no key column).
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version >= 7:
+                rowids = [connection.execute("SELECT rowid FROM tracks WHERE chat_id=? AND message_id=?", split_track_key(k)).fetchone() for k in ordered]
+                rowids = [r[0] for r in rowids if r]
+                if rowids:
+                    connection.executemany("DELETE FROM tracks_fts WHERE rowid=?", [(r,) for r in rowids])
+            else:
+                connection.execute(f"DELETE FROM tracks_fts WHERE key IN ({placeholders})", ordered)
         inserts = []
         for row in rows:
             override = json.loads(row["override_payload"] or "{}")
             inserts.append(
                 (
-                    track_key(row["chat_id"], row["message_id"]),
+                    row["chat_id"],
+                    row["message_id"],
                     override.get("title", row["telegram_title"]),
                     override.get("artist", row["telegram_artist"]),
                     override.get("album", row["telegram_album"]),
                     row["file_name"],
                 )
             )
-        connection.executemany(
-            "INSERT INTO tracks_fts (key, title, artist, album, file_name) VALUES (?, ?, ?, ?, ?)",
-            inserts,
-        )
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version >= 7:
+            rowid_inserts = []
+            for chat_id, message_id, title, artist, album, file_name in inserts:
+                row = connection.execute("SELECT rowid FROM tracks WHERE chat_id=? AND message_id=?", (chat_id, message_id)).fetchone()
+                if row:
+                    rowid_inserts.append((row[0], title, artist, album, file_name))
+            if rowid_inserts:
+                connection.executemany(
+                    "INSERT INTO tracks_fts (rowid, title, artist, album, file_name) VALUES (?, ?, ?, ?, ?)",
+                    rowid_inserts,
+                )
+        else:
+            keyed = [(f"{chat_id}:{message_id}", title, artist, album, file_name) for chat_id, message_id, title, artist, album, file_name in inserts]
+            connection.executemany(
+                "INSERT INTO tracks_fts (key, title, artist, album, file_name) VALUES (?, ?, ?, ?, ?)",
+                keyed,
+            )
 
     def get_settings(self) -> dict[str, Any]:
         defaults: dict[str, Any] = {
