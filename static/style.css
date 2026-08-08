@@ -1877,6 +1877,7 @@ html[data-theme="dark"] {
   position: relative;
   top: auto;
   flex: 0 0 auto;
+  z-index: auto;
 }
 .library-content {
   min-height: 0;
