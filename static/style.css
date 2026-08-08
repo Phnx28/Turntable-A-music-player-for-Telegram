@@ -2019,3 +2019,15 @@ textarea { min-height: 150px; max-height: 52dvh; }
 /* 5. Commit to the mono identity when it is chosen, instead of leaving
    Archivo headings floating over a terminal body. */
 html[data-font="mono"] { --font-display: var(--font-mono); }
+
+
+/* Player identity is two lines (title, artist); a locate must never grow a third line. */
+#player-locate > :nth-child(n + 3) { display: none; }
+
+/* Locate flash: background only, no layout motion; reduced motion kills it globally via
+   the existing reduce-motion block. */
+.track-row.locate-flash { animation: locate-flash 1.1s var(--ease-out); }
+@keyframes locate-flash {
+  from { background: color-mix(in srgb, var(--stamp) 32%, transparent); }
+  to { background: transparent; }
+}

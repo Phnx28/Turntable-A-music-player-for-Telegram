@@ -1887,32 +1887,98 @@ function queueShare(recipientId) {
   }, 250);
 }
 
+let locateSeq = 0;
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+// The virtualized list only renders a window of rows; a row exists in the DOM only when the
+// settled render covers it. Locating against a mid-refresh placeholder is the whole "rows
+// flash then vanish" bug, so this never returns a row while #library is refreshing.
+const locateRowFor = (track) =>
+  document.querySelector(`#track-list [data-track-key="${CSS.escape(track.key)}"]`);
+
+async function waitForLocateRow(track, token, timeout) {
+  const library = $("library");
+  const search = $("track-search");
+  const started = performance.now();
+  let clearedFilter = false;
+  while (performance.now() - started < timeout) {
+    if (token !== locateSeq) return null; // a newer locate superseded this flight
+    if (!library.classList.contains("is-refreshing")) {
+      const row = locateRowFor(track);
+      if (row) return row;
+      if (!clearedFilter && search.value) { // filtered out: reveal once, then look again
+        clearedFilter = true;
+        search.value = "";
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+    await nextFrame();
+  }
+  return null;
+}
+
 async function locateCurrent() {
   if (!state.current) return;
-  const button = $("player-locate"); button.disabled = true; button.setAttribute("aria-busy", "true");
+  const button = $("player-locate");
+  const track = state.current;
+  const token = ++locateSeq;
+  button.setAttribute("aria-busy", "true");
   try {
-    const source = state.current.source;
-    if (source.selected === false) {
-      state.temporarySource = { ...source, temporary: true, trackCount: 1 };
-      await selectTemporary();
-    } else if (state.source !== source.chatId || state.likedMode) await selectSource(source.chatId);
-    else {
-      // A previous locate may have left a temporary source pointing elsewhere; keep it only
-      // while it is still the chat being viewed, or the position lookup disagrees with the list.
-      if (state.temporarySource && state.temporarySource.chatId !== source.chatId) {
-        if (state.temporaryJob?.jobId) api(`/api/jobs/${encodeURIComponent(state.temporaryJob.jobId)}`, { method: "DELETE" }).catch(() => {});
-        state.temporarySource = null; state.temporaryJob = null;
-      }
-      $("track-search").value = ""; libraryScroller().scrollTop = 0; await loadLibrary();
+    // 1) Already on screen in the settled render: just land on it.
+    let row = await waitForLocateRow(track, token, 350);
+    if (!row) {
+      // 2) Switch to the track's source through the rail entry, reusing its load path
+      //    (selectSource / selectTemporary) so the library settles exactly as it would
+      //    after a manual click.
+      const chatId = track.source?.chatId;
+      const temporary = Boolean(
+        state.temporarySource?.chatId === chatId
+        && !state.sources.some((item) => item.chatId === chatId),
+      );
+      const link = temporary
+        ? document.querySelector(`[data-temporary-source="${CSS.escape(chatId)}"]`)
+        : document.querySelector(`.source-link[data-source="${CSS.escape(chatId ?? "")}"]`);
+      if (link && !link.classList.contains("active")) link.click();
+      row = await waitForLocateRow(track, token, 2000);
     }
-    const temporary = Boolean(state.temporarySource?.chatId === state.source && !state.sources.some((item) => item.chatId === state.source));
-    const result = await api(`/api/tracks/${encodeURIComponent(state.current.key)}/position?source=${encodeURIComponent(state.source)}&temporary=${temporary}&sort=${encodeURIComponent(state.sort)}`);
-    await loadPage(Math.floor(result.index / 100) * 100);
-    state.rowFocusIndex = result.index;
-    focusTrackRow(result.index, { focus: false });
-  } catch (error) { showError(error, locateCurrent); }
-  finally { button.disabled = false; button.removeAttribute("aria-busy"); }
+    if (!row && token === locateSeq) {
+      // 3) The track sits outside the rendered window (deep library): page the virtualizer
+      //    to its position via the server, then wait for the row to appear in the DOM.
+      const temporary = Boolean(
+        state.temporarySource?.chatId === state.source
+        && !state.sources.some((item) => item.chatId === state.source),
+      );
+      const result = await api(
+        `/api/tracks/${encodeURIComponent(track.key)}/position`
+        + `?source=${encodeURIComponent(state.source)}&temporary=${temporary}&sort=${encodeURIComponent(state.sort)}`,
+      );
+      await loadPage(Math.floor(result.index / 100) * 100);
+      state.rowFocusIndex = result.index;
+      // The virtualizer renders around the scroll position, not the loaded page: scroll it
+      // to the track's approximate offset so the window lands on the row, then re-render.
+      const scroller = libraryScroller();
+      scroller.scrollTop = trackScrollTop(
+        result.index, $("track-list").offsetTop, scroller.clientHeight, trackRowHeight(),
+        daySeparatorHeight(), visibleDayBreaks(),
+      );
+      state.windowStart = -1;
+      renderTracks(true);
+      row = await waitForLocateRow(track, token, 2000);
+    }
+    if (!row || token !== locateSeq) return;
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    row.classList.remove("locate-flash");
+    void row.offsetWidth; // restart the flash cleanly on repeat locates
+    row.classList.add("locate-flash");
+    row.addEventListener("animationend", () => row.classList.remove("locate-flash"), { once: true });
+  } catch (error) {
+    if (token === locateSeq) showError(error, locateCurrent);
+  } finally {
+    if (token === locateSeq) button.removeAttribute("aria-busy");
+  }
 }
+
 
 function installResizer(id, side) {
   const handle = $(id);
