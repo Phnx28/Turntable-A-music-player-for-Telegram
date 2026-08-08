@@ -1,9 +1,10 @@
-import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, virtualTrackWindow, windowFromResult } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, trackScrollTop, virtualTrackWindow, windowFromResult } from "./player-core.js";
 import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
 import { beginLikeOperation, likedState, representationsFor, resolveLikeResponse, rollbackLikeOperation } from "./like-state.js";
 import { knownTotalParam, mergePageInto, pageCacheKey, shouldFetchPage } from "./library-pages.js";
 
 const $ = (id) => document.getElementById(id);
+const libraryScroller = () => $("library-content") || $("library");
 const state = {
   sources: [], tracks: [], discovered: [], source: "", likedMode: false, sort: "posted", current: null, editing: null,
   lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1, queueTruncated: false, queueTotal: 0, queueOffset: 0,
@@ -594,8 +595,10 @@ function renderSources() {
   allMusic?.classList.toggle("active", !state.source && !state.likedMode);
   allMusic?.toggleAttribute("aria-current", !state.source && !state.likedMode);
   const selected = state.likedMode ? null : state.sources.find((item) => item.chatId === state.source) || (state.temporarySource?.chatId === state.source ? state.temporarySource : null);
-  $("source-title").textContent = state.likedMode ? "Liked songs" : selected?.title || "All music";
-  $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : sourceKindLabel(selected.kind)) : "Your Telegram";
+  const channelTitle = state.likedMode ? "Liked songs" : selected?.title || "Crate from Telegram";
+  $("source-title").textContent = channelTitle;
+  $("source-title").title = channelTitle;
+  $("source-kind").textContent = state.likedMode ? "Saved locally" : selected ? (selected.temporary ? "Temporary source" : sourceKindLabel(selected.kind)) : "Your Telegram is a crate";
   $("library").classList.toggle("single-source", Boolean(state.source) && !state.likedMode);
   const synced = formatSyncedAt(selected?.lastSyncedAt, Math.floor(Date.now() / 1000));
   $("library-summary").textContent = `${state.totalTracks.toLocaleString()} ${state.totalTracks === 1 ? "track" : "tracks"}${synced ? ` · ${synced}` : ""}`;
@@ -661,7 +664,7 @@ const coverObserver = new IntersectionObserver((entries) => {
     if ($("library").classList.contains("is-scrolling")) pendingCovers.add(image);
     else loadCover(image);
   }
-}, { root: $("library") || null, rootMargin: "320px" });
+}, { root: libraryScroller() || null, rootMargin: "320px" });
 
 function finishLibraryScroll() {
   $("library").classList.remove("is-scrolling");
@@ -674,23 +677,37 @@ function revealLibrary() {
 
 function trackRowHeight() { return 52; }
 
-function focusTrackRow(index) {
+function focusTrackRow(index, { focus = true, reveal = true } = {}) {
   if (!state.totalTracks) return;
   index = Math.max(0, Math.min(state.totalTracks - 1, index));
   state.rowFocusIndex = index;
-  const row = document.querySelector(`.track-row[data-track-index="${index}"]`);
-  if (row) { row.focus(); return; }
-  // The target is outside the rendered window: scroll it into view; the scroll handler
-  // re-renders the window, then focus lands once the row exists.
-  const scroller = $("library");
-  scroller.scrollTop = Math.max(0, $("track-list").offsetTop + index * trackRowHeight() - scroller.clientHeight / 2);
-  let attempts = 0;
-  const tryFocus = () => {
-    const target = document.querySelector(`.track-row[data-track-index="${index}"]`);
-    if (target) target.focus();
-    else if (++attempts < 20) requestAnimationFrame(tryFocus);
+  const revealRow = (row) => {
+    if (reveal) row.scrollIntoView({
+      block: "center",
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+    if (focus) row.focus();
   };
-  requestAnimationFrame(tryFocus);
+  const row = document.querySelector(`.track-row[data-track-index="${index}"]`);
+  if (row) { revealRow(row); return; }
+  // The target is outside the rendered window: move its approximate row to the top first.
+  // The virtualizer then renders a look-ahead window, after which the row is recentred.
+  const scroller = libraryScroller();
+  scroller.scrollTop = trackScrollTop(
+    index, $("track-list").offsetTop, scroller.clientHeight, trackRowHeight(),
+    daySeparatorHeight(), visibleDayBreaks(),
+  );
+  // Scroll events are delivered after this call; render immediately as well so a deep locate
+  // never leaves a sparse placeholder window visible while the browser catches up.
+  state.windowStart = -1;
+  renderTracks(true);
+  let attempts = 0;
+  const tryReveal = () => {
+    const target = document.querySelector(`.track-row[data-track-index="${index}"]`);
+    if (target) revealRow(target);
+    else if (++attempts < 20) requestAnimationFrame(tryReveal);
+  };
+  requestAnimationFrame(tryReveal);
 }
 function daySeparatorHeight() {
   return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--day-separator-height")) || 28;
@@ -734,8 +751,8 @@ function renderTracks(force = false) {
       body = "Tap the heart on any row or in the player to save it here.";
       showAdd = false; showClear = false;
     } else {
-      title = "Add a channel, bot, or private chat";
-      body = "The app will find its audio and keep the playlist in sync.";
+      title = "Fill the crate";
+      body = "Add a channel, bot, or private chat — audio appears as a playable crate, in sync.";
       showAdd = true; showClear = false;
     }
     $("empty-title").textContent = title;
@@ -754,7 +771,7 @@ function renderTracks(force = false) {
     if (!$("library").classList.contains("is-refreshing")) list.innerHTML = librarySkeleton();
     return;
   }
-  const scroller = $("library");
+  const scroller = libraryScroller();
   const rowHeight = trackRowHeight();
   const dayBreaks = visibleDayBreaks();
   const { start, end, topHeight, bottomHeight } = virtualTrackWindow({
@@ -859,7 +876,7 @@ async function selectSource(chatId) {
   // whole channel. Letting it finish in the background makes the return trip incremental.
   state.source = chatId; state.likedMode = false;
   $("track-search").value = "";
-  $("library").scrollTop = 0;
+  libraryScroller().scrollTop = 0;
   closeGlobalSearch();
   renderSources();
   $("source-rail").classList.remove("open");
@@ -868,7 +885,7 @@ async function selectSource(chatId) {
 
 async function selectLiked() {
   state.source = ""; state.likedMode = true; $("track-search").value = "";
-  $("library").scrollTop = 0; closeGlobalSearch(); renderSources(); schedulePersist();
+  libraryScroller().scrollTop = 0; closeGlobalSearch(); renderSources(); schedulePersist();
   await loadLibrary();
 }
 
@@ -876,7 +893,7 @@ async function selectTemporary() {
   if (!state.temporarySource) return;
   state._sourceChangeScroll = true;
   state.source = state.temporarySource.chatId; state.likedMode = false;
-  $("track-search").value = ""; $("library").scrollTop = 0; renderSources(); schedulePersist();
+  $("track-search").value = ""; libraryScroller().scrollTop = 0; renderSources(); schedulePersist();
   await loadLibrary();
   // The preview is incremental once the source has a cursor, so re-entering only scans new
   // messages. Fire it either way, but do not block the list on it.
@@ -999,7 +1016,7 @@ async function playKey(key, queue = null, explicitIndex = null) {
   // Cache the playing track in the background so seeks, scrubs and the error retry below are
   // served from disk instead of reopening ranges against Telegram.
   api("/api/playback/cache-current", { method: "POST", body: JSON.stringify({ key }) }).catch(() => {});
-  setTrackUi(); renderQueue(); schedulePrefetch();
+  setTrackUi(); renderQueue({ followCurrent: true }); schedulePrefetch();
   api("/api/playback/events", { method: "POST", body: JSON.stringify({ key, event: "started" }) }).catch(() => {});
   loadLyrics();
   schedulePersist();
@@ -1248,7 +1265,20 @@ async function ensureSummaries(keys) {
 
 const QUEUE_EMPTY = '<div class="queue-empty"><strong>Your queue is empty</strong><span>Choose a track or add one from its more menu.</span><button class="button" type="button" data-queue-browse>Browse library</button></div>';
 
-function renderQueue() {
+function followQueueCurrent() {
+  const container = $("now-content");
+  const pane = $("queue-pane");
+  const row = pane.querySelector(".queue-row.current");
+  if (!row || pane.hidden) return;
+  const rowRect = row.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const rowTop = rowRect.top - containerRect.top + container.scrollTop;
+  const headerHeight = pane.querySelector(".queue-header")?.offsetHeight || 0;
+  const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  container.scrollTo({ top: Math.max(0, rowTop - headerHeight - 8), behavior });
+}
+
+function renderQueue({ followCurrent = false } = {}) {
   const historyStart = Math.max(0, state.queueIndex - state.historyVisible);
   const visibleStart = historyStart;
   const visibleEnd = Math.min(state.queue.length, state.queueIndex + 101);
@@ -1270,6 +1300,7 @@ function renderQueue() {
   // Rows or the empty state, never both: the old form concatenated them, so a one-track queue
   // showed a PLAYING row with "your queue is clear" underneath it.
   $("queue-list").innerHTML = view.isEmpty ? QUEUE_EMPTY : rows;
+  if (followCurrent) requestAnimationFrame(followQueueCurrent);
   ensureSummaries(visible);
 }
 
@@ -1529,7 +1560,7 @@ function showPanel(tab = "lyrics", toggle = false) {
   }
   for (const name of ["lyrics", "queue", "details"]) { const active = name === tab; $(`${name}-pane`).hidden = !active; $(`${name}-tab`).classList.toggle("active", active); $(`${name}-tab`).setAttribute("aria-selected", String(active)); }
   const pane = $(`${tab}-pane`); pane.classList.remove("pane-entering"); requestAnimationFrame(() => pane.classList.add("pane-entering"));
-  if (tab === "queue") renderQueue();
+  if (tab === "queue") renderQueue({ followCurrent: true });
   // All three panes share one scroll container, so a deep offset from a long lyric sheet
   // carried over to a short Details pane and left it opened mid-scroll. Only on a real tab
   // change, so re-opening the panel on the current tab keeps the lyric you were reading.
@@ -1613,10 +1644,11 @@ function setNowHeaderCompact(header, compact) {
     const dy = first.top - last.top;
     const sx = first.width / last.width;
     const sy = first.height / last.height;
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
+    const scale = Math.min(sx, sy);
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(scale - 1) < 0.01) return;
     NOW_HEADER_FLIP_ANIMATIONS.get(element)?.cancel();
     const flip = element.animate(
-      [{ transformOrigin: "top left", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+      [{ transformOrigin: "top left", transform: `translate(${dx}px, ${dy}px) scale(${scale})` },
        { transformOrigin: "top left", transform: "none" }],
       { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" },
     );
@@ -1858,17 +1890,13 @@ async function locateCurrent() {
         if (state.temporaryJob?.jobId) api(`/api/jobs/${encodeURIComponent(state.temporaryJob.jobId)}`, { method: "DELETE" }).catch(() => {});
         state.temporarySource = null; state.temporaryJob = null;
       }
-      $("track-search").value = ""; $("library").scrollTop = 0; await loadLibrary();
+      $("track-search").value = ""; libraryScroller().scrollTop = 0; await loadLibrary();
     }
     const temporary = Boolean(state.temporarySource?.chatId === state.source && !state.sources.some((item) => item.chatId === state.source));
     const result = await api(`/api/tracks/${encodeURIComponent(state.current.key)}/position?source=${encodeURIComponent(state.source)}&temporary=${temporary}&sort=${encodeURIComponent(state.sort)}`);
     await loadPage(Math.floor(result.index / 100) * 100);
-    state.windowStart = -1; renderTracks(true);
-    requestAnimationFrame(() => {
-      const row = document.querySelector(`.track-row[data-track-key="${CSS.escape(state.current.key)}"]`);
-      if (row) row.scrollIntoView({ block: 'center' });
-      row?.focus();
-    });
+    state.rowFocusIndex = result.index;
+    focusTrackRow(result.index, { focus: false });
   } catch (error) { showError(error, locateCurrent); }
   finally { button.disabled = false; button.removeAttribute("aria-busy"); }
 }
@@ -2241,8 +2269,8 @@ $("track-list").addEventListener("keydown", (event) => {
   if (event.key === "Home") { event.preventDefault(); focusTrackRow(0); return; }
   if (event.key === "End") { event.preventDefault(); focusTrackRow(state.totalTracks - 1); return; }
   // PageUp/PageDown: one viewport of rows.
-  if (event.key === "PageDown") { event.preventDefault(); focusTrackRow(index + Math.max(1, Math.floor($("library").clientHeight / trackRowHeight()))); return; }
-  if (event.key === "PageUp") { event.preventDefault(); focusTrackRow(index - Math.max(1, Math.floor($("library").clientHeight / trackRowHeight()))); return; }
+  if (event.key === "PageDown") { event.preventDefault(); focusTrackRow(index + Math.max(1, Math.floor(libraryScroller().clientHeight / trackRowHeight()))); return; }
+  if (event.key === "PageUp") { event.preventDefault(); focusTrackRow(index - Math.max(1, Math.floor(libraryScroller().clientHeight / trackRowHeight()))); return; }
 });
 $("track-sort").addEventListener("change", (event) => {
   state.sort = event.target.value;
@@ -2262,10 +2290,11 @@ $("track-list").addEventListener("error", (event) => { if (event.target.matches(
 // Hold the image in a local: the browser clears event.target once dispatch finishes, so
 // reading it inside the rAF threw on every single thumbnail and the fade-in never ran.
 $("track-list").addEventListener("load", (event) => { const image = event.target; if (image.matches(".row-art")) requestAnimationFrame(() => { image.classList.add("is-ready"); image.nextElementSibling?.classList.add("is-covered"); }); }, true);
-$("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { $("library").scrollTop = 0; loadLibrary(false, true); }, 220); });
-$("empty-clear-search").addEventListener("click", () => { $("track-search").value = ""; $("library").scrollTop = 0; loadLibrary(); $("track-search").focus(); });
-$("library").addEventListener("scroll", () => {
-  document.querySelector(".library-header").classList.toggle("is-scrolled", $("library").scrollTop > 8);
+$("track-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { libraryScroller().scrollTop = 0; loadLibrary(false, true); }, 220); });
+$("empty-clear-search").addEventListener("click", () => { $("track-search").value = ""; libraryScroller().scrollTop = 0; loadLibrary(); $("track-search").focus(); });
+libraryScroller().addEventListener("scroll", () => {
+  const scroller = libraryScroller();
+  document.querySelector(".library-header").classList.toggle("is-scrolled", scroller.scrollTop > 8);
   $("library").classList.add("is-scrolling");
   clearTimeout(scrollIdleTimer); scrollIdleTimer = setTimeout(finishLibraryScroll, 120);
   if (libraryFrame) return;
@@ -2306,6 +2335,7 @@ function setVolume(value) {
   audio.volume = Math.min(1, Math.max(0, Number(value) || 0));
   if (audio.volume) lastAudibleVolume = audio.volume;
   $("volume").value = audio.volume;
+  $("volume").style.setProperty("--volume", `${Math.round(audio.volume * 100)}%`);
   $("volume").setAttribute("aria-valuetext", `${Math.round(audio.volume * 100)} percent`);
   $("volume-toggle").classList.toggle("muted", !audio.volume);
   $("volume-toggle").setAttribute("aria-label", audio.volume ? "Mute" : "Restore volume");
@@ -2371,7 +2401,11 @@ if ("mediaSession" in navigator) { navigator.mediaSession.setActionHandler("play
 
 $("queue-list").addEventListener("click", (event) => { const play = event.target.closest("[data-queue-play]"); const button = event.target.closest("[data-remove-queue]"); if (event.target.closest("[data-queue-browse]")) { closePanel(); return $("track-list").querySelector(".track-row")?.focus(); } if (play) playKey(state.queue[Number(play.dataset.queuePlay)], null, Number(play.dataset.queuePlay)).catch(showError); if (button) { state.queue.splice(Number(button.dataset.removeQueue), 1); renderQueue(); schedulePrefetch(); schedulePersist(); } }); $("queue-list").addEventListener("dragstart", (event) => { draggedQueue = Number(event.target.closest("[data-queue-index]")?.dataset.queueIndex); event.target.closest("[data-queue-index]")?.classList.add("queue-dragging"); }); $("queue-list").addEventListener("dragover", (event) => event.preventDefault()); $("queue-list").addEventListener("drop", (event) => { event.preventDefault(); document.querySelector(".queue-dragging")?.classList.remove("queue-dragging"); const target = Number(event.target.closest("[data-queue-index]")?.dataset.queueIndex); if (Number.isInteger(draggedQueue) && Number.isInteger(target) && draggedQueue !== target && draggedQueue > state.queueIndex && target > state.queueIndex) { const [key] = state.queue.splice(draggedQueue, 1); state.queue.splice(target, 0, key); renderQueue(); schedulePrefetch(); schedulePersist(); } }); $("queue-list").addEventListener("dragend", (event) => { event.target.closest("[data-queue-index]")?.classList.remove("queue-dragging"); }); $("clear-queue").addEventListener("click", () => { state.queue = state.current ? [state.current.key] : []; state.queueIndex = state.current ? 0 : -1; renderQueue(); schedulePrefetch(); schedulePersist(); });
 
-$("player-open").addEventListener("click", () => showPanel("lyrics")); $("player-locate").addEventListener("click", () => locateCurrent()); $("show-lyrics").addEventListener("click", () => showPanel("lyrics", true)); $("close-now").addEventListener("click", closePanel); for (const tab of ["lyrics", "queue", "details"]) $(`${tab}-tab`).addEventListener("click", () => showPanel(tab));
+$("player-open").addEventListener("click", () => showPanel("lyrics"));
+$("player-locate").addEventListener("pointerdown", () => { $("player-locate").dataset.pointerFocus = "true"; });
+$("player-locate").addEventListener("blur", () => { delete $("player-locate").dataset.pointerFocus; });
+$("player-locate").addEventListener("click", () => locateCurrent());
+$("show-lyrics").addEventListener("click", () => showPanel("lyrics", true)); $("close-now").addEventListener("click", closePanel); for (const tab of ["lyrics", "queue", "details"]) $(`${tab}-tab`).addEventListener("click", () => showPanel(tab));
 $("now-panel").querySelector('[role="tablist"]').addEventListener("keydown", (e) => {
   const tabs = [...e.currentTarget.querySelectorAll('[role="tab"]')]; const i = tabs.indexOf(document.activeElement); if (i === -1) return;
   if (e.key === "ArrowRight") { e.preventDefault(); tabs[(i + 1) % tabs.length].click(); tabs[(i + 1) % tabs.length].focus(); }

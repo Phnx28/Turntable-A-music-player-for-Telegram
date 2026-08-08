@@ -53,6 +53,19 @@ export function normalizeTrackPage(payload) {
   };
 }
 
+export function trackScrollTop(index, listTop, clientHeight, rowHeight, separatorHeight = 0, dayBreaks = []) {
+  const position = Math.max(0, Number(index) || 0);
+  const top = Math.max(0, Number(listTop) || 0);
+  const row = Math.max(1, Number(rowHeight) || 1);
+  const separator = Math.max(0, Number(separatorHeight) || 0);
+  const separatorsBefore = Array.isArray(dayBreaks)
+    ? dayBreaks.filter(({ index: breakIndex }) => Number.isInteger(breakIndex) && breakIndex < position).length
+    : 0;
+  // Put the target at the top of the virtual viewport first. The renderer keeps a
+  // look-ahead window, so this guarantees the row exists before scrollIntoView recentres it.
+  return Math.max(0, top + position * row + separatorsBefore * separator);
+}
+
 export function virtualTrackWindow({ scrollTop, listTop, total, rowHeight, separatorHeight, dayBreaks }) {
   const count = Math.max(0, Math.floor(Number(total) || 0));
   const row = Math.max(1, Number(rowHeight) || 1);

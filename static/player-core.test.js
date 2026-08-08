@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, virtualTrackWindow, windowFromResult } from "./player-core.js";
+import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, trackScrollTop, virtualTrackWindow, windowFromResult } from "./player-core.js";
 
 test("player helpers", () => {
   assert.equal(formatTime(65.9), "1:05");
@@ -98,6 +98,19 @@ test("snapshotWindow keeps only the window, and remembers the real total", () =>
   // A complete queue is its own total; the stored length must not invent a larger one.
   const complete = snapshotWindow(["a", "b", "c"], 1, { total: 3, truncated: false, offset: 0 });
   assert.equal(complete.queueTotal, 3);
+});
+
+test("deep locate scrolls the virtual library window onto the target", () => {
+  const index = 320;
+  const listTop = 200;
+  const viewport = 600;
+  const dayBreaks = Array.from({ length: 8 }, (_, offset) => ({ index: (offset + 1) * 40, dayKey: String(offset) }));
+  const scrollTop = trackScrollTop(index, listTop, viewport, 52, 28, dayBreaks);
+  const window = virtualTrackWindow({
+    scrollTop, listTop, total: 500, rowHeight: 52, separatorHeight: 28, dayBreaks,
+  });
+  assert.ok(index >= window.start && index < window.end,
+    `target ${index} must be rendered in ${window.start}..${window.end}`);
 });
 
 test("windowFromResult marks truncation from the server total", () => {

@@ -1028,7 +1028,7 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("── 30 JUL ──", page.text_content('.day-separator[data-day-key="2025-07-30"]'))
 
         page.evaluate("""() => {
-          const library = document.getElementById('library');
+          const library = document.getElementById('library-content');
           library.scrollTop = document.getElementById('track-list').offsetTop + 4300;
           library.dispatchEvent(new Event('scroll'));
         }""")

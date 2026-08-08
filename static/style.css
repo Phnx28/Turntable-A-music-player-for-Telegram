@@ -4,7 +4,7 @@
   /* :root -- 1.082 separation from --paper, graphite still 5.06:1 on it */
   --rail: #f2f0ea;
   --surface: #ffffff;
-  --surface-raised: #ffffff;
+  --surface-raised: color-mix(in srgb, #ffffff 98%, var(--ink) 2%);
   --ink: #14110f;
   --graphite: #6b655d;
   --rule: #ddd8ce;
@@ -15,6 +15,7 @@
   --scrim: rgb(20 17 15 / .82);
   --radius-control: 6px;
   --radius-panel: 12px;
+  --radius-art: 4px;
   --radius-pill: 999px;
   --elev-0: none;
   --elev-1: 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent);
@@ -122,9 +123,8 @@ html { scroll-behavior: smooth; }
 ::-webkit-scrollbar-thumb:hover { background: var(--graphite); background-clip: content-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* Self-hosted: --font-ui named Inter with no @font-face anywhere, so the face carrying the
-   identity silently became Segoe UI or a generic sans on most machines. One Archivo file
-   covers display and body -- it ships a wdth axis, so font-stretch does the condensing. */
+/* Self-hosted Archivo carries the interface identity instead of falling back to a platform
+   sans. One variable file covers display and body, and its wdth axis supplies the condensed title. */
 @font-face {
   font-family: "Archivo";
   font-style: normal;
@@ -182,7 +182,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 button:disabled { cursor: not-allowed; opacity: .45; }
-select:disabled { cursor: not-allowed; opacity: .5; }
+select:disabled { cursor: not-allowed; opacity: .45; }
 button:active:not(:disabled) { transform: scale(.985); }
 :where(.source-link, .track-main, .global-result, .contact-row, .queue-copy, .tab, .settings-nav button):active { transform: none; }
 
@@ -350,7 +350,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex;
   min-height: 0;
   flex-direction: column;
-  padding: 25px 18px 18px;
+  padding: 20px 14px 14px;
   border-right: 1px solid var(--rule);
   background: var(--rail);
 }
@@ -358,7 +358,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-search-wrap { position: relative; margin: 0 0 12px; }
 .global-search-control {
   display: grid;
-  height: 39px;
+  height: 40px;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
@@ -367,15 +367,15 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-radius: var(--radius-control);
   background: var(--surface);
 }
-.global-search-control:has(input:focus-visible) { border-color: var(--ink); box-shadow: var(--focus-ring); }
+.global-search-control:has(input:focus-visible) { border-color: var(--ink); } /* avoid cramped double halo inside rail */
 .global-search-trigger { display: grid; width: 18px; height: 100%; place-items: center; padding: 0; border: 0; background: transparent; color: var(--graphite); cursor: pointer; }
 .global-search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .global-search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; font-size: 13px; }
 .global-results {
   position: fixed;
-  z-index: 40;
-  top: 76px;
-  left: calc(var(--rail-width) - 14px);
+  z-index: 120;
+  top: 64px;
+  left: calc(var(--rail-width) + 12px);
   width: min(560px, calc(100vw - var(--rail-width) - 28px));
   max-height: min(690px, calc(100vh - var(--player-height) - 96px));
   padding: 18px;
@@ -416,11 +416,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-result .track-copy small { font-size: var(--text-small); }
 .result-art-wrap { width: var(--art-row); height: var(--art-row); }
 .result-provenance { color: var(--graphite); font-size: var(--text-micro); white-space: nowrap; }
-.global-results .empty-copy { margin: 18px 0 5px; }
+.global-results .empty-copy { margin: 14px 0 6px; padding: 10px 12px; border: 1px dashed var(--rule); border-radius: var(--radius-control); background: color-mix(in srgb, var(--surface) 88%, var(--paper) 12%); color: var(--graphite); font-size: 12px; }
 @keyframes search-pulse { to { outline: 10px solid transparent; } }
 
 .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 8px 30px; }
-.brand-logo { width: 44px; height: 44px; border-radius: 10px; object-fit: contain; flex: 0 0 auto; }
+.brand-logo { width: 44px; height: 44px; border-radius: var(--radius-control); object-fit: contain; flex: 0 0 auto; }
 /* Swap to the light-ink artwork rather than filtering. `filter: invert(1)` rotated the mark's
    hue to its complement, which is why the logo read purple in light mode and green in dark. */
 [data-theme="dark"] .brand-logo { content: url("/assets/logo-dark.png"); }
@@ -512,14 +512,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 .library-header.is-scrolled { box-shadow: var(--elev-1); }
 
 .library-heading { flex: 1; min-width: 0; }
-.library-heading h1 { margin: 8px 0 4px; overflow: hidden; font-size: var(--text-display); font-stretch: 62%; font-weight: 480; letter-spacing: .01em; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.library-heading h1 { margin: 8px 0 4px; font-size: var(--text-display); font-stretch: 62%; font-weight: 480; letter-spacing: .01em; line-height: 1; overflow-wrap: anywhere; }
+.library-heading h1.is-truncated { cursor: help; }
 .library-heading .small-copy { margin: 0; }
 .header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 
 .search-control {
   display: flex;
-  width: 190px;
-  height: 40px;
+  width: 200px;
+  height: 38px;
   align-items: center;
   gap: 7px;
   padding: 0 10px;
@@ -527,14 +528,17 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-radius: var(--radius-control);
   background: var(--surface);
 }
-.search-control:has(input:focus-visible) { border-color: var(--ink); box-shadow: var(--focus-ring); }
+.search-control:has(input:focus-visible), .sort-control:has(select:focus-visible) { border-color: var(--ink); } /* one ink, no double paper halo */
 .search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
-.sort-control select { min-height: 40px; }
+.sort-control { display: flex; height: 40px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
+.sort-control:has(select:focus-visible) { outline: 0; }
+.sort-control select { height: 38px; min-height: 38px; padding: 0 30px 0 10px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-mono); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
+.sort-control select:focus-visible { outline: 0; box-shadow: none; }
+.sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
 
-.icon-button,
-.play-button {
+.icon-button {
   display: inline-grid;
   width: 40px;
   height: 40px;
@@ -547,6 +551,26 @@ body.resizing { cursor: col-resize; user-select: none; }
   cursor: pointer;
 }
 .icon-button:hover { border-color: var(--rule); background: var(--surface); }
+.play-button {
+  display: inline-grid;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  box-shadow: var(--elev-2);
+  transition: transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out), background-color 120ms var(--ease-out);
+}
+.play-button { box-shadow: var(--elev-2), 0 0 0 1px color-mix(in srgb, var(--paper) 14%, transparent); }
+.play-button:focus-visible { box-shadow: var(--elev-2), var(--focus-ring); }
+
+.play-button:hover { box-shadow: var(--elev-3), 0 0 0 1px color-mix(in srgb, var(--paper) 14%, transparent); transform: translateY(-1px); }
+.play-button:active:not(:disabled) { transform: scale(.96); }
 
 .track-head,
 .track-row {
@@ -556,7 +580,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   column-gap: 14px;
 }
 
-.track-head { min-height: 43px; padding: 0 9px; border-bottom: 1px solid var(--rule); color: var(--graphite); }
+.track-head { min-height: 34px; padding: 0 9px; border-bottom: 1px solid var(--rule-soft); color: var(--graphite); font-size: 10px; }
 .head-sort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: inherit; text-transform: inherit; cursor: pointer; }
 .head-sort:hover { color: var(--ink); }
 .head-sort[aria-sort] { color: var(--ink); font-weight: 620; }
@@ -592,7 +616,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .track-row.current { background: color-mix(in srgb, var(--stamp) 30%, transparent); }
 .track-main { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .track-main > .track-copy { flex: 1 1 auto; }
-.row-art { width: var(--art-row); height: var(--art-row); flex: 0 0 auto; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); object-fit: cover; }
+.row-art { width: var(--art-row); height: var(--art-row); flex: 0 0 auto; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--surface); object-fit: cover; }
 .track-copy, .player-copy { min-width: 0; }
 .track-copy strong, .track-copy small, .player-copy strong, .player-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .track-copy strong { font-size: 14px; font-weight: 650; }
@@ -602,7 +626,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .track-ordinal, .track-posted { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
 .track-ordinal { text-align: right; }
 /* The playing row's ordinal becomes the one stamped mark on screen. */
-.playing-mark { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--stamp); }
+.playing-mark { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--stamp); box-shadow: 0 0 0 3px color-mix(in srgb, var(--stamp) 20%, transparent); }
 /* Inside a single source the column prints the h1 on every row, and it is the widest one. */
 .library.single-source .track-source { display: none; }
 @media (min-width: 1121px) {
@@ -618,11 +642,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .track-row:hover .track-row-actions .icon-button, .track-row:focus-within .track-row-actions .icon-button { color: var(--ink); }
 .track-row-actions .icon-button { width: 32px; height: 32px; }
 
-.empty-state { position: relative; display: grid; width: min(100%, 440px); min-height: 50vh; align-content: center; justify-items: center; margin: 0 auto; padding: 40px 24px; border-radius: var(--radius-panel); overflow: hidden; text-align: center; isolation: isolate; }
+.empty-state { position: relative; display: grid; width: 100%; min-height: min(42vh, 380px); align-content: center; justify-items: center; margin: 8px 0 0; padding: 36px 24px; border: 1px solid var(--rule); border-radius: var(--radius-panel); background: var(--surface); overflow: hidden; text-align: center; isolation: isolate; }
 /* Ambient film: 6% blurred image only behind the empty state, masked so text stays crisp.
    No extra element — the pseudo-element sits behind the grid content (z-index:-1) and is
    clipped by overflow:hidden. Fails gracefully: image 404 = plain paper + grain. */
-.empty-state::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--paper); background-image: radial-gradient(ellipse 72% 58% at 34% 28%, color-mix(in srgb, var(--graphite) 7%, transparent) 0%, transparent 62%), radial-gradient(ellipse 58% 52% at 82% 72%, color-mix(in srgb, var(--ink) 5%, transparent) 0%, transparent 58%); opacity: .9; }
+.empty-state::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--surface); opacity: 1; }
 .empty-state::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: radial-gradient(ellipse 85% 70% at 50% 42%, transparent 38%, var(--paper) 78%); }
 .empty-state h2 { margin: 12px 0 10px; font-size: 28px; font-weight: 500; letter-spacing: -.035em; }
 .empty-state p:not(.eyebrow) { margin: 0 0 22px; color: var(--graphite); }
@@ -634,7 +658,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  padding: 24px 24px 36px;
+  padding: 20px 16px 28px;
   border-left: 1px solid var(--rule);
   background: var(--surface);
 }
@@ -656,11 +680,16 @@ body.resizing { cursor: col-resize; user-select: none; }
   max-height: 45%;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
+/* replaced — art sized as square by .large-art-wrap block */
 .now-header:not(.is-compact) .large-art-wrap {
-  width: auto;
-  height: 100%;
+  width: min(48vw, 200px);
+  height: auto;
   min-height: 0;
-  margin: 6px auto;
+  aspect-ratio: 1;
+  align-self: center;
+  justify-self: center;
+  border-radius: 50%;
+  overflow: hidden;
 }
 .now-content { overflow-y: auto; flex: 1; min-height: 0; }
 
@@ -671,14 +700,14 @@ body.resizing { cursor: col-resize; user-select: none; }
    button remains reachable even while the art/title grid is collapsed. */
 .now-header.is-compact .panel-header { display: contents; }
 .now-header.is-compact #close-now { grid-area: close; }
-.now-header.is-compact .large-art-wrap { width: 64px; margin: 8px 0; grid-area: art; }
+.now-header.is-compact .large-art-wrap { width: 44px; height: 44px; margin: 0; grid-area: art; border-radius: 50%; }
 .now-header.is-compact .now-title { height: auto; grid-area: title; }
 .now-header.is-compact .now-title h2 { font-size: 17px; -webkit-line-clamp: 1; }
 .now-header.is-compact .now-title p { margin: 2px 0 0; font-size: 12px; }
 .now-header.is-compact .now-tabs { margin-top: 8px; grid-area: tabs; }
 /* Opaque and edge-to-edge, otherwise lines scrolling behind the sticky header show in the
    panel's horizontal padding. */
-.now-header.is-compact { margin: 0 -24px; padding: 4px 24px 0; box-shadow: 0 6px 14px -12px rgb(0 0 0 / .45); }
+.now-header.is-compact { margin: 0 -24px; padding: 4px 24px 0; box-shadow: 0 6px 14px -12px rgb(4 3 3 / .45); }
 
 /* Geometry is animated by the FLIP pass in updateNowHeader, not by a CSS transition: the
    expanded art has no explicit width, and a transition out of `auto` is not interpolable, so
@@ -699,13 +728,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 .modal-header { align-items: flex-start; }
 .large-art-wrap {
   position: relative;
-  margin: 20px 0 23px;
+  margin: 22px auto 18px;
   aspect-ratio: 1;
   overflow: hidden;
-  border-radius: var(--radius-control);
+  border-radius: 50%;
   box-shadow: var(--elev-2);
+  align-self: center;
+  justify-self: center;
 }
-.large-art, .art-placeholder { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: var(--radius-control); object-fit: cover; }
+.large-art, .art-placeholder { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: 50%; object-fit: cover; }
 .large-art-wrap > .large-art, .large-art-wrap > .art-placeholder { position: absolute; inset: 0; }
 .large-art { z-index: 1; opacity: 0; transition: opacity 200ms var(--ease-out); }
 .large-art.is-ready { opacity: 1; }
@@ -738,7 +769,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   height: 7%;
   border-radius: 50%;
   background: var(--paper);
-  box-shadow: inset 0 1px 3px rgb(0 0 0 / .45);
+  box-shadow: inset 0 1px 3px rgb(4 3 3 / .45);
   content: "";
   pointer-events: none;
   transform: translate(-50%, -50%);
@@ -759,7 +790,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .art-placeholder::before { inset: 17%; }
 .art-placeholder::after { inset: 35%; background: var(--rule-soft); opacity: .75; }
 .art-placeholder span:not(.label-stamp) { inset: 46%; background: var(--ink); }
-.art-placeholder.mini { width: 48px; height: 48px; border-radius: 3px; }
+.art-placeholder.mini { width: 48px; height: 48px; border-radius: var(--radius-art); }
 .white-label { display: grid; place-items: center; padding: 22%; background: var(--paper); }
 .white-label::before, .white-label::after { display: none; }
 .label-stamp {
@@ -794,8 +825,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab.active { color: var(--ink); }
 .tab.active::after { transform: scaleX(1); }
 
-.lyrics-pane { min-height: 300px; padding-top: 28px; }
-.lyrics-attribution { margin: 0 0 12px; color: var(--graphite); font-size: var(--text-micro); }
+.lyrics-pane { display: flex; flex-direction: column; min-height: 300px; padding-top: 18px; }
+.lyrics-attribution { order: 99; margin: 24px 0 0; padding-top: 14px; border-top: 1px solid var(--rule-soft); color: var(--graphite); font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 /* min-width: 0 because a grid track defaults to min-width: auto, so it refuses to shrink
    below its longest word and pushes the whole pane wide. One stored sheet here has a 78
    character rule of hyphens, which overflowed the panel by 101px on mobile and 132px on a
@@ -840,7 +871,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   padding: 0;
   border-top: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(14px) saturate(1.05);
+  backdrop-filter: blur(12px) saturate(1.02);
   -webkit-backdrop-filter: blur(14px) saturate(1.05);
   box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 -10px 24px color-mix(in srgb, var(--ink) 7%, transparent), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 80%, transparent);
 }
@@ -858,7 +889,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   bottom: 100%;
   left: 0;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-art);
   background: var(--ink);
   color: var(--paper);
   font-family: var(--font-mono);
@@ -905,8 +936,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .progress::-webkit-slider-runnable-track { height: 3px; background: linear-gradient(to right, var(--ink) 0 var(--progress, 0%), var(--graphite) var(--progress, 0%) var(--buffered, 0%), var(--rule) var(--buffered, 0%) 100%); }
 .progress::-moz-range-track { height: 3px; background: var(--rule); }
 .progress::-moz-range-progress { height: 3px; background: var(--ink); }
-.progress::-webkit-slider-thumb { width: 10px; height: 10px; margin-top: -3.5px; appearance: none; border: 1px solid var(--paper); border-radius: 50%; background: var(--stamp); opacity: 1; }
-.progress::-moz-range-thumb { width: 10px; height: 10px; border: 1px solid var(--paper); border-radius: 50%; background: var(--stamp); opacity: 1; }
+.progress::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4.5px; appearance: none; border: 2px solid var(--paper); border-radius: 50%; background: var(--ink); opacity: 1; box-shadow: 0 1px 4px rgb(0 0 0 / .25); }
+.progress::-moz-range-thumb { width: 12px; height: 12px; border: 2px solid var(--paper); border-radius: 50%; background: var(--ink); opacity: 1; box-shadow: 0 1px 4px rgb(0 0 0 / .25); }
 .progress:hover::-webkit-slider-thumb, .progress:focus-visible::-webkit-slider-thumb { opacity: 1; }
 .progress:hover::-moz-range-thumb, .progress:focus-visible::-moz-range-thumb { opacity: 1; }
 .progress:focus-visible { box-shadow: var(--focus-ring); }
@@ -916,10 +947,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .player-track-actions { display: flex; align-items: center; gap: 1px; }
 .player-track-actions .icon-button { width: 32px; height: 32px; }
 .icon-button.active { color: var(--ink); }
-.mini-art-wrap { position: relative; display: block; width: 48px; height: 48px; flex: 0 0 auto; overflow: hidden; border-radius: 3px; box-shadow: var(--elev-1); }
+.mini-art-wrap { position: relative; display: block; width: 48px; height: 48px; flex: 0 0 auto; overflow: hidden; border-radius: var(--radius-art); box-shadow: var(--elev-1); }
 .mini-art-wrap > .row-art, .mini-art-wrap > .art-placeholder.mini { position: absolute; inset: 0; width: 100%; height: 100%; }
 .track-row .mini-art-wrap { width: var(--art-row); height: var(--art-row); }
-.mini-art { position: absolute; z-index: 1; inset: 0; width: 48px; height: 48px; border: 1px solid var(--rule); border-radius: 3px; object-fit: cover; opacity: 0; transition: opacity 200ms var(--ease-out); }
+.mini-art { position: absolute; z-index: 1; inset: 0; width: 48px; height: 48px; border: 1px solid var(--rule); border-radius: var(--radius-art); object-fit: cover; opacity: 0; transition: opacity 200ms var(--ease-out); }
 .mini-art.is-ready { opacity: 1; }
 .art-placeholder.mini.is-covered { opacity: 0; }
 .player-copy strong { font-size: 13px; }
@@ -941,9 +972,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .volume-control button:hover { background: var(--paper); color: var(--ink); }
 .volume-control button.muted { color: var(--ink); background: var(--paper); }
 .volume-control svg { width: 16px; }
-.volume-control input { width: 95px; height: 3px; padding: 0; appearance: none; border: 0; border-radius: 0; background: var(--rule); }
-.volume-control input::-webkit-slider-runnable-track { height: 3px; background: var(--rule); }
+.volume-control input { width: 95px; height: 3px; padding: 0; appearance: none; border: 0; border-radius: 0; background: linear-gradient(to right, var(--ink) 0 var(--volume, 80%), var(--rule) var(--volume, 80%) 100%); }
+.volume-control input::-webkit-slider-runnable-track { height: 3px; background: linear-gradient(to right, var(--ink) 0 var(--volume, 80%), var(--rule) var(--volume, 80%) 100%); }
 .volume-control input::-moz-range-track { height: 3px; background: var(--rule); }
+.volume-control input::-moz-range-progress { height: 3px; background: var(--ink); }
 .volume-control input::-webkit-slider-thumb { width: 10px; height: 10px; appearance: none; border: 0; border-radius: 50%; background: var(--ink); opacity: 1; transition: opacity var(--dur-1) var(--ease-out); }
 .volume-control input::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--ink); opacity: 0.6; transition: opacity var(--dur-1) var(--ease-out); }
 .volume-control:hover input::-webkit-slider-thumb, .volume-control input:focus-visible::-webkit-slider-thumb { opacity: 1; }
@@ -962,10 +994,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow-y: auto;
 }
 .wide-modal { width: min(92vw, 790px); }
-.modal::backdrop { background: rgb(0 0 0 / .28); backdrop-filter: blur(8px); }
-html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
+.modal::backdrop { background: rgb(4 3 3 / .28); backdrop-filter: blur(8px); }
+html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 @media (prefers-color-scheme: dark) {
-  html[data-theme="system"] .modal::backdrop { background: rgb(0 0 0 / .45); }
+  html[data-theme="system"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 }
 .modal-header h2 { margin: 6px 0 0; font-size: 28px; font-weight: 520; letter-spacing: -.035em; }
 .modal > .small-copy { margin: 12px 0 22px; }
@@ -990,7 +1022,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
 .section-rule { display: flex; align-items: center; margin: 16px 0 8px; color: var(--graphite); }
 .section-rule::after { height: 1px; flex: 1; margin-left: 12px; background: var(--rule); content: ""; }
 .candidate-row { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); }
-.candidate-cover { width: 68px; height: 68px; border: 1px solid var(--rule); border-radius: 3px; background: var(--paper); object-fit: cover; }
+.candidate-cover { width: 68px; height: 68px; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--paper); object-fit: cover; }
 .candidate-copy strong, .candidate-copy span { display: block; }
 .candidate-copy span { margin-top: 3px; color: var(--graphite); font-size: 12px; }
 
@@ -1060,21 +1092,32 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   /* The drawer slides on a springy curve and over the scrim's window, so the sheet and its
      dimming settle together instead of the scrim finishing first. */
   .source-rail { transition: transform var(--dur-3) var(--ease-out); }
-.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-3) var(--ease-out); }
+.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(4 3 3 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-3) var(--ease-out); }
 .rail-scrim[hidden] { display: block !important; pointer-events: none; opacity: 0; }
   .library { grid-column: 1; padding: 0 20px; }
   .track-head { display: none; }
   .track-row { grid-template-columns: 30px minmax(0, 1fr) 72px 44px; }
   .track-row { height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
   .track-row .track-duration, .track-row .track-row-actions { display: none; }
-  .library-header { min-height: 112px; align-items: center; padding: 22px 0 18px; }
+  /* Keep the mobile header in two deliberate bands. The old flex-wrap let the filter's
+     100%-basis compete with the title column, collapsing the heading to a few pixels and
+     painting the search field over the playlist actions. */
+  .library-header { min-height: 0; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 18px 0 16px; }
+  #open-nav { margin-top: 2px; }
+  .library-heading { flex: 1 1 calc(100% - 52px); }
   .library-heading h1 { font-size: 32px; }
-  /* Spec 4.5: the filter and the count are the working parts of this header; the eyebrow is
-     decoration. Hiding .search-control removed the narrowing task from phones entirely --
-     global search is not a substitute, it searches all of Telegram rather than this playlist. */
   .library-heading .eyebrow { display: none; }
-  .header-actions { flex-wrap: wrap; }
-  .search-control { flex: 1 1 100%; order: 10; }
+  .header-actions {
+    display: grid;
+    width: 100%;
+    flex: 1 0 100%;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+  }
+  .search-control { width: auto; min-width: 0; grid-column: 1; }
+  .sort-control { grid-column: 2; }
+  #sync-source { grid-column: 3; }
+  #keep-source { grid-column: 1 / -1; justify-self: start; }
   .now-panel {
     position: fixed;
     z-index: 20;
@@ -1087,23 +1130,24 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
     padding: calc(28px + env(safe-area-inset-top)) max(20px, calc((100vw - 580px) / 2)) calc(32px + env(safe-area-inset-bottom));
     border-left: 0;
   }
-  .large-art-wrap { width: min(72vw, 360px); margin: 28px auto 22px; }
+  
   /* The panel is fixed at inset 0 and sits above the player (z 25 vs 10), so the last 44px
      of every lyric sheet was unreachable behind the player bar. */
   .now-content { padding-bottom: 84px; }
   /* The phone art is 56px, not 64px, so the collapsed header lands 12px shorter. */
   :root { --compact-header: 120px; }
-  .now-header.is-compact .large-art-wrap { width: 56px; margin: 6px 0; }
+  
   /* Match the panel's own responsive side padding so the sticky bar stays edge-to-edge. */
   .now-header.is-compact { margin: 0 calc(-1 * max(20px, (100vw - 580px) / 2)); padding: 4px max(20px, calc((100vw - 580px) / 2)) 0; }
   /* auto for the utilities column: a fixed 44px could not hold the track actions once the
      transport kept prev/next, so like/more overlapped the skip buttons by up to 21px. */
   .player-main { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; padding: 0 max(13px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(13px, env(safe-area-inset-left)); }
   .progress-row { padding: 4px max(13px, env(safe-area-inset-right)) 2px max(13px, env(safe-area-inset-left)); }
-  /* Skip is essential on a phone; shuffle and repeat are not. Hiding every .icon-button here
-     left Play as the only control, so you could pause but not change track. */
-  .transport .mode-button { display: none; }
-  .transport { gap: 2px; }
+  /* Shuffle and repeat remain first-class controls on touch screens. At phone widths the
+     player gets a second row below the track identity, rather than hiding transport state or
+     shrinking five controls into an accidental hit-target cluster. */
+  .transport { gap: 6px; }
+  .transport .mode-button { opacity: .95; }
   .transport .icon-button { width: 40px; height: 40px; }
   .player-track-actions .desktop-action { display: none; }
   .player-utilities { gap: 0; }
@@ -1119,7 +1163,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(0 0 0 / .45); }
   .qr-code { min-height: 220px; }
   .library { padding: 0 13px; }
   .library-header { gap: 8px; }
-  .header-actions { gap: 2px; }
+  .header-actions { gap: 8px; }
   .track-row { height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
   .row-art { width: var(--art-row); height: var(--art-row); }
   .track-duration { text-align: right; }
@@ -1210,8 +1254,9 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .sidebar-collapsed .sync-all { margin-inline: 0; }
 .sidebar-collapsed .sync-all svg { width: 17px; height: 17px; }
 
-.playlist-actions { display: flex; gap: 8px; margin-top: 15px; }
-.playlist-actions .button { height: 40px; }
+.playlist-actions { display: flex; gap: 8px; margin-top: 16px; }
+.playlist-actions .button { height: 36px; min-height: 36px; padding: 0 14px; font-size: 11px; letter-spacing: .055em; text-transform: uppercase; font-family: var(--font-mono); font-weight: 500; }
+.playlist-actions .button.primary { padding-inline: 16px; }
 .sync-strip { position: relative; display: flex; min-height: 30px; align-items: center; padding: 0 30px; overflow: hidden; border-bottom: 1px solid var(--rule-soft); color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); transition: opacity var(--dur-3) var(--ease-out); }
 .sync-strip.is-complete { opacity: 0; }
 .sync-motion { position: absolute; bottom: 0; left: 0; width: 32%; height: 2px; background: var(--ink); animation: sync-pass 1.4s var(--ease-out) infinite; }
@@ -1220,7 +1265,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .track-row { content-visibility: auto; contain-intrinsic-size: var(--row-height); cursor: default; transition: background-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
 .track-placeholder { position: relative; height: var(--row-height); overflow: hidden; pointer-events: none; }
 .track-placeholder::after { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 25%, color-mix(in srgb, var(--rule-soft) 18%, transparent) 48%, transparent 72%); content: ""; transform: translateX(-110%); animation: track-skeleton 2s var(--ease-out) infinite; }
-.track-placeholder i { display: block; border-radius: 3px; background: color-mix(in srgb, var(--rule) 68%, transparent); }
+.track-placeholder i { display: block; border-radius: var(--radius-art); background: color-mix(in srgb, var(--rule) 68%, transparent); }
 .placeholder-main { display: flex; align-items: center; gap: 12px; }
 .placeholder-main > i { width: var(--art-row); height: var(--art-row); flex: 0 0 auto; }
 .placeholder-main > span { display: grid; width: min(62%, 240px); gap: 7px; }
@@ -1236,26 +1281,14 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .track-row:hover .track-play-overlay, .track-main:focus-visible .track-play-overlay, .track-row.current .track-play-overlay { opacity: 1; transform: scale(1); }
 .track-row.buffering .track-play-overlay::after { position: absolute; inset: -3px; border: 1.5px solid rgb(255 255 255 / .38); border-right-color: var(--paper); border-radius: 50%; content: ""; animation: spin .7s linear infinite; }
 .library.is-scrolling .track-row, .library.is-scrolling .track-play-overlay, .library.is-scrolling .row-menu { transition: none; }
-.track-list.library-reveal { animation: library-in var(--dur-2) var(--ease-out) both; }
-@keyframes library-in { from { opacity: 0; transform: translateY(4px); } }
-/* A short stagger over the first rows only. The whole list already fades as one block, which
-   reads as a hard swap when you change source; letting the top rows arrive in sequence sells
-   it as content loading. Capped at 8 so a 5,000 row playlist never waits on a long chain, and
-   nth-child keeps it free of per-row inline delays (which the style-src CSP would block).
-   Rows are content-visibility: auto, so off-screen ones never run this at all. */
-.track-list.library-reveal .track-row { animation: row-in var(--dur-2) var(--ease-out) both; }
-.track-list.library-reveal .track-row:nth-child(1) { animation-delay: 0ms; }
-.track-list.library-reveal .track-row:nth-child(2) { animation-delay: 18ms; }
-.track-list.library-reveal .track-row:nth-child(3) { animation-delay: 36ms; }
-.track-list.library-reveal .track-row:nth-child(4) { animation-delay: 54ms; }
-.track-list.library-reveal .track-row:nth-child(5) { animation-delay: 72ms; }
-.track-list.library-reveal .track-row:nth-child(6) { animation-delay: 90ms; }
-.track-list.library-reveal .track-row:nth-child(7) { animation-delay: 108ms; }
-.track-list.library-reveal .track-row:nth-child(n+8) { animation-delay: 126ms; }
-@keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
+.track-list.library-reveal { animation: fade-in var(--dur-2) var(--ease-out) both; }
 
 .mode-button { position: relative; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
-.mode-button.active { color: var(--paper); background: var(--ink); }
+.mode-button.active {
+  border-color: color-mix(in srgb, var(--stamp) 58%, var(--rule));
+  background: color-mix(in srgb, var(--stamp) 14%, transparent);
+  color: var(--stamp);
+}
 #repeat-badge { position: absolute; right: 5px; bottom: 4px; font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; font-weight: 800; }
 
 /* Panel motion. The panel used to fade in with the generic surface-in and then vanish with
@@ -1269,13 +1302,12 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .now-panel.is-closing { animation: panel-out var(--dur-2) var(--ease-out) both; pointer-events: none; }
 @keyframes panel-in { from { opacity: 0; transform: translateX(18px); } }
 @keyframes panel-out { to { opacity: 0; transform: translateX(18px); } }
-.pane-entering { animation: pane-in var(--dur-2) var(--ease-out) both; }
-@keyframes pane-in { from { opacity: 0; transform: translateY(5px); } }
+
 .lyrics-pane { min-height: 300px; padding-top: 8px; }
 .lyrics-lines { gap: 2px; padding: 4px 0 80px; font-family: var(--font-ui); }
-.lyrics-lines button, .lyric-line { width: 100%; min-width: 0; padding: 8px 0; border: 0; border-radius: 3px; background: transparent; color: color-mix(in srgb, var(--graphite) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 560; line-height: 1.42; overflow-wrap: anywhere; text-align: left; }
-.lyrics-lines button:hover { color: var(--ink); transform: translateX(3px); }
-.lyrics-lines button.active { color: var(--ink); transform: translateX(5px); }
+.lyrics-lines button, .lyric-line { width: 100%; min-width: 0; padding: 8px 0; border: 0; border-radius: var(--radius-art); background: transparent; color: color-mix(in srgb, var(--graphite) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 560; line-height: 1.42; overflow-wrap: anywhere; text-align: left; }
+.lyrics-lines button:hover { color: var(--ink); transform: translateX(2px); }
+.lyrics-lines button.active { color: var(--ink); transform: translateX(3px); }
 .lyrics-lines button.seek-pulse { animation: lyric-seek 220ms var(--ease-out); }
 .lyrics-lines p { margin: 0; padding: 5px 0; font-family: var(--font-ui); font-size: 18px; line-height: 1.45; }
 @keyframes lyric-seek { 50% { background: color-mix(in srgb, var(--rule-soft) 28%, transparent); } }
@@ -1308,7 +1340,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .frequent-contacts { margin-top: 12px; }
 .frequent-title { margin: 0 0 8px; color: var(--graphite); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .frequent-row { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: 6px; }
-.frequent-contact { display: grid; padding: 9px 4px 8px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; justify-items: center; gap: 7px; }
+.frequent-contact { display: grid; padding: 9px 4px 8px; border: 0; border-radius: var(--radius-panel); background: transparent; cursor: pointer; justify-items: center; gap: 7px; }
 .frequent-contact:hover { background: var(--surface); }
 /* Bump the fallback initials with the circle: .source-avatar sets 11px for its 34px default,
    which reads as a smudge at 46px. */
@@ -1402,7 +1434,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .alert-modal p { margin: 0 0 22px; color: var(--graphite); }
 .alert-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--danger); border-radius: 50%; color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 15%, transparent); font-weight: 800; }
 .context-menu { position: fixed; z-index: 100; width: 205px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 5px; overflow-y: auto; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--elev-3); animation: surface-in var(--dur-1) var(--ease-out); }
-.context-menu button { display: flex; width: 100%; min-height: 34px; align-items: center; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font-size: 12px; text-align: left; transition: background-color 80ms var(--ease-out), color 80ms var(--ease-out); }
+.context-menu button { display: flex; width: 100%; min-height: 34px; align-items: center; padding: 0 10px; border: 0; border-radius: var(--radius-art); background: transparent; cursor: pointer; font-size: 12px; text-align: left; transition: background-color 80ms var(--ease-out), color 80ms var(--ease-out); }
 .context-menu.is-leaving { animation: none; opacity: 0; transform: translateY(-2px) scale(.99); transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); pointer-events: none; }
 .context-menu button:hover, .context-menu button:focus-visible { background: var(--paper); color: var(--ink); }
 .context-menu button.danger, .context-menu button.danger:hover, .context-menu button.danger:focus-visible { color: var(--danger); }
@@ -1443,9 +1475,26 @@ dialog.modal[open]::backdrop { opacity: 1; }
   .playlist-actions { margin-top: 11px; }
   .playlist-actions .button { height: 44px; min-height: 44px; }
   .sync-strip { padding-inline: 18px; }
-  .transport .mode-button { display: none; }
   .discover-tools { align-items: flex-start; flex-direction: column; }
   .track-placeholder { height: var(--row-height); }
+}
+
+@media (max-width: 480px) {
+  /* 26px progress rail + 46px identity row + 52px transport row: every control stays
+     inside the footer instead of the play button hanging below the viewport on short phones. */
+  :root { --player-height: calc(126px + env(safe-area-inset-bottom)); }
+  .player-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 46px 52px;
+    gap: 0 8px;
+    padding: 0 max(13px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(13px, env(safe-area-inset-left));
+  }
+  .player-track { grid-column: 1; grid-row: 1; }
+  .player-utilities { grid-column: 2; grid-row: 1; }
+  .transport { grid-column: 1 / -1; grid-row: 2; justify-self: center; gap: 4px; }
+  .transport .play-button { margin-inline: 6px; }
+  /* The cover already opens Now Playing; keep the top row about identity and actions. */
+  #show-lyrics { display: none; }
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -1620,4 +1669,274 @@ dialog.modal[open]::backdrop { opacity: 1; }
 
 @media (prefers-reduced-motion: reduce) {
   #library.is-refreshing #track-list { transition: none; }
+}
+
+
+/* Player polish: make the persistent control surface read as one calm instrument panel.
+   Identity, transport, and secondary actions now have clearer rhythm without adding chrome. */
+.player {
+  background: color-mix(in srgb, var(--surface) 94%, var(--paper));
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 -12px 30px color-mix(in srgb, var(--ink) 9%, transparent), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 86%, transparent);
+}
+.progress-row { padding: 6px 24px 3px; gap: 12px; }
+.progress { height: 10px; }
+.progress::-webkit-slider-runnable-track { height: 4px; }
+.progress::-moz-range-track, .progress::-moz-range-progress { height: 4px; }
+.progress::-webkit-slider-thumb { margin-top: -3px; }
+.player-main { gap: 28px; padding: 0 24px 7px; }
+.player-track { gap: 12px; }
+.player-copy strong { font-size: 14px; font-weight: 650; }
+.player-copy small { font-size: 12px; }
+.transport { gap: 12px; }
+.transport .play-button { margin-inline: 12px; }
+.player-utilities { gap: 18px; }
+.player-track-actions { gap: 3px; }
+.player-track-actions .icon-button, .volume-control button { transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-spring); }
+.player-track-actions .icon-button:hover, #show-lyrics:hover, .volume-control button:hover { background: color-mix(in srgb, var(--paper) 72%, var(--surface)); }
+.progress:hover::-webkit-slider-runnable-track, .progress:focus-visible::-webkit-slider-runnable-track { height: 5px; }
+@media (max-width: 860px) {
+  .progress-row { padding-inline: max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-left)); }
+  .player-main { gap: 14px; padding-inline: max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-left)); }
+  .player-utilities { gap: 8px; }
+}
+@media (max-width: 480px) {
+  .progress-row { padding-top: 5px; padding-bottom: 2px; }
+  .player-main { padding-inline: max(13px, env(safe-area-inset-right)) max(13px, env(safe-area-inset-left)); }
+  .transport { gap: 4px; }
+  .transport .play-button { margin-inline: 6px; }
+}
+
+
+/* Shadow pass: use neutral, tinted shadow ink rather than mixing the foreground color.
+   The previous dark-theme elevations mixed near-white ink into transparent, which made
+   floating surfaces glow instead of separating from the canvas. */
+:root {
+  --shadow-color: rgb(20 17 15 / .14);
+  --shadow-color-strong: rgb(20 17 15 / .22);
+  --elev-1: 0 1px 2px var(--shadow-color);
+  --elev-2: 0 12px 30px var(--shadow-color);
+  --elev-3: 0 24px 72px var(--shadow-color-strong);
+}
+html[data-theme="dark"] {
+  --shadow-color: rgb(4 3 3 / .55);
+  --shadow-color-strong: rgb(4 3 3 / .72);
+  --elev-1: 0 1px 2px var(--shadow-color);
+  --elev-2: 0 14px 34px var(--shadow-color);
+  --elev-3: 0 24px 72px var(--shadow-color-strong);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="system"] {
+    --shadow-color: rgb(4 3 3 / .55);
+    --shadow-color-strong: rgb(4 3 3 / .72);
+    --elev-1: 0 1px 2px var(--shadow-color);
+    --elev-2: 0 14px 34px var(--shadow-color);
+    --elev-3: 0 24px 72px var(--shadow-color-strong);
+  }
+}
+.now-panel:not([hidden]) {
+  box-shadow: -18px 0 38px var(--shadow-color), var(--elev-2);
+}
+.context-menu {
+  box-shadow: 0 18px 44px var(--shadow-color-strong), 0 2px 8px var(--shadow-color);
+}
+.player {
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 -14px 30px var(--shadow-color), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 86%, transparent);
+}
+
+
+/* Sidebar polish: collapsed navigation should be a compact icon rail, not a second
+   list of menu rows. Source actions remain available as an unobtrusive hover/focus affordance. */
+.source-rail {
+  z-index: 2;
+  box-shadow: 10px 0 26px var(--shadow-color);
+}
+.sidebar-collapsed nav {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding-top: 4px;
+}
+.sidebar-collapsed #source-list {
+  display: grid;
+  gap: 4px;
+}
+.sidebar-collapsed .source-link {
+  min-height: 48px;
+  border-bottom: 0;
+}
+.sidebar-collapsed .source-menu {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 2;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+  opacity: 0;
+  transform: scale(.8);
+  transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-spring), background-color var(--dur-1) var(--ease-out);
+}
+.sidebar-collapsed .source-link:hover .source-menu,
+.sidebar-collapsed .source-link:focus-within .source-menu {
+  opacity: 1;
+  transform: scale(1);
+}
+.sidebar-collapsed .source-menu svg { width: 13px; height: 13px; }
+.sidebar-collapsed .source-link.active {
+  box-shadow: inset 0 0 0 1px var(--rule), var(--elev-1);
+}
+.sidebar-collapsed .source-link:hover,
+.sidebar-collapsed .source-link:focus-visible {
+  background: var(--surface);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-collapsed .source-menu { transform: none; }
+}
+
+
+/* Flagship layout pass: browsing owns the main canvas. The shell keeps predictable regions,
+   while the Now Playing surface recedes just enough to leave the track list in charge. */
+@media (min-width: 1121px) {
+  :root { --panel-width: 344px; }
+}
+.library {
+  padding-inline: clamp(16px, 2vw, 28px);
+}
+.library-header {
+  gap: 20px;
+  padding-block: 14px 10px;
+}
+
+.playlist-actions {
+  margin-top: 12px;
+}
+.header-actions {
+  align-self: flex-end;
+}
+.track-head {
+  background: var(--paper);
+  margin-top: -1px;
+}
+.track-row {
+  min-height: var(--row-height);
+}
+.now-panel {
+  padding: 20px 22px 28px;
+}
+
+@media (max-width: 1120px) and (min-width: 861px) {
+  .library { padding-inline: 20px; }
+  .now-panel { padding-inline: 14px; }
+}
+@media (max-width: 860px) {
+  .library { padding-inline: 16px; }
+  .library-header { gap: 10px; padding-block: 12px 8px; }
+  .library-heading h1 { max-width: none; }
+  .now-panel { padding-inline: max(20px, calc((100vw - 580px) / 2)); }
+  .now-header:not(.is-compact) { height: 40%; max-height: 40%; }
+}
+@media (max-width: 620px) {
+  .library { padding-inline: 13px; }
+  .library-header { padding-block: 10px 8px; }
+}
+
+
+/* Final visual pass from the live library state. */
+.library-header.is-scrolled {
+  box-shadow: 0 10px 24px -18px var(--shadow-color-strong), 0 1px 0 var(--rule);
+}
+.track-row.current {
+  background: color-mix(in srgb, var(--stamp) 20%, transparent);
+}
+.now-title h2 { line-height: 1.05; }
+.now-title p { font-size: 13px; }
+
+
+/* A mouse locate should not leave a full-row focus rectangle behind. Keyboard users still
+   get a clear, compact focus treatment on the player identity control. */
+.player-copy:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+  border-radius: var(--radius-art);
+  box-shadow: none;
+}
+
+
+/* Library scroll ownership: the title and source context stay outside the scroller, so the
+   scrollbar begins where the track workspace begins instead of running through the header. */
+.library {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.library-header {
+  position: relative;
+  top: auto;
+  flex: 0 0 auto;
+}
+.library-content {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: auto;
+  scrollbar-color: var(--graphite) transparent;
+}
+.library-content::-webkit-scrollbar,
+.now-content::-webkit-scrollbar,
+.source-rail::-webkit-scrollbar {
+  width: 14px;
+}
+.library-content::-webkit-scrollbar-thumb,
+.now-content::-webkit-scrollbar-thumb,
+.source-rail::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--graphite) 78%, var(--rule));
+  background-clip: content-box;
+}
+.library-content::-webkit-scrollbar-thumb:hover,
+.now-content::-webkit-scrollbar-thumb:hover,
+.source-rail::-webkit-scrollbar-thumb:hover {
+  background: var(--graphite);
+  background-clip: content-box;
+}
+
+
+/* Queue and artwork corrections from the live panel. */
+.label-disc { aspect-ratio: 1 / 1; }
+.now-header:not(.is-compact) .large-art-wrap {
+  width: min(48vw, 200px) !important;
+  height: auto !important;
+  aspect-ratio: 1 / 1 !important;
+  align-self: center;
+  justify-self: center;
+  border-radius: 50% !important;
+  overflow: hidden;
+}
+.queue-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  background: var(--surface);
+}
+.queue-row.current {
+  background: color-mix(in srgb, var(--stamp) 20%, transparent);
+}
+.source-rail {
+  box-shadow: 4px 0 14px -10px var(--shadow-color);
+}
+.now-panel:not([hidden]) {
+  box-shadow: -8px 0 18px -12px var(--shadow-color);
+}
+
+
+.player-copy[data-pointer-focus] {
+  outline: 0 !important;
+  box-shadow: none !important;
 }

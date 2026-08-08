@@ -960,14 +960,21 @@ class Database:
         cleaned = query.strip()[:200]
         if not cleaned:
             return ""
-        if len(cleaned) >= 3:
-            parameters.append(f'"{cleaned.replace(chr(34), chr(34) * 2)}"')
+        # FTS MATCH is reserved-syntax sensitive; a query that is only punctuation or
+        # contains unmatched quotes can syntax-error the MATCH engine and surface as 500
+        # to the channel filter. Trigram MATCH needs a letter/digit to be meaningful.
+        hasWord = any(ch.isalnum() for ch in cleaned)
+        if len(cleaned) >= 3 and hasWord:
+            # Escape embedded quotes by doubling, then wrap as a single FTS phrase
+            escaped = cleaned.replace(chr(34), chr(34) * 2)
+            parameters.append(f'"{escaped}"')
             return "t.rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)"
         escaped = cleaned.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        parameters.extend([f"%{escaped}%"] * 2)
+        parameters.extend([f"%{escaped}%"] * 3)
         return (
             "(COALESCE(json_extract(o.payload, '$.title'), t.telegram_title) LIKE ? ESCAPE '\\' "
-            "OR COALESCE(json_extract(o.payload, '$.artist'), t.telegram_artist) LIKE ? ESCAPE '\\')"
+            "OR COALESCE(json_extract(o.payload, '$.artist'), t.telegram_artist) LIKE ? ESCAPE '\\' "
+            "OR t.file_name LIKE ? ESCAPE '\\')"
         )
 
     @staticmethod
