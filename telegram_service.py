@@ -8,9 +8,10 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 import segno
+import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from telethon import TelegramClient, events, functions, types, utils
 from telethon.errors import FloodWaitError, RPCError, SessionPasswordNeededError
@@ -150,6 +151,9 @@ class TelegramService:
         self.thumbnail_directory = data_directory / "thumbnails"
         self.avatar_directory.mkdir(parents=True, exist_ok=True)
         self.thumbnail_directory.mkdir(parents=True, exist_ok=True)
+        # Auto cover-art enrichment. Set by create_app once ExternalServices exists; the
+        # worker is the same candidate-lookup + artwork-writer the metadata dialog uses.
+        self.enrich_worker: Callable[[bool], Awaitable[dict[str, Any]]] | None = None
         self.prefetch_keys: set[str] = set()
         self.prefetch_order: list[str] = []
         self.discovery_cache: tuple[float, list[dict[str, Any]]] | None = None
@@ -630,6 +634,8 @@ class TelegramService:
 
     async def _run_sync(self, job: BackgroundJob, full: bool) -> None:
         await self.sync_source(job.chat_id, full=full, job=job)
+        # New tracks just landed; feed the cover-enrichment job the oldest ones first.
+        self.maybe_enrich()
 
     async def sync_source(
         self, chat_id: str, full: bool = False, job: BackgroundJob | None = None,
@@ -886,6 +892,46 @@ class TelegramService:
                 self.database.cache_set(f"source-count:{chat_id}", cached, 600)
             job.result[chat_id] = int(cached)
             job.processed += 1
+
+    def maybe_enrich(self) -> None:
+        """Start the auto cover-art job if the setting is on and a worker is wired.
+
+        Runs after a successful source sync and at startup; both are cheap no-ops when
+        enrichment is disabled or no MusicBrainz contact is configured.
+        """
+        if not self.enrich_worker:
+            return
+        try:
+            settings = self.database.get_settings()
+        except Exception:
+            return
+        if not settings.get("autoArtwork", True):
+            return
+        self.start_enrich(manual=False)
+
+    def start_enrich(self, manual: bool = False) -> dict[str, Any]:
+        if active := self.jobs.active("enrich"):
+            return active.public()
+        job = BackgroundJob(secrets.token_urlsafe(12), "enrich")
+        job.result = {"added": 0, "missed": 0, "skipped": None}
+        if not self.enrich_worker:
+            job.state = "complete"
+            return self.jobs.register(job)
+        return self.jobs.start(job, self._run_enrich(job, manual), error_mapper=self._friendly_enrich_error)
+
+    async def _run_enrich(self, job: BackgroundJob, manual: bool) -> None:
+        result = await self.enrich_worker(manual)
+        job.result = result
+        job.found = int(result.get("added") or 0)
+        job.processed = job.found + int(result.get("missed") or 0)
+
+    @staticmethod
+    def _friendly_enrich_error(error: Exception) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            return "Cover art service rejected the request; try again shortly"
+        if isinstance(error, asyncio.TimeoutError):
+            return "Cover art service did not respond in time; check the connection and retry"
+        return "Cover enrichment failed; check the connection and retry"
 
     def start_prefetch(self, keys: list[str]) -> dict[str, Any]:
         count = int(self.database.get_settings()["prefetchCount"])

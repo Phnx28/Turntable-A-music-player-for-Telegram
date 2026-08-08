@@ -1064,16 +1064,21 @@ function setTrackUi() {
     const image = $(id); const placeholder = $(`${id}-placeholder`);
     image.classList.remove("is-ready"); image.hidden = false;
     placeholder.hidden = false; placeholder.classList.remove("is-covered");
-    image.onerror = () => { image.classList.remove("is-ready"); placeholder.classList.remove("is-covered"); };
+    const bust = `v=${encodeURIComponent(metadata.artworkPath || "telegram")}`;
     image.onload = () => requestAnimationFrame(() => { image.classList.add("is-ready"); placeholder.classList.add("is-covered"); });
-    image.src = `${mediaUrl(track)}?v=${encodeURIComponent(metadata.artworkPath || "telegram")}`;
     if (id === "large-art") {
-      image.addEventListener("load", () => {
-        const highSrc = `${mediaUrl(track, "cover")}?quality=high&v=${encodeURIComponent(metadata.artworkPath || "telegram")}`;
-        const highImg = new Image();
-        highImg.onload = () => { image.src = highSrc; };
-        highImg.src = highSrc;
-      }, { once: true });
+      // Best thumb first; the stamp placeholder covers the wait instead of a blurry thumb.
+      // Property handlers only: an old { once: true } load listener could outlive the track
+      // that registered it and swap in a previous song's art, and it never handled a 404.
+      image.onerror = () => {
+        image.onerror = () => { image.classList.remove("is-ready"); placeholder.classList.remove("is-covered"); };
+        image.classList.remove("is-ready");
+        image.src = `${mediaUrl(track)}?${bust}`; // one fallback step, then the placeholder
+      };
+      image.src = `${mediaUrl(track, "cover")}?quality=high&${bust}`;
+    } else {
+      image.onerror = () => { image.classList.remove("is-ready"); placeholder.classList.remove("is-covered"); };
+      image.src = `${mediaUrl(track)}?${bust}`; // the 48px mini stays cheap
     }
   }
   $("download-current").href = mediaUrl(track, "download");
@@ -1343,6 +1348,11 @@ function watchJob(job, onUpdate = () => {}, relevant = () => true) {
       }
       if (["queued", "running"].includes(current.state)) setTimeout(poll, current.processed ? 1800 : 1000);
       else if (["sync", "preview"].includes(current.kind)) { state.libraryCache.clear(); await loadLibrary(true); if (current.state === "complete") toast(current.kind === "preview" ? "Temporary source indexed" : "Source is up to date"); else if (current.error) showError(new AppError(current.error, true), () => current.kind === "preview" ? selectTemporary() : syncSource(current.chatId, current.mode === "full")); }
+      else if (current.kind === "enrich" && current.state === "complete" && state.current) {
+        // Enrichment may have given the playing track an artworkPath; the v= cache-bust in
+        // mediaUrl changes with it, so re-running the art block refetches the sharper cover.
+        setTrackUi();
+      }
     } catch (error) { showError(error); }
   };
   poll();
@@ -1626,7 +1636,12 @@ function updateNowHeader() {
 // new places at new sizes. FLIP that: measure both elements, toggle the class, measure again,
 // then animate the delta with transform/scale so the art appears to glide beside the title
 // rather than cutting to it. Transform-only, so nothing reflows mid-animation.
-const NOW_HEADER_MORPH = [".large-art-wrap", ".now-title"];
+//
+// Centre-origin deltas: the invert is expressed from the element's centre, which is the only
+// translation that reads correctly on a circle. The tabs and the close button glide too, so
+// the whole header moves as one instead of the art/title morphing under a snapped chrome row.
+// Only the art and title scale; tabs/close translate so nothing is stretched.
+const NOW_HEADER_MORPH = [".large-art-wrap", ".now-title", ".now-tabs", "#close-now"];
 const NOW_HEADER_FLIP_ANIMATIONS = new WeakMap();
 function setNowHeaderCompact(header, compact) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -1640,17 +1655,15 @@ function setNowHeaderCompact(header, compact) {
     const first = before[index];
     const last = element.getBoundingClientRect();
     if (!first.width || !last.width || !first.height || !last.height) return;
-    const dx = first.left - last.left;
-    const dy = first.top - last.top;
-    const sx = first.width / last.width;
-    const sy = first.height / last.height;
-    const scale = Math.min(sx, sy);
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(scale - 1) < 0.01) return;
+    const dx = (first.left + first.width / 2) - (last.left + last.width / 2);
+    const dy = (first.top + first.height / 2) - (last.top + last.height / 2);
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    const morph = element.matches(".large-art-wrap, .now-title");
+    const scale = morph ? ` scale(${first.width / last.width}, ${first.height / last.height})` : "";
     NOW_HEADER_FLIP_ANIMATIONS.get(element)?.cancel();
     const flip = element.animate(
-      [{ transformOrigin: "top left", transform: `translate(${dx}px, ${dy}px) scale(${scale})` },
-       { transformOrigin: "top left", transform: "none" }],
-      { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" },
+      [{ transform: `translate(${dx}px, ${dy}px)${scale}` }, { transform: "none" }],
+      { duration: 260, easing: "cubic-bezier(0.25, 1, 0.5, 1)" },
     );
     NOW_HEADER_FLIP_ANIMATIONS.set(element, flip);
   });
@@ -1935,7 +1948,7 @@ function renderAccount(account) {
 async function openSettings() {
   $("settings-dialog").showModal();
   try {
-    state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality;
+    state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality; $("auto-artwork").checked = state.settings.autoArtwork !== false; updateAutoArtworkHelp();
     const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} songs cached · ${(cache.bytes / 1048576).toFixed(1)} MB`;
     const [network, auth, status] = await Promise.all([api("/api/network"), api("/api/auth/status"), api("/api/status")]);
     state.network = network;
@@ -2043,7 +2056,18 @@ function currentSettingsValues() {
     prefetchCount: Number($("prefetch-count").value),
     musicbrainzContact: $("musicbrainz-contact").value.trim(),
     coverQuality: $("default-cover-quality").value,
+    autoArtwork: $("auto-artwork").checked,
   };
+}
+
+// The auto-artwork help line swaps between a plain explanation and a nudge to add the
+// MusicBrainz contact first, which the dialog already uses in the metadata editor.
+function updateAutoArtworkHelp() {
+  const help = $("auto-artwork-help");
+  if (!help) return;
+  help.textContent = $("musicbrainz-contact").value.trim()
+    ? "After each sync, find Cover Art Archive art for tracks MusicBrainz matches confidently (score 97+)."
+    : "Needs a MusicBrainz contact above; without one the job cannot query MusicBrainz.";
 }
 
 $("bind-host-options").addEventListener("click", (event) => {
@@ -2425,7 +2449,19 @@ $("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata")
 $("open-settings").addEventListener("click", openSettings); document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll("[data-settings-tab]").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll("[data-settings-pane]").forEach((pane) => { pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab; }); })); $("prefetch-count").addEventListener("change", () => commitSettings(currentSettingsValues()));
 $("sleep-timer").addEventListener("change", () => setSleepTimer($("sleep-timer").value));
 $("default-cover-quality").addEventListener("change", () => commitSettings(currentSettingsValues()));
-$("musicbrainz-contact").addEventListener("input", () => saveSettingsSoon(currentSettingsValues()));
+$("auto-artwork").addEventListener("change", () => commitSettings(currentSettingsValues()));
+$("fetch-covers").addEventListener("click", async () => {
+  try {
+    const job = await api("/api/enrich", { method: "POST" });
+    watchJob(job, (current) => {
+      if (current && current.kind === "enrich" && !["queued", "running"].includes(current.state)) {
+        const added = Number(current.result?.added) || 0;
+        if (current.state === "complete" && added) toast(`Cover art added for ${added} ${added === 1 ? "track" : "tracks"}`);
+      }
+    });
+  } catch (error) { showError(error); }
+});
+$("musicbrainz-contact").addEventListener("input", () => { updateAutoArtworkHelp(); saveSettingsSoon(currentSettingsValues()); });
 // Leaving the field flushes the pending debounce, so closing the dialog straight after typing
 // cannot lose the value.
 $("musicbrainz-contact").addEventListener("blur", flushSettings);

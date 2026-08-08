@@ -839,3 +839,64 @@ class SearchReconcileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArtworkEnrichmentTests(unittest.TestCase):
+    """tracks_needing_artwork + miss markers + the autoArtwork setting."""
+
+    def _database(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database = Database(Path(directory.name) / "library.sqlite3")
+        self.addCleanup(database.close)
+        database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        return database
+
+    def _track(self, message_id, title="Song", artist="Artist"):
+        return {
+            "chatId": "1", "messageId": str(message_id), "fileName": f"song-{message_id}.mp3",
+            "mimeType": "audio/mpeg", "title": title, "artist": artist,
+        }
+
+    def test_needing_artwork_is_oldest_first_and_respects_limit(self):
+        database = self._database()
+        for index in range(5):
+            database.upsert_tracks([self._track(index)])
+        result = database.tracks_needing_artwork(limit=2)
+        self.assertEqual([item["key"] for item in result], ["1:0", "1:1"])
+        result = database.tracks_needing_artwork(limit=10)
+        self.assertEqual(len(result), 5)
+
+    def test_needing_artwork_skips_edited_and_artworked_tracks(self):
+        database = self._database()
+        database.upsert_tracks([self._track(1), self._track(2), self._track(3), self._track(4)])
+        database.save_metadata_patch("1", "1", {"title": "Edited"}, [])
+        database.save_metadata_patch("1", "2", {"artworkPath": "abc.jpg"}, [])
+        database.mark_artwork_miss("1:3")
+        result = [item["key"] for item in database.tracks_needing_artwork(limit=10)]
+        self.assertEqual(result, ["1:4"])
+
+    def test_miss_marker_is_cleared_by_a_manual_edit(self):
+        database = self._database()
+        database.upsert_tracks([self._track(7)])
+        database.mark_artwork_miss("1:7")
+        self.assertEqual(database.tracks_needing_artwork(limit=10), [])
+        # A manual edit excludes the track anyway (a human decided about it) ...
+        database.save_metadata_patch("1", "7", {"title": "Human fix"}, [])
+        self.assertEqual(database.tracks_needing_artwork(limit=10), [])
+        # ... but reverting the edit must not resurrect the stale miss marker.
+        database.save_metadata_patch("1", "7", {}, ["title"])
+        self.assertEqual(len(database.tracks_needing_artwork(limit=10)), 1)
+
+    def test_needing_artwork_skips_untitled_tracks(self):
+        database = self._database()
+        database.upsert_tracks([self._track(1, title="")])
+        self.assertEqual(database.tracks_needing_artwork(limit=10), [])
+
+    def test_auto_artwork_setting_defaults_on_and_validates_bool(self):
+        database = self._database()
+        self.assertTrue(database.get_settings()["autoArtwork"])
+        database.save_settings({"autoArtwork": False})
+        self.assertFalse(database.get_settings()["autoArtwork"])
+        with self.assertRaises(ValueError):
+            database.save_settings({"autoArtwork": "yes"})

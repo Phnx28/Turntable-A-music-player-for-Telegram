@@ -19,6 +19,11 @@ from core import (
 )
 
 
+ENRICH_MIN_SCORE = 97   # MusicBrainz match score; below this a human decides in the dialog
+ENRICH_BATCH = 50       # covers per run; a fresh crate spreads politely over days
+ENRICH_GAP = 1.1        # seconds between MusicBrainz calls (the limit is 1/s)
+
+
 class ExternalServices:
     def __init__(self, database: Database, art_directory: Path, musicbrainz_contact: str):
         self.database = database
@@ -189,6 +194,50 @@ class ExternalServices:
         return self.database.save_metadata_patch(
             track["chatId"], track["messageId"], values, []
         )
+
+    async def enrich_covers(self, manual: bool = False) -> dict[str, Any]:
+        """Automatic cover-art enrichment: policy only, on top of the existing lookups.
+
+        Walks the oldest tracks that still lack artwork and have never been touched by a
+        human, and applies Cover Art Archive art when the MusicBrainz match is
+        unambiguous (score >= ENRICH_MIN_SCORE). A definitive no-match writes a miss
+        marker so a big crate is not re-queried forever; network errors do NOT write one,
+        so the next run retries. Manual runs ignore the autoArtwork switch but still
+        respect the contact requirement.
+        """
+        settings = self.database.get_settings()
+        if not manual and not settings.get("autoArtwork", True):
+            return {"added": 0, "missed": 0, "skipped": "disabled"}
+        if not self.musicbrainz_contact:
+            return {"added": 0, "missed": 0, "skipped": "no-contact"}
+        quality = str(settings.get("coverQuality") or "1200")
+        added = 0
+        missed = 0
+        for track in self.database.tracks_needing_artwork(limit=ENRICH_BATCH):
+            try:
+                candidates = await self.metadata_candidates(track)
+                top = candidates[0] if candidates else None
+                art_url = ""
+                if top and int(top.get("score") or 0) >= ENRICH_MIN_SCORE and top.get("coverUrl"):
+                    try:
+                        art_url = await self._download_cover(self._cover_url(top["coverUrl"], quality), quality)
+                    except (httpx.HTTPStatusError, ValueError):
+                        # 404/410 from CAA, or an oversized/unsupported image: definitive miss.
+                        art_url = ""
+                if not art_url:
+                    self.database.mark_artwork_miss(track["key"])
+                    missed += 1
+                    continue
+                self.database.save_metadata_patch(track["chatId"], track["messageId"], {"artworkPath": art_url}, [])
+                added += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Network blip or MusicBrainz hiccup: stop the run, retry next time, and
+                # do not poison the miss markers with a transient failure.
+                break
+            await asyncio.sleep(ENRICH_GAP)
+        return {"added": added, "missed": missed}
 
     async def candidate_cover(self, track: dict[str, Any], candidate_id: str) -> tuple[bytes, str]:
         candidates = await self.metadata_candidates(track)

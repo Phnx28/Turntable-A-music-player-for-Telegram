@@ -129,3 +129,105 @@ class MusicbrainzRequestTests(ExternalTestCase):
         self.stub_http(lambda request: httpx.Response(503))
         with self.assertRaises(httpx.HTTPStatusError):
             run(self.services._musicbrainz_get("/recording/", {"query": "x"}))
+
+
+def _jpeg_bytes() -> bytes:
+    # Minimal, valid-enough JPEG payload: CAA only checks content-type and size limits,
+    # and _download_cover writes whatever bytes arrive into the digest-named file.
+    return b"\xff\xd8\xff\xe0" + b"\x00" * 64 + b"\xff\xd9"
+
+
+class EnrichTests(ExternalTestCase):
+    """The auto cover-art policy: score gate, miss markers, error hygiene."""
+
+    def _seed(self, message_id="5", title="Olivia Hope", artist="Olivia Rodrigo"):
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([{
+            "chatId": "1", "messageId": message_id, "fileName": f"track-{message_id}.mp3",
+            "mimeType": "audio/mpeg", "title": title, "artist": artist, "durationMs": 1000,
+        }])
+
+    def _router(self, score: int = 97, with_cover: bool = True):
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "/ws/2/recording/" in url:
+                recordings = []
+                if with_cover:
+                    recordings = [{
+                        "id": "rec-1", "score": str(score),
+                        "title": "Olivia Hope",
+                        "artist-credit": [{"name": "Olivia Rodrigo", "joinphrase": ""}],
+                        "length": 1000,
+                        "releases": [{
+                            "id": "rel-1", "status": "Official",
+                            "release-group": {"id": "rg-1"}, "date": "2020-01-01",
+                        }],
+                    }]
+                return httpx.Response(200, json={"recordings": recordings})
+            if "coverartarchive.org" in url:
+                return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=_jpeg_bytes())
+            return httpx.Response(404)
+        return handler
+
+    def test_score_96_never_applies_and_writes_a_miss(self):
+        seen = self.stub_http(self._router(score=96))
+        self._seed()
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 0, "missed": 1})
+        track = self.database.get_track("1", "5")
+        self.assertFalse(track["metadata"].get("artworkPath"))
+        self.assertEqual(len(seen), 1)  # one MusicBrainz lookup, no CAA fetch
+
+    def test_score_97_with_cover_applies_art(self):
+        self.stub_http(self._router(score=97, with_cover=True))
+        self._seed()
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["missed"], 0)
+        track = self.database.get_track("1", "5")
+        self.assertTrue(track["metadata"].get("artworkPath"))
+        self.assertTrue((self.services.art_directory / track["metadata"]["artworkPath"]).is_file())
+
+    def test_miss_marker_prevents_a_second_musicbrainz_query(self):
+        seen = self.stub_http(self._router(score=40, with_cover=False))
+        self._seed()
+        run(self.services.enrich_covers())
+        self.assertEqual(len(seen), 1)
+        run(self.services.enrich_covers())
+        self.assertEqual(len(seen), 1, "the miss marker must stop the repeat query")
+
+    def test_network_error_does_not_write_a_miss(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503)
+        seen = self.stub_http(handler)
+        self._seed()
+        result = run(self.services.enrich_covers())
+        # The first track raises (503 -> HTTPStatusError), the run stops, no miss marker.
+        self.assertEqual(result, {"added": 0, "missed": 0})
+        self.assertEqual(len(seen), 1)
+        # Next run retries the same track.
+        run(self.services.enrich_covers())
+        self.assertEqual(len(seen), 2)
+
+    def test_edited_and_artworked_tracks_are_untouched(self):
+        self.stub_http(self._router(score=97, with_cover=True))
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([
+            {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg", "title": "A", "artist": "X"},
+            {"chatId": "1", "messageId": "2", "fileName": "b.mp3", "mimeType": "audio/mpeg", "title": "B", "artist": "X"},
+        ])
+        self.database.save_metadata_patch("1", "1", {"title": "Human edit"}, [])
+        self.database.save_metadata_patch("1", "2", {"artworkPath": "already.jpg"}, [])
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 0, "missed": 0})
+
+    def test_disabled_setting_and_missing_contact_no_op(self):
+        self._seed()
+        self.database.save_settings({"autoArtwork": False})
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result["skipped"], "disabled")
+        self.database.save_settings({"autoArtwork": True})
+        services = ExternalServices(self.database, Path(self._tmp.name) / "art2", "")
+        self.addCleanup(lambda: run(services.close()))
+        result = run(services.enrich_covers())
+        self.assertEqual(result["skipped"], "no-contact")

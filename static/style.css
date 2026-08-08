@@ -728,7 +728,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .modal-header { align-items: flex-start; }
 .large-art-wrap {
   position: relative;
-  margin: 22px auto 18px;
+  margin: 20px auto 26px;
   aspect-ratio: 1;
   overflow: hidden;
   border-radius: 50%;
@@ -746,10 +746,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* A dubplate: circular crop, a printed ring at the label edge, and a real spindle hole. */
 .label-disc {
   border-radius: 50%;
+}
+/* The spin lives on the art face, not the wrapper: the FLIP collapse measures the wrapper's
+   box, and a rotated wrapper would report an inflated bounding rect (up to sqrt(2)x), so the
+   morph scale was wrong and the disc flew off-centre mid-collapse. */
+.label-disc > .large-art, .label-disc > .art-placeholder {
+  border-radius: 50%;
   animation: label-spin 20s linear infinite;
   animation-play-state: paused;
 }
-.label-disc > .large-art, .label-disc > .art-placeholder { border-radius: 50%; }
 .label-disc::before {
   position: absolute;
   z-index: 3;
@@ -774,10 +779,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   pointer-events: none;
   transform: translate(-50%, -50%);
 }
-.label-disc.is-playing { animation-play-state: running; }
+.label-disc.is-playing > .large-art, .label-disc.is-playing > .art-placeholder { animation-play-state: running; }
 @keyframes label-spin { to { rotate: 1turn; } }
 @media (prefers-reduced-motion: reduce) {
-  .label-disc { animation: none; }
+  .label-disc > .large-art, .label-disc > .art-placeholder { animation: none; }
 }
 
 .art-placeholder { position: relative; overflow: hidden; background: var(--paper); transition: opacity var(--dur-2) var(--ease-out); }
@@ -1912,7 +1917,8 @@ html[data-theme="dark"] {
 /* Queue and artwork corrections from the live panel. */
 .label-disc { aspect-ratio: 1 / 1; }
 .now-header:not(.is-compact) .large-art-wrap {
-  width: min(48vw, 200px) !important;
+  width: min(76%, 236px) !important;
+  max-width: 32dvh !important;
   height: auto !important;
   aspect-ratio: 1 / 1 !important;
   align-self: center;
@@ -1940,4 +1946,20 @@ html[data-theme="dark"] {
 .player-copy[data-pointer-focus] {
   outline: 0 !important;
   box-shadow: none !important;
+}
+
+
+/* Auto cover-art toggle: a real checkbox row, not a 40px-tall input block. */
+.setting-block.choice {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 14px;
+}
+.setting-block.choice input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ink);
 }

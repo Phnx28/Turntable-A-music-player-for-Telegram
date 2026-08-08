@@ -376,3 +376,36 @@ class MediaStreamRouteTests(AppTestCase):
         self.assertEqual(206, covered.status_code)
         self.assertEqual("bytes 0-499/1000", covered.headers["content-range"])
         self.assertEqual(b"p" * 500, covered.content)
+
+
+class EnrichRouteTests(AppTestCase):
+    """/api/enrich + the autoArtwork setting flow, with the network stubbed out."""
+    SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
+
+    def test_settings_route_round_trips_auto_artwork(self) -> None:
+        response = self.client.patch("/api/settings", json={"autoArtwork": False}, headers=self.SAME_ORIGIN)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.client.get("/api/settings").json()["autoArtwork"])
+        self.client.patch("/api/settings", json={"autoArtwork": True}, headers=self.SAME_ORIGIN)
+        self.assertTrue(self.client.get("/api/settings").json()["autoArtwork"])
+
+    def test_enrich_route_rejects_invalid_auto_artwork(self) -> None:
+        response = self.client.patch("/api/settings", json={"autoArtwork": "yes"}, headers=self.SAME_ORIGIN)
+        self.assertEqual(response.status_code, 422)
+
+    def test_manual_enrich_runs_even_when_auto_is_off(self) -> None:
+        import time
+        self.client.patch("/api/settings", json={"autoArtwork": False}, headers=self.SAME_ORIGIN)
+        # enrich_worker is bound to the real method at startup; patch the instance hook
+        # the route actually calls so no network is reached.
+        self.app.state.telegram.enrich_worker = AsyncMock(return_value={"added": 3, "missed": 1, "skipped": None})
+        job = self.client.post("/api/enrich", headers=self.SAME_ORIGIN).json()
+        self.assertEqual(job["kind"], "enrich")
+        for _ in range(50):
+            state = self.client.get(f"/api/jobs/{job['jobId']}").json()["state"]
+            if state in {"complete", "error", "cancelled"}:
+                break
+            time.sleep(0.02)
+        final = self.client.get(f"/api/jobs/{job['jobId']}").json()
+        self.assertEqual(final["state"], "complete")
+        self.assertEqual(final["result"], {"added": 3, "missed": 1, "skipped": None})

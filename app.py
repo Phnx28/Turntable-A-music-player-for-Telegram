@@ -191,6 +191,7 @@ class SettingsBody(BaseModel):
     musicbrainzContact: str | None = Field(default=None, max_length=300)
     coverQuality: str | None = Field(default=None, pattern=r"^(500|1200|original)$")
     prefetchCount: int | None = Field(default=None, ge=0, le=20)
+    autoArtwork: bool | None = Field(default=None, strict=True)
 
 
 class PlaybackEventBody(BaseModel):
@@ -290,6 +291,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.database = database
         application.state.telegram = telegram
         application.state.external = external
+        # The enrich job reuses the metadata dialog's candidate lookup + artwork writer.
+        telegram.enrich_worker = external.enrich_covers
         application.state.startup_error = None
 
         async def _housekeeping() -> None:
@@ -314,6 +317,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             LOGGER.exception("Could not open the stored Telegram session")
             application.state.startup_error = "The stored Telegram session could not be opened"
+        if telegram.linked:
+            # A fresh crate spreads cover enrichment over days; start the polite batch now.
+            telegram.maybe_enrich()
         try:
             drift = await asyncio.to_thread(database.reconcile_search)
             if drift:
@@ -746,6 +752,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def source_preview(request: Request, chat_id: str) -> dict[str, Any]:
         return telegram(request).start_preview(chat_id)
 
+    @application.post("/api/enrich")
+    async def enrich(request: Request) -> dict[str, Any]:
+        # Manual "Fetch covers now": runs even when autoArtwork is off, but still
+        # requires a MusicBrainz contact (the worker reports that as a skipped state).
+        return telegram(request).start_enrich(manual=True)
+
     @application.get("/api/jobs/{job_id}")
     async def job_status(request: Request, job_id: str) -> dict[str, Any]:
         return telegram(request).job_status(job_id)
@@ -908,6 +920,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     candidate,
                     headers={"Cache-Control": "private, max-age=86400", "Content-Encoding": "identity"},
                 )
+        if quality == "default":
+            # "Default" should mean what the saved setting says (default is already 1200),
+            # not Telegram's smallest thumb. The cover route used to ignore the setting, so
+            # the player always requested the lo-res thumb unless the caller said "high".
+            stored = (await asyncio.to_thread(database(request).get_settings)).get("coverQuality", "1200")
+            quality = "high" if stored in {"1200", "original"} else "default"
         thumbnail = await telegram(request).thumbnail(item["chatId"], item["messageId"], quality=quality)
         if not thumbnail:
             return Response(

@@ -414,7 +414,11 @@
       <section data-settings-pane="metadata" hidden>
         <div class="setting-block"><label for="musicbrainz-contact"><strong>MusicBrainz contact</strong><span>MusicBrainz does not use an API key for lookups. Enter an email address or website for the required User-Agent.</span></label><input id="musicbrainz-contact" type="text" placeholder="you@example.com"></div>
         <div class="setting-block narrow"><label for="default-cover-quality"><strong>Default cover quality</strong></label><select id="default-cover-quality"><option value="500">Standard · 500 px</option><option value="1200">High · 1200 px</option><option value="original">Original</option></select></div>
-        <div class="form-actions"><button id="test-musicbrainz" class="button" type="button">Test connection</button><a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">MusicBrainz API guide ↗</a></div>
+        <div class="setting-block choice">
+          <label for="auto-artwork"><strong>Fetch cover art automatically</strong><span id="auto-artwork-help">After each sync, find Cover Art Archive art for tracks MusicBrainz matches confidently (score 97+).</span></label>
+          <input id="auto-artwork" type="checkbox">
+        </div>
+        <div class="form-actions"><button id="test-musicbrainz" class="button" type="button">Test connection</button><button id="fetch-covers" class="button" type="button">Fetch covers now</button><a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">MusicBrainz API guide ↗</a></div>
       </section>
       <section data-settings-pane="network" hidden>
         <fieldset class="choice-group first">

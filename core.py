@@ -602,6 +602,22 @@ class Database:
                 """
             )
             self.connection.commit()
+        if version < 9:
+            # Auto cover-art enrichment needs to remember definitive no-matches, or a
+            # 65k-track crate would re-query MusicBrainz for the same misses forever.
+            # The marker row goes away the moment a manual fetch finds art or the user
+            # edits metadata (see clear_artwork_miss callers).
+            self.connection.executescript(
+                """
+                CREATE TABLE artwork_misses (
+                    track_key TEXT PRIMARY KEY,
+                    created_at INTEGER NOT NULL
+                );
+
+                PRAGMA user_version = 9;
+                """
+            )
+            self.connection.commit()
 
     def ping(self) -> bool:
         """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
@@ -1355,7 +1371,63 @@ class Database:
                 self._invalidate_pos_cache()
             except AttributeError:
                 pass
+        # A manual edit supersedes any auto-enrichment decision about this track.
+        self.clear_artwork_miss(track_key(chat_id, message_id))
         return self.get_track(chat_id, message_id)  # type: ignore[return-value]
+
+    def mark_artwork_miss(self, key: str) -> None:
+        """Record a definitive no-match so auto enrichment does not re-query it forever."""
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO artwork_misses (track_key, created_at) VALUES (?, ?)
+                ON CONFLICT(track_key) DO UPDATE SET created_at = excluded.created_at
+                """,
+                (key, now_ts()),
+            )
+
+    def clear_artwork_miss(self, key: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "DELETE FROM artwork_misses WHERE track_key = ?", (key,)
+            )
+
+    def tracks_needing_artwork(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Tracks the auto-enrich job may fetch covers for, oldest first.
+
+        Excluded: tracks that already have an artworkPath, tracks with *any* manual
+        metadata edit (a human already decided about that track), and tracks we already
+        proved have no cover. Requires a title so the MusicBrainz query has something to
+        search on. Each row is a full track dict so the enrich worker can hand it
+        straight to the existing candidate lookup.
+        """
+        limit = max(1, min(int(limit), 200))
+        with self.lock:
+            rows = self.connection.execute(
+                """
+                SELECT t.*, s.title AS source_title, s.kind AS source_kind,
+                       s.selected AS source_selected,
+                       o.payload AS override_payload
+                FROM tracks t
+                JOIN sources s ON s.chat_id = t.chat_id
+                LEFT JOIN metadata_overrides o
+                    ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                WHERE t.available = 1
+                  AND t.telegram_title NOT IN ('', 'Unknown title')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM metadata_overrides existing
+                      WHERE existing.chat_id = t.chat_id AND existing.message_id = t.message_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM artwork_misses miss
+                      WHERE miss.track_key = t.chat_id || ':' || t.message_id
+                  )
+                ORDER BY t.rowid ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._track_row(row) for row in rows]
 
     def _flush_search(self) -> None:
         with self.lock:
@@ -1463,6 +1535,7 @@ class Database:
             "coverQuality": "1200",
             "prefetchCount": 1,
             "bindHost": "127.0.0.1",
+            "autoArtwork": True,
         }
         with self.lock:
             rows = self.connection.execute("SELECT key, value FROM app_settings").fetchall()
@@ -1471,9 +1544,12 @@ class Database:
         return defaults
 
     def save_settings(self, values: Mapping[str, Any]) -> dict[str, Any]:
-        allowed = {"musicbrainzContact", "coverQuality", "prefetchCount", "bindHost"}
+        allowed = {"musicbrainzContact", "coverQuality", "prefetchCount", "bindHost", "autoArtwork"}
         if set(values) - allowed:
             raise ValueError("Unknown setting")
+        auto = values.get("autoArtwork")
+        if auto is not None and not isinstance(auto, bool):
+            raise ValueError("autoArtwork must be a boolean")
         bind_host = values.get("bindHost")
         if bind_host is not None and str(bind_host) not in BIND_HOSTS:
             raise ValueError("Bind address must be 127.0.0.1 or 0.0.0.0")
