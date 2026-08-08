@@ -999,7 +999,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow-y: auto;
 }
 .wide-modal { width: min(92vw, 790px); }
-.modal::backdrop { background: rgb(4 3 3 / .28); backdrop-filter: blur(8px); }
+.modal::backdrop { background: rgb(4 3 3 / .28); }
 html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 @media (prefers-color-scheme: dark) {
   html[data-theme="system"] .modal::backdrop { background: rgb(4 3 3 / .45); }
@@ -1963,3 +1963,59 @@ html[data-theme="dark"] {
   padding: 0;
   accent-color: var(--ink);
 }
+
+
+/* =========================================================================
+   Inset and dialog pass (impeccable audit). Appended last on purpose: every
+   rule here overrides an earlier one, and one block keeps the next audit
+   trivial.
+   ========================================================================= */
+
+/* 1. Insets get their own token. Fields reused --paper, the canvas token:
+   in light mode they melted into the dialog surface, in dark mode they sat
+   below the canvas and read as holes punched through the panel. Mixing
+   paper a touch toward ink lands between canvas and surface in both
+   themes. */
+:root { --field: color-mix(in srgb, var(--paper) 93%, var(--ink) 7%); }
+
+input,
+textarea,
+.phone-field,
+.login-stage select,
+.discover-filters input,
+.discover-filters select,
+.setting-block input,
+.setting-block select,
+.inline-choice select,
+.discover-tools select { background: var(--field); }
+
+/* The rail chips and the search wrappers are labels too; keep their inputs
+   readable when the global label quieting (rule 3) shrinks the font. */
+.search-control input, .global-search-control input { font-size: 13px; }
+
+/* 2. The scrim dims; it never frosts. Retires backdrop blur whether it
+   lives on the backdrop or on the shell via :has(). The literal
+   backdrop-filter: blur(8px) on .modal::backdrop was deleted above. */
+dialog.modal::backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
+body:has(dialog[open]) .app-shell { filter: none; }
+
+/* 3. Hierarchy: labels recede, actions advance. The lead word of a settings
+   label stays in ink so the strong/span split still reads. */
+label, .field-label { color: var(--graphite); font-size: 11px; }
+label strong { color: var(--ink); }
+.button { font-size: 13px; font-weight: 700; }
+
+/* 4. Dialog rhythm: balanced padding, capped field, actions close the
+   composition instead of floating above a dead band. The mobile sheet at
+   <=620px keeps its own safe-area geometry, so this only applies on
+   desktops. Settings keeps its own layout margins. */
+@media (min-width: 621px) {
+  dialog.modal:not(.settings-modal) { padding: 24px 26px 22px; }
+}
+.modal-header { margin-bottom: 14px; }
+textarea { min-height: 150px; max-height: 52dvh; }
+.form-actions { margin-top: 16px; }
+
+/* 5. Commit to the mono identity when it is chosen, instead of leaving
+   Archivo headings floating over a terminal body. */
+html[data-font="mono"] { --font-display: var(--font-mono); }

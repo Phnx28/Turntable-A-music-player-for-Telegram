@@ -59,6 +59,15 @@ def _tracks(count=48):
     return items
 
 
+def _rel_lum(rgb):
+    """Relative luminance (WCAG) for an [r, g, b] byte triple."""
+    def chan(v):
+        v /= 255
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = rgb
+    return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+
+
 class Handler(SimpleHTTPRequestHandler):
     # index.html asks for /assets/style.css because app.py:299 mounts /assets -> static/.
     # Without this rewrite every stylesheet 404s and every geometry assertion measures
@@ -1277,3 +1286,40 @@ class LayoutTests(unittest.TestCase):
         self.assertFalse(headline.rstrip().endswith("."), f"headline carries a terminal period: {headline!r}")
         # The best-written state in the app (audit F): it must still name the query.
         self.assertIn("qqqqq", headline)
+
+    def test_field_token_inset_band(self):
+        """Fields must read as a recess, not a hole, on both themes (impeccable audit).
+
+        Dark: the field sits strictly between the canvas and the raised dialog
+        surface. Light: the field is a visible recess (darker than the canvas)
+        but never so dark that it falls out of the surface family. The --field
+        token is what keeps every inset honest, so pin the band here.
+        """
+        page = self.page(1440, 900)
+        for theme in ("dark", "light"):
+            page.evaluate(f"document.documentElement.dataset.theme = '{theme}'")
+            colors = page.evaluate("""() => {
+                const root = getComputedStyle(document.documentElement);
+                const read = (token) => {
+                    const probe = document.createElement('i');
+                    probe.style.background = token.trim();
+                    document.body.append(probe);
+                    const value = getComputedStyle(probe).backgroundColor;
+                    probe.remove();
+                    return value.match(/\\d+(\\.\\d+)?/g).slice(0, 3).map(Number);
+                };
+                return {
+                    paper: read(root.getPropertyValue('--paper')),
+                    field: read(root.getPropertyValue('--field')),
+                    raised: read(root.getPropertyValue('--surface-raised')),
+                };
+            }""")
+            paper = _rel_lum(colors["paper"])
+            field = _rel_lum(colors["field"])
+            raised = _rel_lum(colors["raised"])
+            if theme == "dark":
+                self.assertGreaterEqual(field, paper + 0.004, (theme, paper, field, raised))
+                self.assertLessEqual(field, raised - 0.002, (theme, paper, field, raised))
+            else:
+                self.assertLessEqual(field, paper - 0.03, (theme, paper, field))
+                self.assertGreaterEqual(field, raised - 0.25, (theme, field, raised))
