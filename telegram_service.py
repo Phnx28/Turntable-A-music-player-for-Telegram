@@ -18,7 +18,6 @@ from telethon.sessions import StringSession
 from telethon.tl.types import (
     DocumentAttributeAudio,
     DocumentAttributeFilename,
-    InputMessagesFilterDocument,
     InputMessagesFilterMusic,
 )
 from telethon.tl.types import contacts as contacts_types
@@ -655,22 +654,24 @@ class TelegramService:
                     if job:
                         job.state = "running"
                     entity = await asyncio.wait_for(client.get_entity(int(chat_id)), timeout=30)
-                    for filter_type in (InputMessagesFilterMusic, InputMessagesFilterDocument):
-                        async for message in client.iter_messages(
-                            entity, filter=filter_type(), min_id=minimum
-                        ):
-                            highest_scanned = max(highest_scanned, int(message.id))
-                            if job:
-                                job.processed += 1
-                            item = self._message_to_track(message, chat_id)
-                            if item:
-                                seen.add(str(message.id))
-                                items[str(message.id)] = item
-                                if job:
-                                    job.found = len(seen)
-                                if len(items) >= 100:
-                                    await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
-                                    items.clear()
+                    # Single-pass scan: one iter_messages over the history, filtering
+                    # audio/document in Python. Halves API round-trips vs the old
+                    # two-pass (Music + Document). Kept simple — no filter= arg so
+                    # Telegram doesn't skip messages the client-side check would keep.
+                    async for message in client.iter_messages(entity, min_id=minimum):
+                        highest_scanned = max(highest_scanned, int(message.id))
+                        if job:
+                            job.processed += 1
+                        item = self._message_to_track(message, chat_id)
+                        if not item:
+                            continue
+                        seen.add(str(message.id))
+                        items[str(message.id)] = item
+                        if job:
+                            job.found = len(seen)
+                        if len(items) >= 100:
+                            await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
+                            items.clear()
                     await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
                     if full and not temporary:
                         self.database.mark_missing_unavailable(chat_id, seen)

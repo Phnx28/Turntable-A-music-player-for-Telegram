@@ -772,12 +772,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         temporary: bool = False,
         total: int | None = None,
         sort: str = "posted",
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         # ponytail: the client already knows the total after the first page of a given filter
         # and echoes it back, which lets us skip the COUNT(*) entirely while scrolling.
+        # cursor: optional "sentAt:rowid" for keyset pagination on posted sort (O(1) vs OFFSET).
         return database(request).list_tracks(
             source, q[:200], offset, limit, liked, temporary,
             total if total is not None and total >= 0 else None, sort,
+            cursor,
         )
 
     @application.post("/api/tracks/summaries")

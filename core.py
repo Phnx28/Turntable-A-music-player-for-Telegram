@@ -585,6 +585,23 @@ class Database:
             )
             self._rebuild_search(self.connection)
             self.connection.commit()
+            version = 7
+        if version < 8:
+            self.connection.executescript(
+                """
+                -- Title/artist sort was 25ms+ because the ORDER BY was
+                -- COALESCE(NULLIF(json_extract(o.payload...))) which cannot use a btree.
+                -- Live DB (65k rows) can't cheaply add a GENERATED column on metadata_overrides,
+                -- so index the backing columns instead; the real win comes when sort no longer
+                -- depends on the LEFT JOIN. For now, raw telegram_* indexes cover the no-override
+                -- fast path (most rows) and shave the common case.
+                CREATE INDEX IF NOT EXISTS tracks_title_idx ON tracks(telegram_title COLLATE NOCASE, file_name);
+                CREATE INDEX IF NOT EXISTS tracks_artist_idx ON tracks(telegram_artist COLLATE NOCASE, telegram_title COLLATE NOCASE);
+
+                PRAGMA user_version = 8;
+                """
+            )
+            self.connection.commit()
 
     def ping(self) -> bool:
         """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
@@ -773,6 +790,10 @@ class Database:
             )
             if not cursor.rowcount:
                 raise KeyError("Source not found")
+        try:
+            self._invalidate_pos_cache()
+        except AttributeError:
+            pass
 
     def set_source_pinned(self, chat_id: str, pinned: bool) -> None:
         with self.transaction() as connection:
@@ -794,6 +815,10 @@ class Database:
                 f"UPDATE sources SET selected = ? WHERE chat_id IN ({placeholders})",
                 (int(selected), *ids),
             )
+        try:
+            self._invalidate_pos_cache()
+        except AttributeError:
+            pass
 
     def set_source_order(self, chat_ids: Iterable[str]) -> None:
         ids = list(dict.fromkeys(str(value) for value in chat_ids))
@@ -881,6 +906,10 @@ class Database:
             )
             for value in values:
                 self._dirty_search_keys.add(track_key(value[0], value[1]))
+            try:
+                self._invalidate_pos_cache()
+            except AttributeError:
+                pass
 
     def mark_missing_unavailable(self, chat_id: str, seen_message_ids: set[str]) -> None:
         self._track_counts = None
@@ -904,6 +933,10 @@ class Database:
                 f"UPDATE tracks SET available = 0 WHERE chat_id = ? AND message_id IN ({placeholders})",
                 (chat_id, *ids),
             )
+        try:
+            self._invalidate_pos_cache()
+        except AttributeError:
+            pass
 
     def get_track(self, chat_id: str, message_id: str) -> dict[str, Any] | None:
         with self.lock:
@@ -996,6 +1029,7 @@ class Database:
         include_unselected: bool = False,
         total: int | None = None,
         sort: str = "posted",
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         offset = max(0, int(offset))
         limit = max(25, min(int(limit), 200))
@@ -1004,6 +1038,20 @@ class Database:
         where = " AND ".join(clauses)
         # _library_filter already flushed any pending FTS writes above, so this is now a pure
         # read and can run on the per-thread connection without taking the write lock.
+        # Cursor pagination (keyset): when cursor is "sentAt:rowid" and sort is posted,
+        # use WHERE (sent_at, rowid) < (cursor_sent, cursor_rowid) instead of OFFSET.
+        # This is O(log n) regardless of depth; OFFSET scans and discards.
+        cursor_clause = ""
+        cursor_params: list[Any] = []
+        if cursor and sort == "posted" and not query and not liked and not chat_id and not include_unselected:
+            try:
+                c_sent, c_rowid = cursor.split(":", 1)
+                c_sent_i, c_rowid_i = int(c_sent), int(c_rowid)
+                # For ORDER BY sent_at DESC, rowid DESC: next page is strictly less than cursor
+                cursor_clause = " AND ((t.sent_at < ?) OR (t.sent_at = ? AND t.rowid < ?))"
+                cursor_params = [c_sent_i, c_sent_i, c_rowid_i]
+            except (ValueError, AttributeError):
+                cursor_clause = ""
         reader = self.reader
         rows = reader.execute(
             f"""
@@ -1016,11 +1064,11 @@ class Database:
             JOIN sources s ON s.chat_id = t.chat_id
             LEFT JOIN metadata_overrides o
                 ON o.chat_id = t.chat_id AND o.message_id = t.message_id
-            WHERE {where}
+            WHERE {where}{cursor_clause}
             ORDER BY {order}, t.rowid DESC
             LIMIT ? OFFSET ?
             """,
-            (*parameters, limit, offset),
+            (*parameters, *cursor_params, limit, offset),
         ).fetchall()
             # ponytail: COUNT(*) OVER() on this query cost ~200ms on a 55k library because the
             # window function materializes every matching row before the LIMIT. A plain COUNT(*)
@@ -1089,6 +1137,50 @@ class Database:
             "dayBreaks": day_breaks,
         }
 
+    _pos_cache: dict[str, tuple[list[tuple[int,int,int,str,str]], float]] | None = None
+    _pos_cache_lock = __import__("threading").RLock()
+
+    def _pos_cache_key(self, chat_id, query, liked, include_unselected, sort) -> str:
+        return f"{chat_id or ''}|{query}|{int(liked)}|{int(bool(include_unselected))}|{sort}"
+
+    def _ensure_pos_cache(self, cache_key: str, clauses, parameters, order) -> list[tuple[int,int,int,str,str]] | None:
+        # Only cache the hot path: posted sort, no search, no filter churn.
+        # Other sorts/queries stay on SQL (rare, and invalidation would be constant).
+        if not (cache_key.endswith("|posted") and "|0|0|posted" in cache_key and not any(clauses.count("LIKE") or "MATCH" in c for c in clauses)):
+            return None
+        import time as _time, bisect as _bisect
+        now = _time.monotonic()
+        if self._pos_cache is None:
+            self._pos_cache = {}
+        with self._pos_cache_lock:
+            cached = self._pos_cache.get(cache_key)
+            if cached and now - cached[1] < 30:
+                return cached[0]
+        # Build outside lock (can be 65k rows) then commit
+        with self.lock:
+            rows = self.connection.execute(
+                f"""
+                SELECT t.sent_at, t.rowid, t.chat_id, t.message_id
+                FROM tracks t
+                JOIN sources s ON s.chat_id = t.chat_id
+                LEFT JOIN metadata_overrides o ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                WHERE {" AND ".join(clauses) if clauses else "1=1"}
+                ORDER BY {order}, t.rowid DESC
+                """,
+                parameters,
+            ).fetchall()
+        # Store as (-sent_at, -rowid) so bisect works ascending while order is DESC
+        keys = [(-int(r[0]), -int(r[1]), str(r[2]), str(r[3])) for r in rows]
+        # Already ordered by sent_at DESC, rowid DESC, so keys is ascending
+        with self._pos_cache_lock:
+            self._pos_cache[cache_key] = (keys, now)
+        return keys
+
+    def _invalidate_pos_cache(self) -> None:
+        if self._pos_cache is not None:
+            with self._pos_cache_lock:
+                self._pos_cache.clear()
+
     def track_position(
         self,
         key: str,
@@ -1102,6 +1194,22 @@ class Database:
         order = _TRACK_SORTS.get(sort or "posted", _TRACK_SORTS["posted"])
         clauses, parameters = self._library_filter(chat_id, query, liked, include_unselected)
         where = " AND ".join(clauses) if clauses else "1=1"
+        # Fast path: in-memory bisect for posted + no query/liked filter
+        cache_key = self._pos_cache_key(chat_id, query, liked, include_unselected, sort or "posted")
+        # Only try cache when sort is posted and there's no search
+        if (sort or "posted") == "posted" and not query:
+            keys = self._ensure_pos_cache(cache_key, clauses, parameters, order)
+            if keys is not None:
+                # Find target's sort key
+                with self.lock:
+                    target = self.connection.execute("SELECT sent_at, rowid FROM tracks WHERE chat_id=? AND message_id=?", (target_chat, target_message)).fetchone()
+                if target:
+                    probe = (-int(target[0]), -int(target[1]), target_chat, target_message)
+                    import bisect as _bisect
+                    idx = _bisect.bisect_left(keys, probe)
+                    if idx < len(keys) and keys[idx][2] == target_chat and keys[idx][3] == target_message:
+                        return idx
+                    raise KeyError("Track is not in this playlist")
         with self.lock:
             row = self.connection.execute(
                 f"""
@@ -1200,6 +1308,10 @@ class Database:
             )
             if not cursor.rowcount:
                 raise KeyError("Track not found")
+        try:
+            self._invalidate_pos_cache()
+        except AttributeError:
+            pass
         return self.get_track(chat_id, message_id)  # type: ignore[return-value]
 
     def liked_count(self) -> int:
@@ -1232,6 +1344,10 @@ class Database:
                     (chat_id, message_id),
                 )
             self._dirty_search_keys.add(track_key(chat_id, message_id))
+            try:
+                self._invalidate_pos_cache()
+            except AttributeError:
+                pass
         return self.get_track(chat_id, message_id)  # type: ignore[return-value]
 
     def _flush_search(self) -> None:
