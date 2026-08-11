@@ -1169,7 +1169,25 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   overscroll-behavior: contain;
 }
 
-.discover-list { border-top: 1px solid var(--rule); }
+#source-dialog[open] {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+#source-dialog > .modal-header {
+  margin-bottom: 10px;
+}
+#source-dialog > .small-copy {
+  margin: 0;
+}
+#source-dialog .discover-list {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border-top: 1px solid var(--rule);
+}
 .discover-list.is-revealing .discover-row { animation: row-in var(--dur-2) var(--ease-out) both; }
 .discover-list.is-revealing .discover-row:nth-child(1) { animation-delay: 0ms; }
 .discover-list.is-revealing .discover-row:nth-child(2) { animation-delay: 22ms; }
