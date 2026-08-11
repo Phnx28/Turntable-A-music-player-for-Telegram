@@ -1226,6 +1226,70 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(restored["collapsed"], restored)
         self.assertEqual("Expand sources", restored["label"], restored)
 
+    def test_settings_is_a_stable_glass_workspace_across_tabs(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.click("#open-settings")
+        page.wait_for_selector("#settings-dialog[open]")
+        page.wait_for_timeout(150)
+
+        base = page.evaluate("""() => {
+          const dialog = document.getElementById('settings-dialog');
+          const content = document.querySelector('.settings-content');
+          const close = dialog.querySelector('[data-close="settings-dialog"]');
+          return {
+            width: dialog.getBoundingClientRect().width,
+            height: dialog.getBoundingClientRect().height,
+            contentHeight: content.getBoundingClientRect().height,
+            closeWidth: close.getBoundingClientRect().width,
+            closeHeight: close.getBoundingClientRect().height,
+            filter: getComputedStyle(dialog).backdropFilter || getComputedStyle(dialog).webkitBackdropFilter,
+          };
+        }""")
+        self.assertIn("20px", base["filter"], base)
+        self.assertGreaterEqual(base["closeWidth"], 39.5, base)
+        self.assertGreaterEqual(base["closeHeight"], 39.5, base)
+        self.assertAlmostEqual(base["contentHeight"], 300, delta=8, msg=base)
+
+        # No backdrop blur: the scrim dims, it never frosts.
+        self.assertNotIn("blur", page.evaluate("() => getComputedStyle(document.getElementById('settings-dialog')).backdrop || ''"))
+
+        # The frame must not shift when switching tabs.
+        for tab in ("appearance", "playback", "metadata", "network", "account"):
+            page.click(f'[data-settings-tab="{tab}"]')
+            page.wait_for_timeout(60)
+            frame = page.evaluate("""() => {
+              const dialog = document.getElementById('settings-dialog');
+              return { width: dialog.getBoundingClientRect().width, height: dialog.getBoundingClientRect().height };
+            }""")
+            self.assertLessEqual(abs(frame["width"] - base["width"]), 1, (tab, frame, base))
+            self.assertLessEqual(abs(frame["height"] - base["height"]), 1, (tab, frame, base))
+
+        # Metadata overflows its pane scroll rather than growing the dialog.
+        page.click('[data-settings-tab="metadata"]')
+        page.wait_for_timeout(80)
+        scroll = page.evaluate("""() => {
+          const content = document.querySelector('.settings-content');
+          return { scrollable: content.scrollHeight > content.clientHeight,
+                   clientHeight: content.clientHeight, scrollHeight: content.scrollHeight };
+        }""")
+        self.assertTrue(scroll["scrollable"], scroll)
+
+        # Network choices render as vertical radio rows with the mark.
+        page.click('[data-settings-tab="network"]')
+        page.wait_for_timeout(80)
+        network = page.evaluate("""() => {
+          const choices = [...document.querySelectorAll('.network-choice')];
+          return {
+            count: choices.length,
+            marked: choices.some((el) => el.querySelector('.network-choice-mark')),
+            pressed: choices.map((el) => el.getAttribute('aria-pressed')),
+          };
+        }""")
+        self.assertEqual(2, network["count"], network)
+        self.assertTrue(network["marked"], network)
+        self.assertEqual(1, len([v for v in network["pressed"] if v == "true"]), network)
+
     def test_player_is_one_uniform_glass_surface_on_the_canvas(self):
         for width, height in ((1440, 900), (390, 844)):
             with self.subTest(viewport=(width, height)):

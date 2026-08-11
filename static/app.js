@@ -2148,11 +2148,19 @@ function renderAccount(account) {
   $("settings-account-meta").textContent = parts.join(" · ");
 }
 
+function formatBytesShort(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} GB`;
+  if (value >= 1048576) return `${(value / 1048576).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
 async function openSettings() {
   $("settings-dialog").showModal();
   try {
     state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality; $("auto-artwork").checked = state.settings.autoArtwork !== false; updateAutoArtworkHelp();
-    const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} songs cached · ${(cache.bytes / 1048576).toFixed(1)} MB`;
+    const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} songs cached · ${formatBytesShort(cache.bytes)}`;
     const [network, auth, status] = await Promise.all([api("/api/network"), api("/api/auth/status"), api("/api/status")]);
     state.network = network;
     state.passwordEnabled = auth.passwordEnabled;

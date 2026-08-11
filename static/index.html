@@ -437,7 +437,7 @@
       <section data-settings-pane="playback" hidden>
         <div class="setting-block narrow"><label for="prefetch-count"><strong>Songs to prefetch</strong><span>Cache upcoming tracks for gapless starts. Set 0 to disable.</span></label><input id="prefetch-count" type="number" min="0" max="20" value="1"></div>
         <div class="setting-block narrow"><label for="sleep-timer"><strong>Sleep timer</strong><span>Pause playback after the chosen time. Survives a page reload.</span></label><select id="sleep-timer"><option value="off">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option></select></div>
-        <div class="cache-row"><span id="cache-usage" class="small-copy">Checking cache…</span><button id="clear-cache" class="button" type="button">Clear prefetched songs</button></div>
+        <div class="cache-row"><span id="cache-usage" class="small-copy">Checking cache…</span><button id="clear-cache" class="button" type="button">Clear cache</button></div>
       </section>
       <section data-settings-pane="metadata" hidden>
         <div class="setting-block"><label for="musicbrainz-contact"><strong>MusicBrainz contact</strong><span>MusicBrainz does not use an API key for lookups. Enter an email address or website for the required User-Agent.</span></label><input id="musicbrainz-contact" type="text" placeholder="you@example.com"></div>
@@ -451,8 +451,22 @@
       <section data-settings-pane="network" hidden>
         <fieldset class="choice-group first">
           <legend>Who can reach this player</legend>
-          <div class="segmented" id="bind-host-options" data-bind-host>
-            <button type="button" data-value="127.0.0.1">This machine only</button><button type="button" data-value="0.0.0.0">Anyone on my network</button>
+          <div id="bind-host-options" class="network-choices" data-bind-host>
+            <button class="network-choice" type="button" data-value="127.0.0.1" aria-pressed="false">
+              <span class="network-choice-mark" aria-hidden="true"></span>
+              <span>
+                <strong>This machine only</strong>
+                <small>Keep Turntable private to this computer.</small>
+              </span>
+            </button>
+
+            <button class="network-choice" type="button" data-value="0.0.0.0" aria-pressed="false">
+              <span class="network-choice-mark" aria-hidden="true"></span>
+              <span>
+                <strong>Anyone on my network</strong>
+                <small>Allow other devices on this Wi-Fi or LAN to reach Turntable.</small>
+              </span>
+            </button>
           </div>
           <p class="field-help" id="bind-host-help">This machine only keeps the player private. Anyone on my network lets other devices reach it — including anyone else on the same Wi-Fi.</p>
           <p id="bind-restart-notice" class="restart-notice" role="status" hidden></p>
@@ -519,7 +533,7 @@
           <p class="field-label danger-title">Danger zone</p>
           <div class="danger-row">
             <span class="small-copy">Disconnecting signs out of Telegram and deletes the indexed library, likes, lyrics and metadata edits on this machine.</span>
-            <button id="disconnect-telegram" class="button danger" type="button">Disconnect</button>
+            <button id="disconnect-telegram" class="button danger" type="button">Disconnect Telegram</button>
           </div>
         </div>
       </section></div></div>

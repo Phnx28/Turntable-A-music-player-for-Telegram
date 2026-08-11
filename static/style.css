@@ -1144,6 +1144,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 /* auto-flow column rather than repeat(3, 1fr): the hardcoded three tracks left the two-button
    Network control filling only two thirds of its row, with a dead third column after it. */
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--rule); border-radius: var(--radius-control); overflow: hidden; }
+.segmented[data-setting="theme"] { width: min(100%, 380px); }
 .segmented button { min-height: 40px; border: 0; border-right: 1px solid var(--rule); background: transparent; cursor: pointer; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
 .segmented button:last-child { border-right: 0; }
 .segmented button.active { background: var(--ink); color: var(--paper); }
@@ -1494,6 +1495,35 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .lyrics-pane:has(#lyrics-empty:not([hidden])) [id="add-lyrics-empty"] { align-self: flex-start; margin: 0; }
 .lyrics-pane:has(#lyrics-empty:not([hidden])) .lyrics-attribution { margin-top: 24px; }
 
+.network-choices { display: grid; gap: 6px; max-width: 520px; }
+
+.network-choice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.network-choice strong, .network-choice small { display: block; }
+.network-choice strong { font-size: 14px; font-weight: 600; }
+.network-choice small { margin-top: 2px; color: var(--graphite); font-size: 12px; }
+
+.network-choice-mark {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1px solid var(--graphite);
+  border-radius: 50%;
+}
+
+.network-choice.active .network-choice-mark {
+  border: 4px solid var(--ink);
+}
+
 .dialog-status { min-height: 20px; margin: 12px 0 0; color: var(--graphite); font-size: 12px; }
 #lyrics-form { gap: 8px; margin-top: 16px; }
 #share-dialog .modal-header { margin-bottom: 16px; }
@@ -1542,19 +1572,36 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .settings-nav button:hover { background: var(--surface); color: var(--ink); }
 /* Tinted background rather than an accent bar, matching .source-link.active and .track-row.current.
    A stronger mix on hover so a selected item still responds to the pointer. */
-.settings-nav button.active { background: var(--surface); color: var(--ink); }
+.settings-nav button.active { background: color-mix(in srgb, var(--surface) 48%, transparent); color: var(--ink); font-weight: 600; }
 .settings-nav button.active:hover { background: var(--surface-raised); }
 .settings-content {
-  min-width: 0; height: 340px; overflow-y: auto; padding-right: 4px;
+  min-width: 0; height: 300px; overflow-y: auto; padding-right: 4px;
   /* Gutter exists whether or not a pane overflows, so switching tabs cannot shift the
      content sideways. */
   scrollbar-gutter: stable;
+}
+/* Settings is the 20px secondary glass: a translucent raised surface over the dimmed
+   canvas. The backdrop stays dim-only (no blur). */
+.settings-modal { background: color-mix(in srgb, var(--surface-raised) 88%, transparent); backdrop-filter: blur(20px) saturate(1.01); -webkit-backdrop-filter: blur(20px) saturate(1.01); }
+@media (max-width: 860px) {
+  .settings-modal .modal-header .icon-button { width: 44px; height: 44px; }
 }
 .choice-group.first { margin-top: 0; }
 .setting-block { display: grid; gap: 9px; margin-bottom: 22px; }
 /* A 0-20 number and a three-option select do not need the full dialog width; a full-bleed input
    implies free text and makes the value harder to read against its label. */
 .setting-block.narrow input, .setting-block.narrow select { max-width: 200px; }
+#prefetch-count {
+  width: 92px;
+  appearance: textfield;
+}
+#prefetch-count::-webkit-outer-spin-button,
+#prefetch-count::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+#musicbrainz-contact { width: min(100%, 480px); }
+#default-cover-quality { width: 220px; }
 .field-label { margin: 0 0 6px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .account-summary { margin-bottom: 26px; }
 .account-name { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
@@ -2296,19 +2343,26 @@ html[data-theme="dark"] {
 }
 
 
-/* Auto cover-art toggle: a real checkbox row, not a 40px-tall input block. */
+/* Auto cover-art toggle: a real checkbox row beside its label, not a 40px-tall input block. */
 .setting-block.choice {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 14px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
 }
-.setting-block.choice input[type="checkbox"] {
+.setting-block.choice > input[type="checkbox"] {
+  grid-column: 1;
+  grid-row: 1;
   width: 18px;
   height: 18px;
   min-height: 0;
   margin: 0;
+  margin-top: 2px;
   padding: 0;
   accent-color: var(--ink);
+}
+.setting-block.choice > label {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 
