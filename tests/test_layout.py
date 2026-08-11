@@ -1511,7 +1511,7 @@ class LayoutTests(unittest.TestCase):
           list.innerHTML = Array.from({length: 40}, (_, index) => `
             <section class="discover-group">
               ${index === 0 ? '<h3>Selected sources</h3>' : ''}
-              <label class="discover-row">Source ${index}</label>
+              <label class="discover-row">Source ${index}<input type="checkbox" aria-label="Select source ${index}"></label>
             </section>`).join('');
           dialog.showModal();
         }""")
@@ -1522,8 +1522,11 @@ class LayoutTests(unittest.TestCase):
             toolsTop: dialog.querySelector('.discover-tools').getBoundingClientRect().top,
             dialogOverflow: getComputedStyle(dialog).overflow,
             listOverflowY: getComputedStyle(document.getElementById('discover-list')).overflowY,
+            listScrollHeight: document.getElementById('discover-list').scrollHeight,
+            listClientHeight: document.getElementById('discover-list').clientHeight,
           };
         }""")
+        self.assertGreater(before["listScrollHeight"], before["listClientHeight"], before)
         page.evaluate("""() => {
           const list = document.getElementById('discover-list');
           list.scrollTop = list.scrollHeight;
@@ -1533,9 +1536,11 @@ class LayoutTests(unittest.TestCase):
           return {
             headerTop: dialog.querySelector('.modal-header').getBoundingClientRect().top,
             toolsTop: dialog.querySelector('.discover-tools').getBoundingClientRect().top,
+            listScrollTop: document.getElementById('discover-list').scrollTop,
           };
         }""")
 
+        self.assertGreater(after["listScrollTop"], 0, after)
         self.assertLessEqual(abs(before["headerTop"] - after["headerTop"]), 1, (before, after))
         self.assertLessEqual(abs(before["toolsTop"] - after["toolsTop"]), 1, (before, after))
         self.assertIn("hidden", before["dialogOverflow"], before)
