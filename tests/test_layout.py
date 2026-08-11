@@ -1525,8 +1525,32 @@ class LayoutTests(unittest.TestCase):
         self.assertLessEqual(shape["lastBottom"], shape["syncTop"] - 8, shape)
         self.assertLessEqual(shape["lastTop"], shape["syncTop"], shape)
 
+    def test_queue_labels_only_mark_played_and_playing_without_default_noise(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.click("#queue-tab")
+        page.wait_for_timeout(100)
+        page.evaluate("""() => window.__setQueueForTest(
+          ['-1001:1', '-1001:2', '-1001:3', '-1001:4'], 1,
+          { '-1001:3': 'ready', '-1001:4': 'loading' },
+        )""")
+        labels = page.evaluate("""() => ({
+          sections: [...document.querySelectorAll('.queue-row .queue-state')].map((el) => el.textContent),
+          cache: [...document.querySelectorAll('.queue-row .cache-state')].map((el) => el.textContent),
+        })""")
+        self.assertEqual(["Played", "Playing"], labels["sections"], labels)
+        self.assertNotIn("Up next", labels["sections"], labels)
+        self.assertNotIn("queued", labels["cache"], labels)
+        self.assertIn("ready", labels["cache"], labels)
+        self.assertIn("loading", labels["cache"], labels)
+
+        # No cache state at all: the row renders without a badge, not with a default label.
+        page.evaluate("""() => window.__setQueueForTest(['-1001:1', '-1001:2'], 0, {})""")
+        bare = page.evaluate("""() => [...document.querySelectorAll('.queue-row .cache-state')].map((el) => el.textContent)""")
+        self.assertEqual([], bare, bare)
+
     def test_expanded_now_identity_block_has_artwork_clearance(self):
-        for width, height in ((1440, 900), (1280, 720)):
+        for width, height in ((1440, 900), (1280, 720), (1024, 768)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
                 self.open_now_panel(page)
@@ -1544,9 +1568,9 @@ class LayoutTests(unittest.TestCase):
                   };
                 }""")
                 self.assertAlmostEqual(shape["artWidth"], shape["artHeight"], delta=1, msg=shape)
-                self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 4, shape)
-                self.assertGreaterEqual(shape["artWidth"], 150, shape)
-                self.assertLessEqual(shape["artWidth"], 160, shape)
+                self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 16, shape)
+                self.assertGreaterEqual(shape["artWidth"], 180, shape)
+                self.assertLessEqual(shape["artWidth"], 188, shape)
 
     def test_expanded_now_header_is_content_sized_with_no_dead_band(self):
         for width, height in ((1440, 900), (390, 844)):

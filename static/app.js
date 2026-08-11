@@ -1082,6 +1082,12 @@ function detailRowsFor(track) {
 }
 
 window.__renderDetailsForTest = (track) => { $("track-details").innerHTML = detailRowsFor(track); };
+window.__setQueueForTest = (queue, queueIndex, cacheStates = {}) => {
+  state.queue = queue;
+  state.queueIndex = queueIndex;
+  state.cacheStates = cacheStates;
+  renderQueue();
+};
 
 function setTrackUi() {
   const track = state.current;
@@ -1339,8 +1345,9 @@ function renderQueue({ followCurrent = false } = {}) {
     const summary = state.summaryCache.get(key); const detail = state.trackCache.get(key); const index = visibleStart + offset;
     const title = summary?.title || detail?.metadata?.title || "Loading track…";
     const artist = summary?.artist || detail?.metadata?.artist || "";
-    const section = index < state.queueIndex ? "Played" : index === state.queueIndex ? "Playing" : "Up next";
-    return `<div class="queue-row ${index < state.queueIndex ? "played" : ""} ${index === state.queueIndex ? "current" : ""}" draggable="${index > state.queueIndex}" data-queue-index="${index}" data-queue-key="${escapeHtml(key)}"><button class="queue-copy" type="button" data-queue-play="${index}"><span class="queue-state">${section}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(artist)}</small></button><span>${index > state.queueIndex ? `<span class="cache-state ${state.cacheStates[key] || ""}">${escapeHtml(state.cacheStates[key] || "queued")}</span><button class="icon-button" type="button" data-remove-queue="${index}" aria-label="Remove from queue">${icon("close")}</button>` : ""}</span></div>`;
+    const section = index < state.queueIndex ? "Played" : index === state.queueIndex ? "Playing" : "";
+    const cacheState = state.cacheStates[key] || "";
+    return `<div class="queue-row ${index < state.queueIndex ? "played" : ""} ${index === state.queueIndex ? "current" : ""}" draggable="${index > state.queueIndex}" data-queue-index="${index}" data-queue-key="${escapeHtml(key)}"><button class="queue-copy" type="button" data-queue-play="${index}">${section ? `<span class="queue-state">${section}</span>` : ""}<strong>${escapeHtml(title)}</strong><small>${escapeHtml(artist)}</small></button><span>${index > state.queueIndex ? `${cacheState ? `<span class="cache-state ${cacheState}">${escapeHtml(cacheState)}</span>` : ""}<button class="icon-button" type="button" data-remove-queue="${index}" aria-label="Remove from queue">${icon("close")}</button>` : ""}</span></div>`;
   }).join("");
   // Rows or the empty state, never both: the old form concatenated them, so a one-track queue
   // showed a PLAYING row with "your queue is clear" underneath it.
@@ -1354,7 +1361,7 @@ async function schedulePrefetch() {
   const count = Math.max(0, Math.min(Number(state.settings.prefetchCount) || 0, 20));
   const keys = state.queue.slice(state.queueIndex + 1, state.queueIndex + 1 + count);
   if (!keys.length) return;
-  keys.forEach((key) => { state.cacheStates[key] = "queued"; }); renderQueue();
+  renderQueue();
   try { const job = await api("/api/playback/prefetch", { method: "POST", body: JSON.stringify({ keys }), quiet: true }); watchJob(job, (current) => {
     state.cacheStates = { ...state.cacheStates, ...(current.result || {}) };
     if (!$("queue-pane").hidden) for (const [key, value] of Object.entries(current.result || {})) {
