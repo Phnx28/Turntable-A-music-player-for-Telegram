@@ -1503,6 +1503,44 @@ class LayoutTests(unittest.TestCase):
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
 
+    def test_source_picker_keeps_task_controls_fixed_while_only_list_scrolls(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          const dialog = document.getElementById('source-dialog');
+          const list = document.getElementById('discover-list');
+          list.innerHTML = Array.from({length: 40}, (_, index) => `
+            <section class="discover-group">
+              ${index === 0 ? '<h3>Selected sources</h3>' : ''}
+              <label class="discover-row">Source ${index}</label>
+            </section>`).join('');
+          dialog.showModal();
+        }""")
+        before = page.evaluate("""() => {
+          const dialog = document.getElementById('source-dialog');
+          return {
+            headerTop: dialog.querySelector('.modal-header').getBoundingClientRect().top,
+            toolsTop: dialog.querySelector('.discover-tools').getBoundingClientRect().top,
+            dialogOverflow: getComputedStyle(dialog).overflow,
+            listOverflowY: getComputedStyle(document.getElementById('discover-list')).overflowY,
+          };
+        }""")
+        page.evaluate("""() => {
+          const list = document.getElementById('discover-list');
+          list.scrollTop = list.scrollHeight;
+        }""")
+        after = page.evaluate("""() => {
+          const dialog = document.getElementById('source-dialog');
+          return {
+            headerTop: dialog.querySelector('.modal-header').getBoundingClientRect().top,
+            toolsTop: dialog.querySelector('.discover-tools').getBoundingClientRect().top,
+          };
+        }""")
+
+        self.assertLessEqual(abs(before["headerTop"] - after["headerTop"]), 1, (before, after))
+        self.assertLessEqual(abs(before["toolsTop"] - after["toolsTop"]), 1, (before, after))
+        self.assertIn("hidden", before["dialogOverflow"], before)
+        self.assertEqual("auto", before["listOverflowY"], before)
+
     def test_track_action_position_is_fixed_regardless_of_title_length(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
