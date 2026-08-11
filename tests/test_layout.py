@@ -2690,3 +2690,79 @@ class LayoutTests(unittest.TestCase):
             else:
                 self.assertLessEqual(field, paper - 0.03, (theme, paper, field))
                 self.assertGreaterEqual(field, raised - 0.25, (theme, field, raised))
+
+    def test_burgundy_accent_tokens_resolve_per_theme(self):
+        page = self.page(1440, 900)
+        expected = {
+            "light": {"stamp": [125, 49, 64], "danger": [149, 64, 79]},
+            "dark": {"stamp": [166, 71, 91], "danger": [197, 107, 125]},
+        }
+
+        def read_tokens(target_page):
+            return target_page.evaluate("""() => {
+                const root = getComputedStyle(document.documentElement);
+                const read = (token) => {
+                    const probe = document.createElement('i');
+                    probe.style.background = root.getPropertyValue(token).trim();
+                    document.body.append(probe);
+                    const rgb = getComputedStyle(probe).backgroundColor
+                        .match(/\\d+(\\.\\d+)?/g)
+                        .slice(0, 3)
+                        .map(Number);
+                    probe.remove();
+                    return rgb;
+                };
+                return {stamp: read('--stamp'), danger: read('--danger')};
+            }""")
+
+        for theme, colors in expected.items():
+            page.evaluate(f"document.documentElement.dataset.theme = '{theme}'")
+            self.assertEqual(colors, read_tokens(page), theme)
+
+        system_page = self.browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme="dark")
+        system_page.route("**/api/**", self._stub)
+        system_page.goto(f"http://127.0.0.1:{self.port}/index.html", wait_until="load")
+        system_page.wait_for_timeout(200)
+        self.addCleanup(system_page.close)
+        system_page.evaluate("document.documentElement.dataset.theme = 'system'")
+        self.assertEqual(expected["dark"], read_tokens(system_page), "system-dark")
+
+    def test_track_play_overlay_is_centered_small_and_high_contrast(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        row = page.locator(".track-row:not(.track-placeholder)").first
+        row.hover()
+        page.wait_for_function("""() => {
+            const overlay = document.querySelector('.track-row:not(.track-placeholder) .track-play-overlay');
+            return overlay && getComputedStyle(overlay).opacity === '1'
+                && overlay.getBoundingClientRect().width >= 29.5;
+        }""")
+        shape = page.evaluate("""() => {
+            const cover = document.querySelector('.track-row:not(.track-placeholder) .mini-art-wrap').getBoundingClientRect();
+            const overlayElement = document.querySelector('.track-play-overlay');
+            const overlay = overlayElement.getBoundingClientRect();
+            const style = getComputedStyle(overlayElement);
+            const icon = overlayElement.querySelector('svg');
+            const iconStyle = getComputedStyle(icon);
+            return {
+                coverCenter: [cover.left + cover.width / 2, cover.top + cover.height / 2],
+                overlayCenter: [overlay.left + overlay.width / 2, overlay.top + overlay.height / 2],
+                width: overlay.width,
+                height: overlay.height,
+                color: style.color,
+                background: style.backgroundColor,
+                iconWidth: icon.getBoundingClientRect().width,
+                iconHeight: icon.getBoundingClientRect().height,
+                iconColor: iconStyle.color,
+            };
+        }""")
+        self.assertLessEqual(abs(shape["overlayCenter"][0] - shape["coverCenter"][0]), 1.5, shape)
+        self.assertLessEqual(abs(shape["overlayCenter"][1] - shape["coverCenter"][1]), 1.5, shape)
+        self.assertAlmostEqual(30, shape["width"], delta=0.5, msg=shape)
+        self.assertAlmostEqual(30, shape["height"], delta=0.5, msg=shape)
+        self.assertIn("255", shape["color"], shape)
+        self.assertIn("rgba(0, 0, 0, 0.62)", shape["background"], shape)
+        self.assertAlmostEqual(14, shape["iconWidth"], delta=0.5, msg=shape)
+        self.assertAlmostEqual(14, shape["iconHeight"], delta=0.5, msg=shape)
+        self.assertIn("255", shape["iconColor"], shape)

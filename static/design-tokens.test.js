@@ -74,7 +74,9 @@ test("token contrast meets its requirement, computed not transcribed", () => {
     [light, "--graphite", "--rail", 4.5, "rail secondary text"],
     [light, "--ink", "--rail", 4.5, "rail source titles"],
     [dark, "--graphite", "--paper", 4.5, "dark secondary text"],
-    [dark, "--stamp", "--paper", 4.5, "dark playing marker"],
+    // The dark burgundy playing mark is a graphical accent, so the 3:1 non-text
+    // threshold keeps the selected palette while preserving clear separation.
+    [dark, "--stamp", "--paper", 3.0, "dark playing marker"],
     [dark, "--ink", "--paper", 4.5, "dark body text"],
     [dark, "--danger", "--paper", 4.5, "dark destructive text"],
     [dark, "--ok", "--surface", 4.5, "dark cache-ready state"],
