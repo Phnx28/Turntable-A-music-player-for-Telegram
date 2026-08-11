@@ -61,6 +61,8 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --library-gutter: 32px;
+  --library-header-space: 196px;
 }
 
 html[data-theme="dark"] {
@@ -1896,26 +1898,102 @@ html[data-theme="dark"] {
 }
 
 
-/* Library scroll ownership: the title and source context stay outside the scroller, so the
-   scrollbar begins where the track workspace begins instead of running through the header. */
+/* =========================================================
+   Progressive glass
+   ========================================================= */
+
+/* The blur is one physical plane for the whole header, not a repeated row treatment. The mask
+   lets tracks continue underneath it while the lower edge dissolves instead of snapping. */
+.library-header-blur {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: calc(var(--library-header-space) + 24px);
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--glass-strong) 0%,
+    var(--glass-strong) 44%,
+    color-mix(in srgb, var(--glass-strong) 72%, transparent) 68%,
+    transparent 100%
+  );
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 48%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 48%, transparent 100%);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .library-header-blur {
+    background: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--paper) 94%, transparent) 0%,
+      color-mix(in srgb, var(--paper) 94%, transparent) 60%,
+      transparent 100%
+    );
+  }
+}
+
+/* Library scroll ownership: the scroller stays independent for virtualized rows and popups, but
+   the header now floats over its top edge. The top reserve keeps the first row reachable before
+   the rest of the list scrolls beneath the glass. */
 .library {
+  position: relative;
   display: flex;
   flex-direction: column;
+  padding: 0;
   overflow: hidden;
 }
 .library-header {
+  position: absolute;
+  z-index: 4;
+  inset: 0 0 auto;
+  display: block;
+  min-height: var(--library-header-space);
+  padding: 0 var(--library-gutter);
+  border-bottom: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+.library-header.is-scrolled { box-shadow: none; }
+.library-header-inner {
   position: relative;
-  top: auto;
-  flex: 0 0 auto;
-  z-index: auto;
+  z-index: 1;
+  display: flex;
+  min-height: var(--library-header-space);
+  align-items: flex-end;
+  gap: 18px;
+  padding: 28px 0 22px;
+  pointer-events: auto;
 }
 .library-content {
   min-height: 0;
   flex: 1 1 auto;
+  padding: var(--library-header-space) var(--library-gutter) 0;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: auto;
   scrollbar-color: var(--graphite) transparent;
+  scroll-padding-top: var(--library-header-space);
+}
+@media (max-width: 1120px) and (min-width: 861px) {
+  .library { --library-gutter: 20px; }
+}
+@media (max-width: 860px) {
+  .library { --library-gutter: 16px; --library-header-space: 204px; }
+  .library-header-inner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-block: 18px 16px;
+  }
+}
+@media (max-width: 620px) {
+  .library { --library-gutter: 13px; }
+  .library-header-inner { gap: 8px; padding-block: 10px 8px; }
 }
 .library-content::-webkit-scrollbar,
 .now-content::-webkit-scrollbar,

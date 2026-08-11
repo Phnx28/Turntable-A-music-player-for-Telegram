@@ -830,6 +830,57 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("01", shape["ordinal"], "the ordinal is the real play position, zero-padded to the total")
         self.assertTrue(shape["posted"], "rows must show when the track was posted")
 
+    def test_library_header_overlays_scroll_content_without_blocking_it(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector('.track-row:not(.track-placeholder)')
+        shape = page.evaluate("""() => {
+          const library = document.getElementById('library');
+          const header = document.querySelector('.library-header');
+          const blur = document.querySelector('.library-header-blur');
+          const content = document.getElementById('library-content');
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          const input = document.getElementById('track-search');
+          const before = {
+            libraryTop: library.getBoundingClientRect().top,
+            headerTop: header.getBoundingClientRect().top,
+            headerBottom: header.getBoundingClientRect().bottom,
+            contentTop: content.getBoundingClientRect().top,
+            scrollTop: content.scrollTop,
+          };
+          content.scrollTop = Math.min(content.scrollHeight - content.clientHeight, 180);
+          content.dispatchEvent(new Event('scroll'));
+          const afterRow = row.getBoundingClientRect();
+          const afterHeader = header.getBoundingClientRect();
+          const afterBlur = blur?.getBoundingClientRect();
+          return {
+            blurCount: document.querySelectorAll('.library-header-blur').length,
+            libraryTop: before.libraryTop,
+            headerTop: afterHeader.top,
+            headerBottom: afterHeader.bottom,
+            contentTop: before.contentTop,
+            scrollDelta: content.scrollTop - before.scrollTop,
+            rowTop: afterRow.top,
+            rowBottom: afterRow.bottom,
+            blurBottom: afterBlur?.bottom ?? 0,
+            blurPointerEvents: blur ? getComputedStyle(blur).pointerEvents : '',
+            inputId: input.id,
+          };
+        }""")
+        self.assertEqual(1, shape["blurCount"], "the header needs one shared blur plane")
+        self.assertAlmostEqual(shape["headerTop"], shape["libraryTop"], delta=1,
+                               msg=f"header should stay pinned to the library top: {shape}")
+        self.assertGreater(shape["scrollDelta"], 8, f"library-content did not scroll: {shape}")
+        self.assertGreater(shape["blurBottom"], shape["headerBottom"],
+                           f"blur must fade beyond the visible header: {shape}")
+        self.assertLess(shape["rowTop"], shape["headerBottom"],
+                        f"a track never moved behind the header: {shape}")
+        self.assertGreater(shape["rowBottom"], shape["headerTop"],
+                           f"the scrolled track disappeared completely: {shape}")
+        self.assertEqual("none", shape["blurPointerEvents"])
+        page.locator("#track-search").click()
+        self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
+
     def test_source_column_only_appears_across_sources(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
