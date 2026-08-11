@@ -1813,8 +1813,38 @@ html[data-theme="dark"] {
    list of menu rows. Source actions remain available as an unobtrusive hover/focus affordance. */
 .source-rail {
   z-index: 2;
+  border-right-color: color-mix(in srgb, var(--rule) 58%, transparent);
+  background: color-mix(in srgb, var(--rail) 88%, var(--paper) 12%);
   box-shadow: 10px 0 26px var(--shadow-color);
 }
+.source-rail nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.source-rail #source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.source-link {
+  min-height: 54px;
+  padding: 6px 9px;
+  border-bottom: 0;
+  border-radius: var(--radius-control);
+}
+.source-link:hover,
+.source-link:focus-visible { background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); }
+.source-link.active { background: color-mix(in srgb, var(--surface) 68%, var(--rail) 32%); }
+.source-link.active:hover { background: color-mix(in srgb, var(--surface-raised) 72%, var(--rail) 28%); }
+.add-source {
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 62%, var(--graphite));
+}
+.add-source:hover { border-color: transparent; background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); color: var(--ink); }
+.sync-all { color: color-mix(in srgb, var(--ink) 62%, var(--graphite)); }
+.rail-footer { padding-top: 14px; }
 .sidebar-collapsed nav {
   display: grid;
   align-content: start;
@@ -2027,6 +2057,22 @@ html[data-theme="dark"] {
 @media (max-width: 620px) {
   .library { --library-gutter: 13px; }
   .library-header-inner { gap: 8px; padding-block: 10px 8px; }
+}
+@media (min-width: 861px) {
+  .library-header-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    column-gap: 24px;
+  }
+  .library-heading { grid-column: 1; }
+  .library-heading h1 { max-width: 18ch; line-height: 1.04; }
+  .header-actions { grid-column: 2; align-self: end; }
+  .playlist-actions { align-items: center; }
+  .playlist-actions .button { height: 40px; min-height: 40px; }
+}
+@media (max-width: 860px) {
+  .library-heading h1 { max-width: none; }
 }
 .library-content::-webkit-scrollbar,
 .now-content::-webkit-scrollbar,

@@ -232,6 +232,29 @@ class LayoutTests(unittest.TestCase):
         }""")
         self.assertEqual(client, scroll, "collapsed rail overflows horizontally, which spawns a scrollbar with arrows")
 
+    def test_expanded_source_rail_uses_rhythm_without_decorative_row_rules(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        shape = page.evaluate("""() => {
+          const rail = document.getElementById('source-rail');
+          const active = rail.querySelector('.source-link.active');
+          const rows = [...rail.querySelectorAll('nav .source-link')];
+          const add = document.getElementById('add-source');
+          return {
+            rail: getComputedStyle(rail).backgroundColor,
+            active: getComputedStyle(active).backgroundColor,
+            rows: rows.map(row => {
+              const style = getComputedStyle(row);
+              return { border: style.borderBottomWidth, minHeight: parseFloat(style.minHeight), radius: parseFloat(style.borderTopLeftRadius) };
+            }),
+            add: { borderStyle: getComputedStyle(add).borderStyle, background: getComputedStyle(add).backgroundColor },
+          };
+        }""")
+        self.assertTrue(shape["rows"])
+        self.assertTrue(all(row["border"] == "0px" and row["minHeight"] >= 54 and row["radius"] > 0 for row in shape["rows"]), shape)
+        self.assertNotEqual(shape["rail"], shape["active"], shape)
+        self.assertNotEqual("dashed", shape["add"]["borderStyle"], shape)
+
     def test_metadata_dialog_buttons_are_not_stretched(self):
         page = self.page(1440, 900)
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
@@ -880,6 +903,31 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("none", shape["blurPointerEvents"])
         page.locator("#track-search").click()
         self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
+
+    def test_library_header_toolbar_aligns_and_long_titles_wrap_intentionally(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById('app-shell').hidden = false;
+          document.getElementById('source-title').textContent = 'Dance in Doubt and Fear';
+        }""")
+        shape = page.evaluate("""() => {
+          const title = document.getElementById('source-title');
+          const play = document.getElementById('play-playlist');
+          const filter = document.querySelector('.search-control');
+          const style = getComputedStyle(title);
+          const lineHeight = parseFloat(style.lineHeight);
+          return {
+            titleHeight: title.getBoundingClientRect().height,
+            lineHeight,
+            maxWidth: style.maxWidth,
+            playBottom: play.getBoundingClientRect().bottom,
+            filterBottom: filter.getBoundingClientRect().bottom,
+          };
+        }""")
+        self.assertNotEqual(shape["maxWidth"], "none", shape)
+        self.assertGreater(shape["titleHeight"], shape["lineHeight"] * 1.5, shape)
+        self.assertLess(shape["titleHeight"], shape["lineHeight"] * 3.1, shape)
+        self.assertLessEqual(abs(shape["playBottom"] - shape["filterBottom"]), 1, shape)
 
     def test_ambient_artwork_is_one_noninteractive_surface(self):
         page = self.page(1440, 900)
