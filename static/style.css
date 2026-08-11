@@ -177,7 +177,7 @@ html { scroll-behavior: smooth; }
 
 html[data-font="serif"] { --font-ui: var(--font-serif); }
 html[data-font="serif"] .library-heading h1 { --font-display: var(--font-serif); letter-spacing: -.02em; }
-html[data-font="mono"] { --font-ui: var(--font-mono); }
+html[data-font="mono"] { --font-ui: var(--font-mono); --font-display: var(--font-mono); }
 
 * { box-sizing: border-box; }
 
@@ -2151,10 +2151,6 @@ label strong { color: var(--ink); }
 .modal-header { margin-bottom: 14px; }
 textarea { min-height: 150px; max-height: 52dvh; }
 .form-actions { margin-top: 16px; }
-
-/* 5. Commit to the mono identity when it is chosen, instead of leaving
-   Archivo headings floating over a terminal body. */
-html[data-font="mono"] { --font-display: var(--font-mono); }
 
 
 /* Player identity is two lines (title, artist); a locate must never grow a third line. */
