@@ -853,6 +853,32 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("01", shape["ordinal"], "the ordinal is the real play position, zero-padded to the total")
         self.assertTrue(shape["posted"], "rows must show when the track was posted")
 
+    def test_track_secondary_metadata_uses_scoped_hierarchy(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        colors = page.evaluate("""() => {
+          const row = document.querySelector('.track-row:not(.track-placeholder)');
+          const color = selector => getComputedStyle(row.querySelector(selector)).color;
+          const read = () => ({
+            artist: color('.track-copy small'),
+            source: color('.track-source'),
+            posted: color('.track-posted'),
+            duration: color('.track-duration'),
+            ordinal: color('.track-ordinal'),
+          });
+          document.documentElement.dataset.theme = 'light';
+          const light = read();
+          document.documentElement.dataset.theme = 'dark';
+          const dark = read();
+          return { light, dark };
+        }""")
+        for theme, values in colors.items():
+            self.assertEqual(values["artist"], values["source"], (theme, values))
+            self.assertEqual(values["artist"], values["posted"], (theme, values))
+            self.assertEqual(values["artist"], values["duration"], (theme, values))
+            self.assertNotEqual(values["artist"], values["ordinal"], (theme, values))
+
     def test_library_header_overlays_scroll_content_without_blocking_it(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")

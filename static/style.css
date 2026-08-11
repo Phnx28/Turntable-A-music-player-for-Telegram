@@ -7,6 +7,8 @@
   --surface-raised: color-mix(in srgb, #ffffff 98%, var(--ink) 2%);
   --ink: #14110f;
   --graphite: #6b655d;
+  --content-secondary: color-mix(in srgb, var(--graphite) 90%, var(--ink) 10%);
+  --content-tertiary: color-mix(in srgb, var(--graphite) 88%, transparent);
   --rule: #ddd8ce;
   --rule-soft: #ebe7df;
   --stamp: #8c2f24;
@@ -669,10 +671,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .track-copy, .player-copy { min-width: 0; }
 .track-copy strong, .track-copy small, .player-copy strong, .player-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .track-copy strong { font-size: var(--text-body); font-weight: 650; }
-.track-copy small { margin-top: 1px; color: var(--graphite); font-size: var(--text-data); }
-.track-source { overflow: hidden; color: color-mix(in srgb, var(--graphite) 88%, transparent); font-size: var(--text-data); text-overflow: ellipsis; white-space: nowrap; }
-.track-duration { overflow: hidden; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.track-ordinal, .track-posted { color: color-mix(in srgb, var(--graphite) 88%, transparent); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
+.track-copy small { margin-top: 1px; color: var(--content-secondary); font-size: var(--text-data); }
+.track-source, .track-posted, .track-duration { color: var(--content-secondary); }
+.track-source { overflow: hidden; font-size: var(--text-data); text-overflow: ellipsis; white-space: nowrap; }
+.track-duration { overflow: hidden; font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.track-ordinal { color: var(--content-tertiary); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
+.track-posted { font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
 .track-ordinal { text-align: right; }
 /* The playing row's ordinal becomes the one stamped mark on screen. */
 .playing-mark { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--stamp); box-shadow: 0 0 0 3px color-mix(in srgb, var(--stamp) 20%, transparent); }
