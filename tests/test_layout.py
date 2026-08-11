@@ -1078,6 +1078,88 @@ class LayoutTests(unittest.TestCase):
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
 
+    def test_track_action_position_is_fixed_regardless_of_title_length(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        before = page.evaluate("""() => {
+          const actions = document.querySelector('.player-track-actions').getBoundingClientRect();
+          return { left: actions.left, right: actions.right };
+        }""")
+        page.evaluate("""() => {
+          document.getElementById('player-title').textContent =
+            'An extremely long track title that keeps going and going and never stops ' +
+            'even after the line is long gone and the text simply refuses to end';
+        }""")
+        page.wait_for_timeout(120)
+        after = page.evaluate("""() => {
+          const title = document.getElementById('player-title');
+          const actions = document.querySelector('.player-track-actions').getBoundingClientRect();
+          const main = document.querySelector('.player-main').getBoundingClientRect();
+          const play = document.getElementById('play').getBoundingClientRect();
+          return {
+            left: actions.left, right: actions.right,
+            centerDelta: (play.left + play.right) / 2 - (main.left + main.right) / 2,
+            truncated: title.scrollWidth > title.clientWidth,
+            overlap: actions.left < play.right && actions.right > play.left,
+          };
+        }""")
+        self.assertLessEqual(abs(after["left"] - before["left"]), 1, (before, after))
+        self.assertLessEqual(abs(after["right"] - before["right"]), 1, (before, after))
+        self.assertLessEqual(abs(after["centerDelta"]), 1, after)
+        self.assertTrue(after["truncated"], after)
+        self.assertFalse(after["overlap"], after)
+
+    def test_every_visible_player_child_stays_inside_the_dock(self):
+        for width, height in ((1440, 900), (1024, 768), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                bounds = page.evaluate("""() => {
+                  const player = document.getElementById('player').getBoundingClientRect();
+                  const offenders = [];
+                  for (const selector of [
+                    '#player-open', '#like-current', '#save-current-telegram', '#share-current',
+                    '#player-more', '#shuffle', '#previous', '#play', '#next', '#repeat',
+                    '#volume-toggle', '#show-lyrics', '#progress',
+                  ]) {
+                    const element = document.querySelector(selector);
+                    if (!element) continue;
+                    if (getComputedStyle(element).display === 'none') continue;
+                    const box = element.getBoundingClientRect();
+                    if (box.width === 0 || box.height === 0) continue;
+                    const inside = box.left >= player.left - 1 && box.right <= player.right + 1 &&
+                                   box.top >= player.top - 1 && box.bottom <= player.bottom + 1;
+                    if (!inside) offenders.push(selector);
+                  }
+                  return { offenders, player: { left: player.left, right: player.right, top: player.top, bottom: player.bottom } };
+                }""")
+                self.assertEqual([], bounds["offenders"], bounds)
+
+    def test_player_is_one_uniform_glass_surface_on_the_canvas(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                shape = page.evaluate("""() => {
+                  const player = document.getElementById('player');
+                  const progress = document.querySelector('.progress-row');
+                  const shell = document.getElementById('app-shell');
+                  const playerBox = player.getBoundingClientRect();
+                  return {
+                    filter: getComputedStyle(player).backdropFilter || getComputedStyle(player).webkitBackdropFilter,
+                    progressBackground: getComputedStyle(progress).backgroundColor,
+                    shellBackground: getComputedStyle(shell).backgroundColor,
+                    bodyBackground: getComputedStyle(document.body).backgroundColor,
+                    playerLeft: playerBox.left,
+                    playerRight: innerWidth - playerBox.right,
+                  };
+                }""")
+                self.assertIn("36px", shape["filter"], shape)
+                self.assertEqual("rgba(0, 0, 0, 0)", shape["progressBackground"], shape)
+                self.assertEqual(shape["shellBackground"], shape["bodyBackground"], shape)
+                self.assertGreater(shape["playerLeft"], 0, shape)
+                self.assertGreater(shape["playerRight"], 0, shape)
+
     def test_source_title_takes_the_full_desktop_row_and_stays_one_line(self):
         page = self.page(1440, 900)
         page.evaluate("""() => {
