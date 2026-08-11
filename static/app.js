@@ -32,6 +32,7 @@ const GLOBAL_SEARCH_LIMIT = 30;
 let lastAudibleVolume = .8;
 const pendingCovers = new Set();
 const rowLikeOperations = new Map();
+let ambientArtworkRequest = 0;
 
 async function api(path, options = {}) {
   const { quiet = false, ...init } = options;
@@ -117,6 +118,25 @@ function icon(name) { return `<svg aria-hidden="true"><use href="#i-${name}"></u
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML; }
 function escapeAttr(value) { return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/`/g, "&#96;"); }
 function mediaUrl(track, action = "cover") { return `/api/tracks/${encodeURIComponent(track.key)}/${action}`; }
+function updateAmbientArtwork(track) {
+  const layer = $("ambient-art");
+  if (!layer) return;
+  const request = ++ambientArtworkRequest;
+  layer.hidden = true;
+  layer.style.removeProperty("background-image");
+  if (!track?.key) return;
+  const image = new Image();
+  const version = track.metadata?.artworkPath || track.artworkVersion || "telegram";
+  const url = `${mediaUrl(track, "cover")}?quality=high&v=${encodeURIComponent(version)}`;
+  image.onload = () => {
+    if (request !== ambientArtworkRequest) return;
+    layer.style.backgroundImage = `url("${url}")`;
+    layer.hidden = false;
+  };
+  image.onerror = () => { if (request === ambientArtworkRequest) layer.style.removeProperty("background-image"); };
+  image.src = url;
+}
+window.__updateAmbientArtworkForTest = updateAmbientArtwork;
 function initials(value) { return String(value || "?").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase(); }
 function cacheSet(cache, key, value, maximum) {
   cache.delete(key); cache.set(key, value);
@@ -1063,7 +1083,7 @@ window.__renderDetailsForTest = (track) => { $("track-details").innerHTML = deta
 
 function setTrackUi() {
   const track = state.current;
-  if (!track) { $("progress").disabled = true; return; }
+  if (!track) { updateAmbientArtwork(null); $("progress").disabled = true; return; }
   $("progress").disabled = false;
   const liked = trackLikedState(track.key);
   const metadata = track.metadata || {};
@@ -1071,6 +1091,7 @@ function setTrackUi() {
   lastUiTrackKey = track.key;
   const title = metadata?.title || track.file?.name || "Untitled";
   const artist = metadata.artist || "Unknown artist";
+  updateAmbientArtwork(track);
   for (const id of ["player-title", "now-title"]) $(id).textContent = title;
   for (const id of ["player-artist", "now-artist"]) $(id).textContent = artist;
   $("label-stamp").textContent = title;

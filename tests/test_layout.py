@@ -881,6 +881,38 @@ class LayoutTests(unittest.TestCase):
         page.locator("#track-search").click()
         self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
 
+    def test_ambient_artwork_is_one_noninteractive_surface(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        shape = page.evaluate("""() => {
+          const layer = document.getElementById('ambient-art');
+          const style = layer ? getComputedStyle(layer) : null;
+          return {
+            count: document.querySelectorAll('#ambient-art').length,
+            hidden: layer?.hidden ?? true,
+            ariaHidden: layer?.getAttribute('aria-hidden'),
+            pointerEvents: style?.pointerEvents ?? '',
+            blur: style?.filter ?? '',
+          };
+        }""")
+        self.assertEqual(1, shape["count"], "ambient artwork must be a single app-shell layer")
+        self.assertTrue(shape["hidden"], "ambient artwork should start clear without a current track")
+        self.assertEqual("true", shape["ariaHidden"])
+        self.assertEqual("none", shape["pointerEvents"])
+        self.assertIn("blur", shape["blur"])
+
+        page.evaluate("""() => window.__updateAmbientArtworkForTest({
+          key: '-1001:1000', artworkVersion: 'v1', metadata: { artworkPath: 'cover.jpg' }
+        })""")
+        page.wait_for_function("""() => {
+          const layer = document.getElementById('ambient-art');
+          return !layer.hidden && getComputedStyle(layer).backgroundImage !== 'none';
+        }""")
+        self.assertIn("/api/tracks/", page.locator("#ambient-art").evaluate("(layer) => getComputedStyle(layer).backgroundImage"))
+
+        page.evaluate("() => window.__updateAmbientArtworkForTest(null)")
+        page.wait_for_function("() => document.getElementById('ambient-art').hidden")
+
     def test_source_column_only_appears_across_sources(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
