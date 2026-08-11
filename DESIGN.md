@@ -24,30 +24,30 @@ colors:
   ok-light: "#2f6b45"
 typography:
   display:
-    fontFamily: "Archivo, Avenir, Segoe UI, sans-serif"
+    fontFamily: "Be Vietnam Pro, Avenir, Segoe UI, sans-serif"
     fontSize: "clamp(32px, 5vw, 44px)"
     fontWeight: 500
     lineHeight: 0.98
     letterSpacing: "-0.04em"
   headline:
-    fontFamily: "Archivo, Avenir, Segoe UI, sans-serif"
+    fontFamily: "Be Vietnam Pro, Avenir, Segoe UI, sans-serif"
     fontSize: "28px"
     fontWeight: 520
     lineHeight: 1.1
     letterSpacing: "-0.035em"
   title:
-    fontFamily: "Archivo, Avenir, Segoe UI, sans-serif"
+    fontFamily: "Be Vietnam Pro, Avenir, Segoe UI, sans-serif"
     fontSize: "22px"
     fontWeight: 550
     lineHeight: 1.2
     letterSpacing: "-0.025em"
   body:
-    fontFamily: "Archivo, Avenir, Segoe UI, sans-serif"
+    fontFamily: "Be Vietnam Pro, Avenir, Segoe UI, sans-serif"
     fontSize: "15px"
     fontWeight: 400
     lineHeight: 1.45
   label:
-    fontFamily: "IBM Plex Mono, SFMono-Regular, monospace"
+    fontFamily: "JetBrains Mono, SFMono-Regular, monospace"
     fontSize: "11px"
     fontWeight: 500
     lineHeight: 1.2
@@ -107,7 +107,7 @@ Telegram Turntable is a private listening instrument for a personal collection t
 The visual language treats the library as a curated crate rather than a generic streaming catalog. Source context remains close to the track, controls stay available without shouting, and depth is used to explain the relationship between the library, Now Playing, menus, and the persistent player. It explicitly rejects generic streaming-service sameness, dashboard-like clutter, playful consumer-app decoration, neon music-player clichés, and opaque Telegram utility chrome.
 
 **Key Characteristics:**
-- Editorial, condensed Archivo headlines with precise mono labels.
+- Editorial Be Vietnam Pro headlines with precise mono labels.
 - Warm tinted neutrals in both light and dark themes.
 - Restrained palette with Vinyl Red reserved for playback and meaningful status.
 - Dense, scan-friendly library rows with generous separation between functional regions.
@@ -140,14 +140,42 @@ Content physically scrolls beneath a 36px progressive glass layer with a strong 
 - `20px` = secondary glass
 - `36px` = signature glass
 
+### TURNTable MATERIAL HIERARCHY
+
+36px progressive
+- library header only
+
+36px uniform
+- bottom player dock
+- right Now Playing panel
+- compact Now Playing header
+- global search results
+
+20px uniform editor glass
+- Settings
+- Metadata Editor
+- Lyrics Editor
+
+0px
+- all ordinary content
+- source rail
+- track rows
+- queue rows
+- Details
+- context menu
+- generic dialogs
+- all scrims/backdrops
+
+`backdrop-filter` alone does not qualify as implemented glass. The surface must use a translucent material and have meaningful content physically behind it.
+
 ### Accent
 
 Vinyl red only. Use it for meaningful playback or status indication, not decoration.
 
 ### Typography
 
-- **Archivo** = UI and display typography
-- **IBM Plex Mono** = metadata and catalogue/data typography
+- **Be Vietnam Pro** = UI and display typography
+- **JetBrains Mono** = metadata and catalogue/data typography
 
 Do not introduce another font for the redesign.
 
@@ -197,11 +225,11 @@ The palette is a restrained warm-neutral field: old paper and ivory in light mod
 
 ## 3. Typography
 
-**Display Font:** Archivo (with Avenir, Segoe UI, and system sans fallbacks)  
-**Body Font:** Archivo (with Avenir, Segoe UI, and system sans fallbacks)  
-**Label/Mono Font:** IBM Plex Mono (with SFMono-Regular and monospace fallbacks)
+- **Display Font:** Be Vietnam Pro (with Avenir, Segoe UI, and system sans fallbacks)
+- **Body Font:** Be Vietnam Pro (with Avenir, Segoe UI, and system sans fallbacks)
+- **Label/Mono Font:** JetBrains Mono (with SFMono-Regular and monospace fallbacks)
 
-**Character:** Archivo gives the player a confident, slightly condensed editorial voice without becoming theatrical. IBM Plex Mono reserves precision for timestamps, source labels, counts, and system-like metadata.
+**Character:** Be Vietnam Pro gives the player a clean, confident geometric voice without becoming theatrical. JetBrains Mono reserves precision for timestamps, source labels, counts, and system-like metadata.
 
 ### Hierarchy
 - **Display** (500, `clamp(32px, 5vw, 44px)`, `.98 line-height`, `-.04em`): Library view titles and primary screen headings.
@@ -212,7 +240,7 @@ The palette is a restrained warm-neutral field: old paper and ivory in light mod
 
 ### Named Rules
 
-**The Two-Register Rule.** Use Archivo for human content and hierarchy. Use IBM Plex Mono for data, labels, time, and system state. Do not mix the registers within a single phrase without a clear semantic reason.
+**The Two-Register Rule.** Use Be Vietnam Pro for human content and hierarchy. Use JetBrains Mono for data, labels, time, and system state. Do not mix the registers within a single phrase without a clear semantic reason.
 
 **The Scan-Length Rule.** Keep prose around 65–75 characters per line where possible. Let track and source names truncate gracefully rather than destabilizing the grid.
 
@@ -305,7 +333,7 @@ The system uses quiet layered shadows over tonal layering. Most library content 
 
 ### Do:
 - **Do** keep listening, playback, and track discovery as the clearest path through every screen.
-- **Do** use Archivo for hierarchy and IBM Plex Mono for time, counts, labels, and system state.
+- **Do** use Be Vietnam Pro for hierarchy and JetBrains Mono for time, counts, labels, and system state.
 - **Do** use Vinyl Red only as a meaningful playback or status signal.
 - **Do** preserve source provenance near tracks and source navigation.
 - **Do** use spacing to separate regions: tight `4–12px` groups, then `18–32px` structural gaps.

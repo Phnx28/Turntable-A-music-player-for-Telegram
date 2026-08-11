@@ -131,8 +131,15 @@ test("Turntable owns one mixed typographic system", () => {
   assert.doesNotMatch(HTML, /data-font|data-setting="font"|data-value="(?:sans|serif|mono)"/);
   assert.doesNotMatch(APP, /data-font|dataset\.font|tm-font|\[\["theme",\s*"font"\]/);
   assert.doesNotMatch(CSS, /--font-serif|html\[data-font=/);
-  assert.match(CSS, /--font-data:\s*"IBM Plex Mono"/);
-  assert.match(CSS, /--font-display:\s*"Archivo",\s*var\(--font-ui\)/);
+  assert.match(CSS, /--font-data:\s*"JetBrains Mono"/);
+  assert.match(CSS, /--font-display:\s*"Be Vietnam Pro",\s*var\(--font-ui\)/);
+});
+
+test("the selected font families are self-hosted", () => {
+  assert.match(CSS, /font-family:\s*"Be Vietnam Pro"/);
+  assert.match(CSS, /font-family:\s*"JetBrains Mono"/);
+  assert.match(CSS, /fonts\/be-vietnam-pro-400\.ttf/);
+  assert.match(CSS, /fonts\/jetbrains-mono-400\.ttf/);
 });
 
 test("mixed typography assigns human-facing and data-facing roles", () => {

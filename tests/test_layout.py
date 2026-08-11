@@ -68,6 +68,45 @@ def _rel_lum(rgb):
     return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
 
 
+def material(page, selector):
+    return page.evaluate(
+        """(selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+
+          const style = getComputedStyle(element);
+          return {
+            filter: style.backdropFilter || style.webkitBackdropFilter || "none",
+            mask: style.maskImage || style.webkitMaskImage || "none",
+            background: style.backgroundColor,
+            display: style.display,
+          };
+        }""",
+        selector,
+    )
+
+
+def background_alpha(page, selector):
+    return page.evaluate(
+        """(selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+
+          const value = getComputedStyle(element).backgroundColor;
+          const rgba = value.match(
+            /rgba\\([^,]+,[^,]+,[^,]+,\\s*([\\d.]+)\\)/
+          );
+          if (rgba) return Number(rgba[1]);
+
+          const slash = value.match(/\\/\\s*([\\d.]+)\\s*\\)?$/);
+          if (slash) return Number(slash[1]);
+
+          return 1;
+        }""",
+        selector,
+    )
+
+
 class Handler(SimpleHTTPRequestHandler):
     # index.html asks for /assets/style.css because app.py:299 mounts /assets -> static/.
     # Without this rewrite every stylesheet 404s and every geometry assertion measures
@@ -162,6 +201,251 @@ class LayoutTests(unittest.TestCase):
         }""")
         page.wait_for_timeout(400)
 
+    def open_track_editor(self, page, editor):
+        track = {
+            "key": "-1001:1000",
+            "metadata": {"title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998},
+            "overrides": {},
+            "source": {"title": "Hyperdub", "selected": True},
+        }
+        if editor == "metadata":
+            page.evaluate("track => window.__openMetadataForTest(track)", track)
+        else:
+            page.evaluate("track => window.__openLyricsEditorForTest(track, {syncedText: '[00:00.00] initial', plainText: 'initial'})", track)
+        page.wait_for_selector(f"#{editor}-dialog[open]")
+
+    def test_metadata_editor_has_anchored_header_and_field_cover_control(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
+        shape = page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const body = dialog.querySelector('.editor-modal-body');
+          const disc = dialog.querySelector('[name="discNumber"]')?.closest('label');
+          const cover = dialog.querySelector('.metadata-cover-field');
+          const actions = dialog.querySelector('.form-actions');
+          return {
+            classes: [...dialog.classList],
+            display: getComputedStyle(dialog).display,
+            overflow: getComputedStyle(dialog).overflow,
+            bodyOverflow: body && getComputedStyle(body).overflowY,
+            coverAfterDisc: Boolean(disc && cover && disc.compareDocumentPosition(cover) & 4),
+            actionLabels: [...actions.querySelectorAll('label')].map((label) => label.textContent.trim()),
+            saveId: dialog.querySelector('button[type="submit"]')?.id,
+            spinner: getComputedStyle(dialog.querySelector('[name="year"]')).appearance,
+          };
+        }""")
+        self.assertIn("metadata-editor", shape["classes"])
+        self.assertEqual("grid", shape["display"])
+        self.assertIn("hidden", shape["overflow"])
+        self.assertEqual("auto", shape["bodyOverflow"])
+        self.assertTrue(shape["coverAfterDisc"], shape)
+        self.assertEqual([], shape["actionLabels"], shape)
+        self.assertEqual("save-metadata", shape["saveId"])
+        self.assertIn(shape["spinner"], {"none", "textfield"}, shape)
+
+    def test_metadata_header_stays_visible_when_candidates_scroll(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          dialog.showModal();
+          const section = document.getElementById('candidate-section');
+          section.hidden = false;
+          document.getElementById('candidate-list').innerHTML =
+            Array.from({length: 18}, (_, index) => `<article class="candidate-row">
+              <div class="candidate-cover"></div>
+              <div class="candidate-copy"><strong>Candidate ${index}</strong><span>Artist · Album ${index}</span></div>
+              <button class="button" type="button">Use match</button>
+            </article>`).join('');
+        }""")
+        before = page.evaluate("""() => {
+          const box = document.querySelector('#metadata-dialog .modal-header').getBoundingClientRect();
+          return {top: box.top, bottom: box.bottom};
+        }""")
+        page.evaluate("""() => {
+          const body = document.querySelector('#metadata-dialog .editor-modal-body');
+          body.scrollTop = body.scrollHeight;
+        }""")
+        after = page.evaluate("""() => {
+          const header = document.querySelector('#metadata-dialog .modal-header').getBoundingClientRect();
+          const dialog = document.getElementById('metadata-dialog').getBoundingClientRect();
+          return {top: header.top, bottom: header.bottom, dialogTop: dialog.top, dialogBottom: dialog.bottom};
+        }""")
+        self.assertLessEqual(abs(before["top"] - after["top"]), 1, after)
+        self.assertGreaterEqual(after["top"], after["dialogTop"], after)
+        self.assertLessEqual(after["bottom"], after["dialogBottom"], after)
+
+    def test_metadata_matches_explain_differences_without_repeating_perfect_scores(self):
+        page = self.page(1440, 900)
+        candidates = [
+            {"id": "same", "title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998, "score": 100},
+            {"id": "different", "title": "Angels", "artist": "Burial", "album": "Untrue", "year": 2000, "score": 87},
+        ]
+        page.route("**/metadata/search", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(candidates)))
+        self.open_track_editor(page, "metadata")
+        for selector, value in (("[name='title']", "Angels"), ("[name='artist']", "Burial"),
+                                ("[name='album']", "Untrue"), ("[name='year']", "1998")):
+            page.fill(f"#metadata-form {selector}", value)
+        page.click("#fetch-metadata")
+        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        rows = page.evaluate("""() => [...document.querySelectorAll('.candidate-row')].map((row) => ({
+          text: row.textContent,
+          differences: row.querySelector('.candidate-differences, .candidate-same')?.textContent || '',
+          button: row.querySelector('[data-candidate]')?.textContent.trim(),
+        }))""")
+        self.assertEqual(2, len(rows), rows)
+        self.assertIn("Matches the visible metadata", rows[0]["differences"])
+        self.assertNotIn("100%", rows[0]["text"])
+        self.assertIn("87%", rows[1]["text"])
+        self.assertIn("Year", rows[1]["differences"])
+        self.assertIn("2000", rows[1]["differences"])
+        self.assertNotIn("Artist", rows[1]["differences"])
+        self.assertEqual(["Use match", "Use match"], [row["button"] for row in rows])
+        self.assertEqual("Refresh matches", page.locator("#fetch-metadata").text_content())
+        page.evaluate("track => window.__openMetadataForTest(track)", {
+            "key": "-1001:1000",
+            "metadata": {"title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998},
+            "overrides": {},
+            "source": {"title": "Hyperdub", "selected": True},
+        })
+        self.assertEqual("Fetch metadata", page.locator("#fetch-metadata").text_content())
+
+    def test_metadata_candidates_reflow_without_mobile_horizontal_overflow(self):
+        page = self.page(390, 844)
+        candidates = [
+            {"id": str(index), "title": f"Candidate {index}", "artist": "Artist", "album": "Album", "year": 1998, "score": 92}
+            for index in range(6)
+        ]
+        page.route("**/metadata/search", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(candidates)))
+        self.open_track_editor(page, "metadata")
+        page.click("#fetch-metadata")
+        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        geometry = page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const body = dialog.querySelector('.editor-modal-body');
+          return {
+            dialogOverflow: dialog.scrollWidth > dialog.clientWidth,
+            bodyOverflow: body.scrollWidth > body.clientWidth,
+            rows: [...document.querySelectorAll('.candidate-row')].map((row) => ({
+              right: row.getBoundingClientRect().right,
+              bodyRight: body.getBoundingClientRect().right,
+            })),
+          };
+        }""")
+        self.assertFalse(geometry["dialogOverflow"], geometry)
+        self.assertFalse(geometry["bodyOverflow"], geometry)
+        self.assertTrue(all(row["right"] <= row["bodyRight"] + 1 for row in geometry["rows"]), geometry)
+
+    def test_metadata_dirty_state_protects_close_paths_and_save_state(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "metadata")
+        self.assertTrue(page.locator("#save-metadata").is_disabled())
+        title = page.locator("#metadata-form [name='title']")
+        title.fill("Changed title")
+        self.assertFalse(page.locator("#save-metadata").is_disabled())
+        title.fill("Angels")
+        self.assertTrue(page.locator("#save-metadata").is_disabled())
+        title.fill("Changed title")
+
+        page.locator("#metadata-dialog [data-close='metadata-dialog']").click()
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+        page.locator("#confirm-dialog [data-close='confirm-dialog']").click()
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.locator("#confirm-accept").click()
+        page.wait_for_function("() => !document.getElementById('metadata-dialog').open")
+
+    def test_metadata_dirty_backdrop_click_is_guarded(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "metadata")
+        page.fill("#metadata-form [name='title']", "Changed title")
+        page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const rect = dialog.getBoundingClientRect();
+          dialog.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            clientX: rect.left - 2,
+            clientY: rect.top - 2,
+          }));
+        }""")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+        page.click("#confirm-accept")
+        page.wait_for_function("() => !document.getElementById('metadata-dialog').open")
+
+    def test_lyrics_editor_tracks_dirty_state_and_fetch_again_updates_source(self):
+        page = self.page(1440, 900)
+
+        def lyrics_route(route):
+            if route.request.method == "DELETE":
+                return route.fulfill(status=200, content_type="application/json",
+                                     body='{"syncedText":"[00:01.00] fetched","plainText":"fetched"}')
+            if route.request.method == "PUT":
+                return route.fulfill(status=200, content_type="application/json",
+                                     body='{"syncedText":"[00:02.00] saved","plainText":"saved"}')
+            return route.fallback()
+
+        page.route("**/api/tracks/*/lyrics", lyrics_route)
+        self.open_track_editor(page, "lyrics")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+        style = page.evaluate("""() => {
+          const text = document.getElementById('lyrics-text');
+          const computed = getComputedStyle(text);
+          return {
+            family: computed.fontFamily,
+            filter: computed.backdropFilter || computed.webkitBackdropFilter || 'none',
+            background: computed.backgroundColor,
+          };
+        }""")
+        self.assertIn("JetBrains Mono", style["family"])
+        self.assertIn(style["filter"], {"none", ""}, style)
+        self.assertNotIn(style["background"], {"rgba(0, 0, 0, 0)", "transparent"}, style)
+
+        textarea = page.locator("#lyrics-text")
+        textarea.fill("manual unsaved lyrics")
+        self.assertFalse(page.locator("#save-lyrics").is_disabled())
+        page.click("#reset-lyrics")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertEqual("Replace unsaved lyrics?", page.locator("#confirm-title").text_content())
+        page.locator("#confirm-dialog [data-close='confirm-dialog']").click()
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertEqual("manual unsaved lyrics", textarea.input_value())
+
+        page.click("#reset-lyrics")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.click("#confirm-accept")
+        page.wait_for_function("() => document.getElementById('lyrics-text').value.includes('fetched')")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+
+        textarea.fill("manual saved lyrics")
+        page.click("#save-lyrics")
+        page.wait_for_function("() => document.getElementById('lyrics-status').textContent === 'Lyrics saved.'")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+
+        page.click("#lyrics-dialog [data-close='lyrics-dialog']")
+        page.wait_for_function("() => !document.getElementById('lyrics-dialog').open")
+        self.assertFalse(page.locator("#confirm-dialog[open]").count())
+
+    def test_lyrics_dirty_escape_is_guarded(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "lyrics")
+        page.fill("#lyrics-text", "manual unsaved lyrics")
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#lyrics-dialog[open]").count())
+        page.click("#confirm-dialog [data-close='confirm-dialog']")
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertTrue(page.locator("#lyrics-dialog[open]").count())
+        page.click("#lyrics-dialog [data-close='lyrics-dialog']")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.click("#confirm-accept")
+        page.wait_for_function("() => !document.getElementById('lyrics-dialog').open")
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
@@ -189,9 +473,9 @@ class LayoutTests(unittest.TestCase):
           duration: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Duration').nextElementSibling).fontFamily,
           format: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Format').nextElementSibling).fontFamily,
         })""")
-        self.assertIn("Archivo", detail_fonts["source"])
-        self.assertIn("IBM Plex Mono", detail_fonts["duration"])
-        self.assertIn("IBM Plex Mono", detail_fonts["format"])
+        self.assertIn("Be Vietnam Pro", detail_fonts["source"])
+        self.assertIn("JetBrains Mono", detail_fonts["duration"])
+        self.assertIn("JetBrains Mono", detail_fonts["format"])
 
         # Actions must be reachable without scrolling the pane: DOCUMENT_POSITION_FOLLOWING (4)
         # means the list comes after the actions.
@@ -274,13 +558,16 @@ class LayoutTests(unittest.TestCase):
           const sync = box('#sync-all-sources');
           const add = box('#add-source');
           const settings = box('#open-settings');
+          const playerBox = player.getBoundingClientRect();
           const expandedBorder = getComputedStyle(document.querySelector('.rail-utilities')).borderTopWidth;
           const expandedPaddingTop = parseFloat(getComputedStyle(document.querySelector('.rail-utilities')).paddingTop);
           const collapsed = document.querySelector('.app-shell');
           collapsed.classList.add('sidebar-collapsed');
           const nav = document.querySelector('#source-list').closest('nav');
           return {
-            playerMarginBottom: parseFloat(getComputedStyle(player).marginBottom),
+            playerBottomGap: innerHeight - playerBox.bottom,
+            utilityBottom: utilities.bottom,
+            playerTop: playerBox.top,
             utilityBorder: expandedBorder,
             utilityPaddingTop: expandedPaddingTop,
             syncTop: sync.top,
@@ -291,8 +578,9 @@ class LayoutTests(unittest.TestCase):
             collapsedNav: { client: nav.clientWidth, scroll: nav.scrollWidth },
           };
         }""")
-        self.assertGreaterEqual(shape["playerMarginBottom"], 10, shape)
-        self.assertLessEqual(shape["playerMarginBottom"], 14, shape)
+        self.assertGreaterEqual(shape["playerBottomGap"], 10, shape)
+        self.assertLessEqual(shape["playerBottomGap"], 14, shape)
+        self.assertLessEqual(shape["utilityBottom"], shape["playerTop"] - 12, shape)
         self.assertEqual("1px", shape["utilityBorder"], shape)
         self.assertGreaterEqual(shape["syncTop"] - shape["utilityTop"], shape["utilityPaddingTop"], shape)
         self.assertGreaterEqual(shape["addGap"], 0, shape)
@@ -364,10 +652,10 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
         page.wait_for_timeout(120)
         display, heights = page.evaluate("""() => [
-          getComputedStyle(document.querySelector('.metadata-form .inline-choice')).display,
+          getComputedStyle(document.querySelector('.metadata-cover-field')).display,
           [...document.querySelectorAll('#metadata-form .form-actions .button')].map((b) => Math.round(b.getBoundingClientRect().height)),
         ]""")
-        self.assertIn(display, {"flex", "inline-flex"})
+        self.assertEqual("grid", display)
         self.assertTrue(all(h == 40 for h in heights), f"buttons stretched to {heights} instead of 40px")
 
     def test_failed_metadata_lookup_clears_its_skeleton(self):
@@ -1034,6 +1322,142 @@ class LayoutTests(unittest.TestCase):
         page.locator("#track-search").click()
         self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
 
+    def test_turntable_blur_material_matrix(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById("app-shell").hidden = false;
+          document.getElementById("now-panel").hidden = false;
+          document.querySelector(".now-header").classList.add("is-compact");
+        }""")
+
+        expected = [
+            (".library-header-blur", "36px", True),
+            ("#player", "36px", False),
+            ("#now-panel", "36px", False),
+            (".now-header.is-compact", "36px", False),
+            (".global-results", "36px", False),
+            ("#settings-dialog", "20px", False),
+            ("#metadata-dialog", "20px", False),
+            ("#lyrics-dialog", "20px", False),
+        ]
+
+        for selector, blur, must_have_mask in expected:
+            with self.subTest(selector=selector):
+                result = material(page, selector)
+                self.assertIsNotNone(result, selector)
+                self.assertIn(blur, result["filter"], result)
+                if must_have_mask:
+                    self.assertNotIn(result["mask"], ("none", ""), result)
+                else:
+                    self.assertIn(result["mask"], ("none", ""), result)
+
+    def test_unplanned_surfaces_do_not_use_backdrop_blur(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById("app-shell").hidden = false;
+          document.getElementById("queue-list").innerHTML = '<div class="queue-row"></div>';
+        }""")
+
+        selectors = [
+            ".source-rail",
+            ".track-row",
+            ".queue-row",
+            ".details-pane",
+            "#context-menu",
+            ".rail-scrim",
+        ]
+
+        for selector in selectors:
+            with self.subTest(selector=selector):
+                value = page.evaluate(
+                    """(selector) => {
+                      const element = document.querySelector(selector);
+                      if (!element) return "missing";
+                      const style = getComputedStyle(element);
+                      return style.backdropFilter || style.webkitBackdropFilter || "none";
+                    }""",
+                    selector,
+                )
+                self.assertIn(value, ("none", "", "missing"), (selector, value))
+
+        generic_dialog_blur = page.evaluate("""() => {
+          const dialog = document.querySelector(
+            "dialog.modal:not(#settings-dialog):not(#metadata-dialog):not(#lyrics-dialog)"
+          );
+          if (!dialog) return "missing";
+          const style = getComputedStyle(dialog);
+          return style.backdropFilter || style.webkitBackdropFilter || "none";
+        }""")
+        self.assertIn(generic_dialog_blur, ("none", "", "missing"), generic_dialog_blur)
+
+    def test_intended_glass_surfaces_are_translucent(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+
+        for selector in (
+            "#player",
+            "#now-panel",
+            ".global-results",
+            "#settings-dialog",
+            "#metadata-dialog",
+            "#lyrics-dialog",
+        ):
+            with self.subTest(selector=selector):
+                alpha = background_alpha(page, selector)
+                self.assertIsNotNone(alpha, selector)
+                self.assertLess(alpha, 0.98, (selector, alpha))
+
+    def test_player_physically_overlays_library_content(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        geometry = page.evaluate("""() => {
+          const player = document.getElementById("player").getBoundingClientRect();
+          const library = document.querySelector(".library-content").getBoundingClientRect();
+          const rail = document.getElementById("source-rail").getBoundingClientRect();
+          return {
+            player: { left: player.left, right: player.right, top: player.top, bottom: player.bottom },
+            library: { left: library.left, right: library.right, top: library.top, bottom: library.bottom },
+            railRight: rail.right,
+            viewportWidth: innerWidth,
+          };
+        }""")
+
+        overlap_y = (
+            min(geometry["player"]["bottom"], geometry["library"]["bottom"])
+            - max(geometry["player"]["top"], geometry["library"]["top"])
+        )
+        self.assertGreater(overlap_y, 20, geometry)
+        overlap_x = (
+            min(geometry["player"]["right"], geometry["library"]["right"])
+            - max(geometry["player"]["left"], geometry["library"]["left"])
+        )
+        self.assertGreater(overlap_x, 20, geometry)
+        self.assertAlmostEqual(geometry["player"]["left"], 16, delta=1, msg=geometry)
+        self.assertAlmostEqual(
+            geometry["viewportWidth"] - geometry["player"]["right"],
+            16,
+            delta=1,
+            msg=geometry,
+        )
+
+    def test_sidebar_collapse_does_not_change_player_horizontal_geometry(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        expanded = page.evaluate("""() => {
+          const box = document.getElementById('player').getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }""")
+        page.evaluate("() => document.getElementById('app-shell').classList.add('sidebar-collapsed')")
+        page.wait_for_timeout(320)
+        collapsed = page.evaluate("""() => {
+          const box = document.getElementById('player').getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }""")
+
+        self.assertLessEqual(abs(expanded["left"] - collapsed["left"]), 1, (expanded, collapsed))
+        self.assertLessEqual(abs(expanded["right"] - collapsed["right"]), 1, (expanded, collapsed))
+        self.assertLessEqual(abs(expanded["width"] - collapsed["width"]), 1, (expanded, collapsed))
+
     def test_mixed_typography_roles_are_rendered_without_font_picker(self):
         page = self.page(1440, 900)
         page.evaluate("""() => {
@@ -1073,9 +1497,9 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         for name in ("title", "artist", "source", "heading", "tab", "button", "globalHeading", "discoverHeading"):
-            self.assertIn("Archivo", fonts[name], f"{name} must use the human-facing type: {fonts}")
+            self.assertIn("Be Vietnam Pro", fonts[name], f"{name} must use the human-facing type: {fonts}")
         for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary", "globalCount", "bulkCount", "cacheUsage", "passwordStatus", "qrStatus"):
-            self.assertIn("IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}")
+            self.assertIn("JetBrains Mono", fonts[name], f"{name} must use the data type: {fonts}")
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
 
@@ -1492,6 +1916,8 @@ class LayoutTests(unittest.TestCase):
                   const progressBox = document.querySelector('.progress-row').getBoundingClientRect();
                   const playerBox = player.getBoundingClientRect();
                   const contentBox = content.getBoundingClientRect();
+                  const tracks = [...document.querySelectorAll('.track-row:not(.track-placeholder)')];
+                  const lastTrackBox = tracks.at(-1)?.getBoundingClientRect();
                   const hit = (selector) => {
                     const box = document.querySelector(selector).getBoundingClientRect();
                     return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest(selector)?.id || '';
@@ -1503,7 +1929,8 @@ class LayoutTests(unittest.TestCase):
                     progress: { top: progressBox.top, bottom: progressBox.bottom },
                     playAboveDivider: playBox.bottom <= progressBox.top,
                     content: { bottom: contentBox.bottom, scrollable: content.scrollHeight > content.clientHeight,
-                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1 },
+                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1,
+                               lastTrackBottom: lastTrackBox?.bottom ?? null },
                     playHit: hit('#play'), progressHit: hit('#progress'), viewport: { width: innerWidth, height: innerHeight },
                   };
                 }""")
@@ -1516,8 +1943,10 @@ class LayoutTests(unittest.TestCase):
                 self.assertTrue(shape["playAboveDivider"], shape)
                 self.assertLessEqual(abs(shape["progress"]["bottom"] - shape["player"]["bottom"]), 2, shape)
                 self.assertGreater(shape["player"]["radius"], 0, shape)
-                self.assertLessEqual(shape["content"]["bottom"], shape["player"]["top"] + 1, shape)
                 self.assertTrue(shape["content"]["scrollable"] and shape["content"]["atEnd"], shape)
+                self.assertGreaterEqual(shape["content"]["bottom"], shape["viewport"]["height"] - 1, shape)
+                self.assertIsNotNone(shape["content"]["lastTrackBottom"], shape)
+                self.assertLessEqual(shape["content"]["lastTrackBottom"], shape["player"]["top"] - 12, shape)
                 self.assertEqual("play", shape["playHit"], shape)
                 self.assertEqual("progress", shape["progressHit"], shape)
 
@@ -2003,6 +2432,25 @@ class LayoutTests(unittest.TestCase):
                 self.assertLess(geometry["ratio"], 0.6, geometry)
                 self.assertFalse(geometry["overflow"], f"expanded header overflowed at {width}x{height}")
                 self.assertTrue(all(item["visible"] and item["contained"] for item in geometry["boxes"]), geometry["boxes"])
+
+    def test_compact_now_header_stays_inside_now_panel_across_breakpoints(self):
+        for width, height in ((1440, 900), (1120, 900), (1024, 900), (861, 900), (860, 844), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                self.open_now_panel(page)
+                page.evaluate("() => document.querySelector('.now-header').classList.add('is-compact')")
+                page.wait_for_timeout(80)
+                bounds = page.evaluate("""() => {
+                  const panel = document.getElementById('now-panel').getBoundingClientRect();
+                  const header = document.querySelector('.now-header.is-compact').getBoundingClientRect();
+                  return {
+                    panel: { left: panel.left, right: panel.right },
+                    header: { left: header.left, right: header.right },
+                    padding: getComputedStyle(document.getElementById('now-panel')).paddingLeft,
+                  };
+                }""")
+                self.assertGreaterEqual(bounds["header"]["left"], bounds["panel"]["left"] - 1, bounds)
+                self.assertLessEqual(bounds["header"]["right"], bounds["panel"]["right"] + 1, bounds)
 
     def test_search_results_reuse_the_library_row_system(self):
         page = self.page(1440, 900)

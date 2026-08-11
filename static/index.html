@@ -14,8 +14,8 @@
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="preload" href="/assets/fonts/archivo-variable.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="preload" href="/assets/fonts/plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/be-vietnam-pro-400.ttf" as="font" type="font/ttf" crossorigin>
+    <link rel="preload" href="/assets/fonts/jetbrains-mono-400.ttf" as="font" type="font/ttf" crossorigin>
     <!-- Browsers request /favicon.ico by default, which 404s here because static files are
          mounted under /assets. Point at the PWA icons already on disk. -->
     <link rel="icon" href="/assets/icon-192.png" sizes="192x192" type="image/png">
@@ -364,32 +364,34 @@
       <div id="discover-list" class="discover-list"></div>
     </dialog>
 
-    <dialog id="metadata-dialog" class="modal wide-modal">
+    <dialog id="metadata-dialog" class="modal wide-modal editor-modal metadata-editor">
       <header class="modal-header">
         <h2>Edit track</h2>
         <button class="icon-button" type="button" data-close="metadata-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
-      <form id="metadata-form" class="metadata-form">
-        <label>Title<input name="title" maxlength="500"></label>
-        <label>Artist<input name="artist" maxlength="500"></label>
-        <label>Album<input name="album" maxlength="500"></label>
-        <label>Album artist<input name="albumArtist" maxlength="500"></label>
-        <label>Genre<input name="genre" maxlength="500"></label>
-        <label>Year<input name="year" type="number" min="0" max="9999"></label>
-        <label>Track<input name="trackNumber" type="number" min="0"></label>
-        <label>Disc<input name="discNumber" type="number" min="0"></label>
-        <div class="form-actions full-row">
-          <button class="button primary" type="submit">Save changes</button>
-          <button id="reset-metadata" class="button" type="button">Reset to Telegram</button>
-          <button id="fetch-metadata" class="button" type="button">Fetch metadata</button>
-          <label class="inline-choice">Cover <select id="cover-quality"><option value="500">Standard</option><option value="1200" selected>High</option><option value="original">Original</option></select></label>
-        </div>
-      </form>
-      <section id="candidate-section" hidden>
-        <div class="section-rule"><span class="utility">Internet matches</span></div>
-        <div id="candidate-list" class="candidate-list"></div>
-      </section>
-      <p id="metadata-status" class="dialog-status" role="status" aria-live="polite"></p>
+      <div class="editor-modal-body">
+        <form id="metadata-form" class="metadata-form">
+          <label>Title<input name="title" maxlength="500"></label>
+          <label>Artist<input name="artist" maxlength="500"></label>
+          <label>Album<input name="album" maxlength="500"></label>
+          <label>Album artist<input name="albumArtist" maxlength="500"></label>
+          <label>Genre<input name="genre" maxlength="500"></label>
+          <label>Year<input name="year" type="number" min="0" max="9999"></label>
+          <label>Track<input name="trackNumber" type="number" min="0"></label>
+          <label>Disc<input name="discNumber" type="number" min="0"></label>
+          <label class="metadata-cover-field">Cover quality<select id="cover-quality"><option value="500">Standard</option><option value="1200" selected>High</option><option value="original">Original</option></select></label>
+          <div class="form-actions full-row">
+            <button id="save-metadata" class="button primary" type="submit" disabled>Save changes</button>
+            <button id="reset-metadata" class="button" type="button">Reset to Telegram</button>
+            <button id="fetch-metadata" class="button" type="button">Fetch metadata</button>
+          </div>
+        </form>
+        <section id="candidate-section" hidden>
+          <div class="section-rule"><span class="utility">Internet matches</span></div>
+          <div id="candidate-list" class="candidate-list"></div>
+        </section>
+        <p id="metadata-status" class="dialog-status" role="status" aria-live="polite"></p>
+      </div>
     </dialog>
 
     <dialog id="lyrics-dialog" class="modal">
@@ -401,7 +403,7 @@
         <label for="lyrics-text">Lyrics</label>
         <textarea id="lyrics-text" rows="18" placeholder="[00:12.00] First line…"></textarea>
         <div class="form-actions">
-          <button class="button primary" type="submit">Save lyrics</button>
+          <button id="save-lyrics" class="button primary" type="submit" disabled>Save lyrics</button>
           <button id="reset-lyrics" class="button" type="button">Fetch again</button>
         </div>
       </form>

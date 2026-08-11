@@ -29,9 +29,9 @@
   --dur-1: 120ms;
   --dur-2: 180ms;
   --dur-3: 280ms;
-  --font-ui: "Archivo", Avenir, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --font-data: "IBM Plex Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
-  --font-display: "Archivo", var(--font-ui);
+  --font-ui: "Be Vietnam Pro", Avenir, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-data: "JetBrains Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  --font-display: "Be Vietnam Pro", var(--font-ui);
   --text-display: clamp(32px, 5vw, 44px);
   --text-title: 22px;
   --text-body: 15px;
@@ -53,6 +53,8 @@
   --glass-subtle: color-mix(in srgb, var(--surface) 64%, transparent);
   --glass-medium: color-mix(in srgb, var(--surface) 52%, transparent);
   --glass-strong: color-mix(in srgb, var(--paper) 76%, transparent);
+  --glass-reading: color-mix(in srgb, var(--surface) 84%, transparent);
+  --glass-editor: color-mix(in srgb, var(--surface-raised) 92%, transparent);
   --glass-border: color-mix(in srgb, var(--ink) 12%, transparent);
   --glass-highlight: color-mix(in srgb, var(--surface) 78%, transparent);
   --space-1: 4px;
@@ -86,6 +88,8 @@ html[data-theme="dark"] {
   --glass-subtle: color-mix(in srgb, var(--surface) 72%, transparent);
   --glass-medium: color-mix(in srgb, var(--surface) 60%, transparent);
   --glass-strong: color-mix(in srgb, var(--paper) 68%, transparent);
+  --glass-reading: color-mix(in srgb, var(--surface) 76%, transparent);
+  --glass-editor: color-mix(in srgb, var(--surface-raised) 86%, transparent);
   --glass-border: color-mix(in srgb, var(--ink) 16%, transparent);
   --glass-highlight: color-mix(in srgb, var(--ink) 10%, transparent);
 }
@@ -111,6 +115,8 @@ html[data-theme="dark"] {
     --glass-subtle: color-mix(in srgb, var(--surface) 72%, transparent);
     --glass-medium: color-mix(in srgb, var(--surface) 60%, transparent);
     --glass-strong: color-mix(in srgb, var(--paper) 68%, transparent);
+    --glass-reading: color-mix(in srgb, var(--surface) 76%, transparent);
+    --glass-editor: color-mix(in srgb, var(--surface-raised) 86%, transparent);
     --glass-border: color-mix(in srgb, var(--ink) 16%, transparent);
     --glass-highlight: color-mix(in srgb, var(--ink) 10%, transparent);
   }
@@ -151,29 +157,63 @@ html { scroll-behavior: smooth; }
 ::-webkit-scrollbar-thumb:hover { background: var(--graphite); background-clip: content-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* Self-hosted Archivo carries the interface identity instead of falling back to a platform
-   sans. One variable file covers display and body, and its wdth axis supplies the condensed title. */
+/* Self-hosted families keep the interface typography stable across platforms. Be Vietnam Pro
+   carries human-facing UI and display text; JetBrains Mono carries data and catalogue text. */
 @font-face {
-  font-family: "Archivo";
-  font-style: normal;
-  font-weight: 100 900;
-  font-stretch: 62% 125%;
-  font-display: swap;
-  src: url("fonts/archivo-variable.woff2") format("woff2-variations");
-}
-@font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "Be Vietnam Pro";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("fonts/plex-mono-400.woff2") format("woff2");
+  src: url("fonts/be-vietnam-pro-400.ttf") format("truetype");
 }
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "Be Vietnam Pro";
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url("fonts/plex-mono-500.woff2") format("woff2");
+  src: url("fonts/be-vietnam-pro-500.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Be Vietnam Pro";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/be-vietnam-pro-600.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Be Vietnam Pro";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/be-vietnam-pro-700.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-500.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-600.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-700.ttf") format("truetype");
 }
 
 * { box-sizing: border-box; }
@@ -243,7 +283,7 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
 .eyebrow { letter-spacing: .1em; }
 .now-title h2, .library-heading h1, .modal-header h2 { font-family: var(--font-display); }
 
-/* One product-owned type system: Archivo carries human-facing language; Plex Mono carries data. */
+/* One product-owned type system: Be Vietnam Pro carries human-facing language; JetBrains Mono carries data. */
 :where(.brand-line, .source-copy strong, .track-copy strong, .track-copy small, .track-source,
   .player-copy strong, .player-copy small, .now-title h2, .now-title p, .library-heading h1,
   .modal-header h2, .tab, .button, .text-button, .settings-nav button, label, input, select,
@@ -363,7 +403,7 @@ input::placeholder, textarea::placeholder { color: var(--graphite); opacity: .75
   width: 100%;
   height: 100%;
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) var(--player-height);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--paper);
 }
 .app-shell > :not(#ambient-art) { z-index: 1; }
@@ -415,6 +455,9 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-right: 1px solid var(--rule);
   background: var(--rail);
 }
+@media (min-width: 861px) {
+  .source-rail { padding-bottom: calc(var(--player-height) + 20px); }
+}
 
 .global-search-wrap { position: relative; margin: 0 0 12px; }
 .global-search-control {
@@ -444,7 +487,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow-y: auto;
   border: 1px solid var(--rule);
   border-radius: var(--radius-panel);
-  background: var(--surface-raised);
+  background: var(--glass-reading);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  border-color: var(--glass-border);
   box-shadow: var(--elev-3);
   animation: surface-in var(--dur-2) var(--ease-out) both;
 }
@@ -556,7 +602,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .library-header.is-scrolled { box-shadow: var(--elev-1); }
 
 .library-heading { flex: 1; min-width: 0; }
-.library-heading h1 { margin: 8px 0 4px; font-size: var(--text-display); font-stretch: 62%; font-weight: 480; letter-spacing: .01em; line-height: 1; overflow-wrap: anywhere; }
+.library-heading h1 { margin: 8px 0 4px; font-size: var(--text-display); font-weight: 480; letter-spacing: .01em; line-height: 1; overflow-wrap: anywhere; }
 .library-heading h1.is-truncated { cursor: help; }
 .library-heading .small-copy { margin: 0; color: var(--content-secondary); }
 .header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
@@ -722,14 +768,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .empty-art { display: grid; width: 56px; height: 56px; place-items: center; border: 1px solid var(--rule); border-radius: 50%; background: var(--surface); color: var(--graphite); }
 
 .now-panel {
+  --now-panel-pad-x: 16px;
   grid-row: 1;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  padding: 20px 16px 28px;
-  border-left: 1px solid var(--rule);
-  background: var(--surface);
+  padding: 20px var(--now-panel-pad-x) 28px;
+  border-left: 1px solid var(--glass-border);
+  background: var(--glass-reading);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
 }
 /* The header is sticky so the tabs and the current track stay reachable, and it collapses
    on scroll: expanded it ate 61-68% of the viewport, leaving 106px of content on a laptop
@@ -741,7 +790,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   z-index: 2;
   top: 0;
   flex-shrink: 0;
-  background: var(--surface);
+  background: transparent;
 }
 .now-header:not(.is-compact) {
   display: grid;
@@ -774,9 +823,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 .now-header.is-compact .now-title h2 { font-size: 17px; -webkit-line-clamp: 1; }
 .now-header.is-compact .now-title p { margin: 2px 0 0; font-size: 12px; }
 .now-header.is-compact .now-tabs { margin-top: 8px; grid-area: tabs; }
-/* Opaque and edge-to-edge, otherwise lines scrolling behind the sticky header show in the
-   panel's horizontal padding. */
-.now-header.is-compact { margin: 0 -24px; padding: 4px 24px 0; box-shadow: 0 6px 14px -12px rgb(4 3 3 / .45); }
+/* Edge-to-edge so lines scrolling behind the sticky header are covered by one uniform
+   reading-glass plane rather than showing through its horizontal padding. */
+.now-header.is-compact {
+  margin: 0 calc(-1 * var(--now-panel-pad-x));
+  padding: 4px var(--now-panel-pad-x) 0;
+  background: var(--glass-reading);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  box-shadow: 0 6px 14px -12px rgb(4 3 3 / .45);
+}
 
 /* Geometry is animated by the FLIP pass in updateNowHeader, not by a CSS transition: the
    expanded art has no explicit width, and a transition out of `auto` is not interpolable, so
@@ -878,7 +934,6 @@ body.resizing { cursor: col-resize; user-select: none; }
   color: var(--ink);
   font-family: var(--font-display);
   font-size: clamp(11px, 2.2vw, 20px);
-  font-stretch: 62%;
   font-weight: 620;
   letter-spacing: .06em;
   line-height: 1.15;
@@ -936,20 +991,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .detail-actions .button { width: auto; min-height: 34px; justify-content: center; padding-inline: 10px; background: transparent; }
 
 .player {
-  position: relative;
-  z-index: 10;
-  grid-column: 1 / -1;
-  grid-row: 2;
+  position: absolute;
+  z-index: 40;
+  grid-column: auto;
+  grid-row: auto;
+  left: 16px;
+  right: 16px;
+  bottom: 10px;
+  height: calc(var(--player-height) - 10px);
   display: grid;
   grid-template-rows: auto 1fr;
-  margin: 0 16px 10px;
+  margin: 0;
   overflow: visible;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-panel);
   background: var(--glass-medium);
   backdrop-filter: blur(var(--blur-strong)) saturate(1.02);
   -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.02);
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--ink) 10%, transparent), inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 -14px 30px var(--shadow-color), inset 0 1px 0 var(--glass-highlight);
 }
 
 .progress-row {
@@ -960,7 +1019,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   gap: 10px;
   padding: 2px 22px 4px;
   border-top: 1px solid color-mix(in srgb, var(--glass-border) 72%, transparent);
-  background: color-mix(in srgb, var(--glass-strong) 20%, transparent);
+  background: transparent;
   border-radius: 0 0 var(--radius-panel) var(--radius-panel);
 }
 
@@ -1091,6 +1150,25 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 .modal-header h2 { margin: 6px 0 0; font-size: 28px; font-weight: 520; letter-spacing: -.035em; }
 .modal > .small-copy { margin: 12px 0 22px; }
 
+#metadata-dialog[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+#metadata-dialog .modal-header {
+  position: relative;
+  z-index: 2;
+  margin-bottom: 14px;
+}
+#metadata-dialog .editor-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
 .discover-list { border-top: 1px solid var(--rule); }
 .discover-list.is-revealing .discover-row { animation: row-in var(--dur-2) var(--ease-out) both; }
 .discover-list.is-revealing .discover-row:nth-child(1) { animation-delay: 0ms; }
@@ -1106,14 +1184,27 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 
 .metadata-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; }
 :where(.metadata-form) label { display: grid; gap: 8px; }
+.metadata-cover-field { max-width: 220px; }
+#cover-quality { width: 100%; }
+#metadata-form input[type="number"] { appearance: textfield; }
+#metadata-form input[type="number"]::-webkit-inner-spin-button,
+#metadata-form input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .full-row { grid-column: 1 / -1; }
 .section-rule { display: flex; align-items: center; margin: 16px 0 8px; color: var(--graphite); }
 .section-rule::after { height: 1px; flex: 1; margin-left: 12px; background: var(--rule); content: ""; }
-.candidate-row { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); }
-.candidate-cover { width: 68px; height: 68px; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--paper); object-fit: cover; }
+.candidate-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); }
+.candidate-cover { width: 64px; height: 64px; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--paper); object-fit: cover; }
+.candidate-copy { min-width: 0; }
 .candidate-copy strong, .candidate-copy span { display: block; }
 .candidate-copy span { margin-top: 3px; color: var(--graphite); font-size: 12px; }
+.candidate-confidence { display: block; margin-top: 6px; color: var(--graphite); }
+.candidate-differences { display: grid; gap: 3px; margin-top: 7px; color: var(--content-secondary); font-size: 11px; }
+.candidate-differences span { min-width: 0; overflow-wrap: anywhere; }
+.candidate-differences strong { margin-right: 5px; color: var(--graphite); font-family: var(--font-data); font-size: 11px; font-weight: 500; text-transform: uppercase; }
+.candidate-differences small { margin-left: 5px; color: var(--graphite); }
+.candidate-same { display: block; margin-top: 6px; color: var(--graphite); font-size: 11px; }
+.candidate-row > .button { align-self: center; white-space: nowrap; background: transparent; }
 
 .choice-group { margin: 28px 0 0; padding: 0; border: 0; }
 .choice-group legend { margin-bottom: 9px; font-size: 12px; font-weight: 650; }
@@ -1157,7 +1248,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   .app-shell.panel-open { grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--panel-width); }
   .track-head, .track-row { grid-template-columns: 40px minmax(190px, 1fr) 72px 64px 36px 44px; }
   .track-head span:nth-child(3), .track-source { display: none; }
-  .player-main { grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr); gap: 12px; }
+  .player-main { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; }
   .volume-control { display: none; }
 }
 
@@ -1180,7 +1271,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   /* The drawer slides on a springy curve and over the scrim's window, so the sheet and its
      dimming settle together instead of the scrim finishing first. */
   .source-rail { transition: transform var(--dur-3) var(--ease-out); }
-.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(4 3 3 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-3) var(--ease-out); }
+.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(4 3 3 / .3); backdrop-filter: none; -webkit-backdrop-filter: none; transition: opacity var(--dur-3) var(--ease-out); }
 .rail-scrim[hidden] { display: block !important; pointer-events: none; opacity: 0; }
   .library { grid-column: 1; padding: 0 20px; }
   .track-head { display: none; }
@@ -1229,8 +1320,6 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   /* The phone art is 56px, not 64px, so the collapsed header lands 12px shorter. */
   :root { --compact-header: 120px; }
   
-  /* Match the panel's own responsive side padding so the sticky bar stays edge-to-edge. */
-  .now-header.is-compact { margin: 0 calc(-1 * max(20px, (100vw - 580px) / 2)); padding: 4px max(20px, calc((100vw - 580px) / 2)) 0; }
   /* auto for the utilities column: a fixed 44px could not hold the track actions once the
      transport kept prev/next, so like/more overlapped the skip buttons by up to 21px. */
   /* The player is two deliberate rows on mobile: the identity row (art, title, track
@@ -1558,7 +1647,14 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 }
 /* Settings is the 20px secondary glass: a translucent raised surface over the dimmed
    canvas. The backdrop stays dim-only (no blur). */
-.settings-modal { background: color-mix(in srgb, var(--surface-raised) 88%, transparent); backdrop-filter: blur(20px) saturate(1.01); -webkit-backdrop-filter: blur(20px) saturate(1.01); }
+#settings-dialog,
+#metadata-dialog,
+#lyrics-dialog {
+  background: var(--glass-editor);
+  backdrop-filter: blur(var(--blur-soft)) saturate(1.01);
+  -webkit-backdrop-filter: blur(var(--blur-soft)) saturate(1.01);
+  border-color: var(--glass-border);
+}
 @media (max-width: 860px) {
   .settings-modal .modal-header .icon-button { width: 44px; height: 44px; }
 }
@@ -1674,6 +1770,18 @@ dialog.modal[open]::backdrop { opacity: 1; }
   :root { --player-height: calc(154px + env(safe-area-inset-bottom)); }
   /* The cover already opens Now Playing; keep the top row about identity and actions. */
   #show-lyrics { display: none; }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .player,
+  .now-panel,
+  .now-header.is-compact,
+  .global-results,
+  #settings-dialog,
+  #metadata-dialog,
+  #lyrics-dialog {
+    background: var(--surface-raised);
+  }
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -1851,18 +1959,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
 }
 
 
-/* Player material: one uniform glass body. The base .player already carries the 36px
-   blur; this block must NOT replace the translucent background with an opaque mix, or the
-   signature glass silently disappears (that bug lived here before). */
-.player {
-  background: var(--glass-medium);
-  backdrop-filter: blur(36px) saturate(1.02);
-  -webkit-backdrop-filter: blur(36px) saturate(1.02);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    0 -14px 30px var(--shadow-color),
-    inset 0 1px 0 var(--glass-highlight);
-}
+/* Player layout polish: the material and stacking geometry live in the base .player rule. */
 .progress-row { padding: 6px 24px 3px; gap: 12px; background: transparent; border-top-color: color-mix(in srgb, var(--glass-border) 32%, transparent); }
 .progress { height: 10px; }
 .progress::-webkit-slider-runnable-track { height: 4px; }
@@ -1923,9 +2020,6 @@ html[data-theme="dark"] {
 }
 .context-menu {
   box-shadow: 0 18px 44px var(--shadow-color-strong), 0 2px 8px var(--shadow-color);
-}
-.player {
-  box-shadow: 0 -14px 30px var(--shadow-color), inset 0 1px 0 var(--glass-highlight);
 }
 
 
@@ -2074,18 +2168,22 @@ html[data-theme="dark"] {
   min-height: var(--row-height);
 }
 .now-panel {
-  padding: 20px 22px 28px;
+  --now-panel-pad-x: 22px;
+  padding: 20px var(--now-panel-pad-x) 28px;
 }
 
 @media (max-width: 1120px) and (min-width: 861px) {
   .library { padding-inline: 20px; }
-  .now-panel { padding-inline: 14px; }
+  .now-panel { --now-panel-pad-x: 14px; padding-inline: var(--now-panel-pad-x); }
 }
 @media (max-width: 860px) {
   .library { padding-inline: 16px; }
   .library-header { gap: 10px; padding-block: 12px 8px; }
   .library-heading h1 { max-width: none; }
-  .now-panel { padding-inline: max(20px, calc((100vw - 580px) / 2)); }
+  .now-panel {
+    --now-panel-pad-x: max(20px, calc((100vw - 580px) / 2));
+    padding-inline: var(--now-panel-pad-x);
+  }
 }
 @media (max-width: 620px) {
   .library { padding-inline: 13px; }
@@ -2198,7 +2296,7 @@ html[data-theme="dark"] {
 .library-content {
   min-height: 0;
   flex: 1 1 auto;
-  padding: var(--library-header-space) var(--library-gutter) 0;
+  padding: var(--library-header-space) var(--library-gutter) calc(var(--player-height) + 24px);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: auto;
@@ -2222,6 +2320,7 @@ html[data-theme="dark"] {
   .library-header-inner { gap: 8px; padding-block: 10px 8px; }
 }
 @media (min-width: 861px) {
+  .now-content { padding-bottom: calc(var(--player-height) + 24px); }
   .library-header-inner {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -2384,6 +2483,16 @@ label strong { color: var(--ink); }
 .modal-header { margin-bottom: 14px; }
 textarea { min-height: 150px; max-height: 52dvh; }
 .form-actions { margin-top: 16px; }
+#metadata-dialog .metadata-form > label,
+#lyrics-dialog label[for="lyrics-text"] { color: var(--content-secondary); }
+#lyrics-text {
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+  background: color-mix(in srgb, var(--surface) 88%, var(--paper));
+  border-color: var(--rule);
+}
 
 
 /* Player identity is two lines (title, artist); a locate must never grow a third line. */

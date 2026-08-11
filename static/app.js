@@ -27,6 +27,8 @@ let libraryRequest = 0, globalRequest = 0, libraryFrame = 0, scrollIdleTimer = 0
 let confirmResolve = null, draggedSource = "", draggedQueue = -1, pendingShare = null;
 let lastUiTrackKey = "";
 let countryList = [], countryMatches = [], countryActive = -1, selectedCountry = null, countryCloseTimer;
+const editorBaselines = new Map();
+const guardedEditorIds = new Set(["metadata-dialog", "lyrics-dialog"]);
 const COUNTRY_RESULT_LIMIT = 60;
 const GLOBAL_SEARCH_LIMIT = 30;
 let lastAudibleVolume = .8;
@@ -112,6 +114,46 @@ function confirmAction(title, message, accept = "Continue") {
   $("confirm-accept").textContent = accept;
   if (!$("confirm-dialog").open) { captureDialogFocus(); $("confirm-dialog").showModal(); }
   return new Promise((resolve) => { confirmResolve = resolve; });
+}
+
+function metadataEditorSnapshot() {
+  return JSON.stringify(Object.fromEntries(new FormData($("metadata-form")).entries()));
+}
+
+function lyricsEditorSnapshot() {
+  return $("lyrics-text").value;
+}
+
+function editorSnapshot(dialogId) {
+  if (dialogId === "metadata-dialog") return metadataEditorSnapshot();
+  if (dialogId === "lyrics-dialog") return lyricsEditorSnapshot();
+  return "";
+}
+
+function editorIsDirty(dialogId) {
+  if (!guardedEditorIds.has(dialogId)) return false;
+  return editorBaselines.has(dialogId) && editorSnapshot(dialogId) !== editorBaselines.get(dialogId);
+}
+
+function updateEditorDirtyUi(dialogId) {
+  const dirty = editorIsDirty(dialogId);
+  if (dialogId === "metadata-dialog") $("save-metadata").disabled = !dirty;
+  if (dialogId === "lyrics-dialog") $("save-lyrics").disabled = !dirty;
+  $(dialogId).toggleAttribute("data-dirty", dirty);
+}
+
+function captureEditorBaseline(dialogId) {
+  editorBaselines.set(dialogId, editorSnapshot(dialogId));
+  updateEditorDirtyUi(dialogId);
+}
+
+async function confirmEditorClose(dialog) {
+  if (!guardedEditorIds.has(dialog.id) || !editorIsDirty(dialog.id)) return true;
+  return confirmAction(
+    "Discard unsaved changes?",
+    dialog.id === "lyrics-dialog" ? "Your unsaved lyrics edits will be lost." : "Your unsaved metadata edits will be lost.",
+    "Discard",
+  );
 }
 
 function icon(name) { return `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`; }
@@ -1542,9 +1584,13 @@ async function unselectSources(ids) {
 
 function openMetadata(track = state.current) {
   if (!track) return; state.editing = track;
-  for (const element of $("metadata-form").elements) if (element.name) element.value = track.metadata[element.name] || "";
-  $("cover-quality").value = state.settings.coverQuality || "1200"; $("candidate-section").hidden = true; $("metadata-status").textContent = "";
+  const metadata = track.metadata || {};
+  for (const element of $("metadata-form").elements) if (element.name) element.value = metadata[element.name] || "";
+  $("cover-quality").value = state.settings.coverQuality || "1200";
+  $("fetch-metadata").textContent = "Fetch metadata";
+  $("candidate-section").hidden = true; $("metadata-status").textContent = "";
   if (!$("metadata-dialog").open) $("metadata-dialog").showModal();
+  captureEditorBaseline("metadata-dialog");
 }
 
 // All four metadata handlers used to funnel error.message straight into the status line, and
@@ -1577,7 +1623,7 @@ async function saveMetadata(event) {
   try {
     const updated = await api(mediaUrl(state.editing, "metadata"), { method: "PATCH", body: JSON.stringify({ set: values, clear: [] }) });
     state.editing = updated; cacheSet(state.trackCache, updated.key, updated, 100); if (state.current?.key === updated.key) { state.current = { ...state.current, ...updated }; setTrackUi(); }
-    state.libraryCache.clear(); await loadLibrary(true); $("metadata-status").textContent = "Saved locally. Downloads will use these tags.";
+    state.libraryCache.clear(); await loadLibrary(true); $("metadata-status").textContent = "Saved locally. Downloads will use these tags."; captureEditorBaseline("metadata-dialog");
   } catch (error) { metadataFailed(error); }
 }
 
@@ -1587,14 +1633,39 @@ async function resetMetadata() {
   catch (error) { metadataFailed(error); }
 }
 
+function currentMetadataFormValues() {
+  return Object.fromEntries(new FormData($("metadata-form")).entries());
+}
+
+function candidateMetadataDifferences(candidate, current) {
+  const fields = [["Title", "title"], ["Artist", "artist"], ["Album", "album"], ["Year", "year"]];
+  return fields.flatMap(([label, key]) => {
+    const next = String(candidate[key] ?? "").trim();
+    const before = String(current[key] ?? "").trim();
+    if (!next || next.localeCompare(before, undefined, { sensitivity: "accent" }) === 0) return [];
+    return [{ label, before: before || "—", next }];
+  });
+}
+
+function candidateDifferenceMarkup(differences) {
+  if (!differences.length) return '<span class="candidate-same">Matches the visible metadata</span>';
+  return `<div class="candidate-differences">${differences.map((item) => `<span><strong>${escapeHtml(item.label)}</strong>${escapeHtml(item.next)}<small>current ${escapeHtml(item.before)}</small></span>`).join("")}</div>`;
+}
+
 async function fetchMetadata() {
   const button = $("fetch-metadata"); button.disabled = true; button.setAttribute("aria-busy", "true");
   $("metadata-status").textContent = "Searching MusicBrainz…";
   $("candidate-section").hidden = false; $("candidate-list").innerHTML = '<div class="list-skeleton"><span></span><span></span></div>';
   try {
     const candidates = await api(`${mediaUrl(state.editing, "metadata")}/search`, { method: "POST", body: "{}" });
-    $("candidate-list").innerHTML = candidates.map((item) => `<article class="candidate-row">${item.coverUrl ? `<img class="candidate-cover" src="${mediaUrl(state.editing, `metadata/candidates/${encodeURIComponent(item.id)}/cover`)}" alt="" loading="lazy">` : '<div class="candidate-cover art-placeholder"><span></span></div>'}<div class="candidate-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.artist)} · ${escapeHtml(item.album || "Single")} ${item.year || ""}</span></div><span class="utility">${item.score}%</span><button class="button" type="button" data-candidate="${escapeHtml(item.id)}">Use match</button></article>`).join("") || '<p class="small-copy">No close matches found.</p>';
+    const current = currentMetadataFormValues();
+    $("candidate-list").innerHTML = candidates.map((item) => {
+      const differences = candidateMetadataDifferences(item, current);
+      const confidence = Number(item.score) < 100 ? `<span class="candidate-confidence utility">${escapeHtml(item.score)}% match</span>` : "";
+      return `<article class="candidate-row">${item.coverUrl ? `<img class="candidate-cover" src="${mediaUrl(state.editing, `metadata/candidates/${encodeURIComponent(item.id)}/cover`)}" alt="" loading="lazy">` : '<div class="candidate-cover art-placeholder"><span></span></div>'}<div class="candidate-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.artist)} · ${escapeHtml(item.album || "Single")} ${item.year || ""}</span>${candidateDifferenceMarkup(differences)}${confidence}</div><button class="button" type="button" data-candidate="${escapeHtml(item.id)}">Use match</button></article>`;
+    }).join("") || '<p class="small-copy">No close matches found.</p>';
     $("metadata-status").textContent = candidates.length ? `${candidates.length} matches found.` : "No close matches found.";
+    button.textContent = "Refresh matches";
   } catch (error) { metadataFailed(error); }
   finally { button.disabled = false; button.removeAttribute("aria-busy"); }
 }
@@ -1607,8 +1678,17 @@ async function applyCandidate(id) {
   } catch (error) { metadataFailed(error); }
 }
 
-function openLyricsEditor() { if (!state.current) return; $("lyrics-text").value = state.lyrics?.syncedText || state.lyrics?.plainText || ""; $("lyrics-status").textContent = ""; if (!$("lyrics-dialog").open) $("lyrics-dialog").showModal(); }
-async function saveLyrics(event) { event.preventDefault(); try { state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "PUT", body: JSON.stringify({ text: $("lyrics-text").value }) }); renderLyrics(); $("lyrics-status").textContent = "Lyrics saved."; } catch (error) { $("lyrics-status").textContent = error.message; } }
+function openLyricsEditor() {
+  if (!state.current) return;
+  $("lyrics-text").value = state.lyrics?.syncedText || state.lyrics?.plainText || "";
+  $("lyrics-status").textContent = "";
+  if (!$("lyrics-dialog").open) $("lyrics-dialog").showModal();
+  captureEditorBaseline("lyrics-dialog");
+}
+async function saveLyrics(event) { event.preventDefault(); try { state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "PUT", body: JSON.stringify({ text: $("lyrics-text").value }) }); renderLyrics(); $("lyrics-status").textContent = "Lyrics saved."; captureEditorBaseline("lyrics-dialog"); } catch (error) { $("lyrics-status").textContent = error.message; } }
+
+window.__openMetadataForTest = openMetadata;
+window.__openLyricsEditorForTest = (track, lyrics) => { state.current = track; state.lyrics = lyrics; openLyricsEditor(); };
 
 function showPanel(tab = "lyrics", toggle = false) {
   if (toggle && !$("now-panel").hidden && document.querySelector(`#${tab}-tab.active`)) return closePanel();
@@ -2664,7 +2744,31 @@ $("contact-search").addEventListener("input", renderContacts);
 for (const id of ["contact-list", "frequent-list"]) {
   $(id).addEventListener("click", (event) => { const contact = event.target.closest("[data-contact]"); if (contact) queueShare(contact.dataset.contact); });
 }
-$("metadata-form").addEventListener("submit", saveMetadata); $("reset-metadata").addEventListener("click", resetMetadata); $("fetch-metadata").addEventListener("click", fetchMetadata); $("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); }); $("lyrics-form").addEventListener("submit", saveLyrics); $("reset-lyrics").addEventListener("click", async () => { if (await confirmAction("Fetch lyrics again?", "Saved lyrics will be replaced by a new internet lookup.", "Fetch again")) { try { $("lyrics-status").textContent = "Looking for lyrics…"; state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" }); renderLyrics(); $("lyrics-status").textContent = "Lyrics lookup finished."; } catch (error) { $("lyrics-status").textContent = error.message; } } });
+$("metadata-form").addEventListener("submit", saveMetadata);
+$("metadata-form").addEventListener("input", () => updateEditorDirtyUi("metadata-dialog"));
+$("metadata-form").addEventListener("change", () => updateEditorDirtyUi("metadata-dialog"));
+$("reset-metadata").addEventListener("click", resetMetadata);
+$("fetch-metadata").addEventListener("click", fetchMetadata);
+$("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); });
+$("lyrics-form").addEventListener("submit", saveLyrics);
+$("lyrics-text").addEventListener("input", () => updateEditorDirtyUi("lyrics-dialog"));
+$("reset-lyrics").addEventListener("click", async () => {
+  const dirty = editorIsDirty("lyrics-dialog");
+  const confirmed = await confirmAction(
+    dirty ? "Replace unsaved lyrics?" : "Fetch lyrics again?",
+    dirty ? "Your unsaved edits will be replaced by a new internet lookup." : "Saved lyrics will be replaced by a new internet lookup.",
+    "Fetch again",
+  );
+  if (!confirmed) return;
+  try {
+    $("lyrics-status").textContent = "Looking for lyrics…";
+    state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" });
+    renderLyrics();
+    $("lyrics-text").value = state.lyrics?.syncedText || state.lyrics?.plainText || "";
+    captureEditorBaseline("lyrics-dialog");
+    $("lyrics-status").textContent = "Lyrics lookup finished.";
+  } catch (error) { $("lyrics-status").textContent = error.message; }
+});
 
 $("open-settings").addEventListener("click", openSettings); document.querySelectorAll("[data-settings-tab]").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll("[data-settings-tab]").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll("[data-settings-pane]").forEach((pane) => { pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab; }); })); $("prefetch-count").addEventListener("change", () => commitSettings(currentSettingsValues()));
 $("sleep-timer").addEventListener("change", () => setSleepTimer($("sleep-timer").value));
@@ -2691,8 +2795,35 @@ document.querySelectorAll("[data-setting] [data-value]").forEach((button) => but
 $("disconnect-telegram").addEventListener("click", async () => { if (await confirmAction("Disconnect Telegram?", "This signs out the stored Telegram session and clears the local library. It does not leave or delete any Telegram chats.", "Disconnect")) { try { await api("/api/telegram/session", { method: "DELETE" }); location.reload(); } catch (error) { showError(error); } } });
 
 $("error-retry").addEventListener("click", () => { $("error-dialog").close(); restoreDialogFocus(); const action = retryAction; retryAction = null; action?.(); }); $("confirm-accept").addEventListener("click", () => { $("confirm-dialog").close(); restoreDialogFocus(); confirmResolve?.(true); confirmResolve = null; });
-document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => { const dialog = $(button.dataset.close); dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus(); }));
-document.querySelectorAll("dialog").forEach((dialog) => { dialog.addEventListener("click", (event) => { if (event.target !== dialog) return; const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) { dialog.close(); if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } restoreDialogFocus(); } }); dialog.addEventListener("cancel", () => { if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; } restoreDialogFocus(); }); dialog.addEventListener("close", () => { if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus(); }); });
+document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", async () => {
+  const dialog = $(button.dataset.close);
+  if (!(await confirmEditorClose(dialog))) return;
+  dialog.close();
+  if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; }
+  if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus();
+}));
+document.querySelectorAll("dialog").forEach((dialog) => {
+  dialog.addEventListener("click", async (event) => {
+    if (event.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+      if (!(await confirmEditorClose(dialog))) return;
+      dialog.close();
+      if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; }
+      restoreDialogFocus();
+    }
+  });
+  dialog.addEventListener("cancel", async (event) => {
+    if (guardedEditorIds.has(dialog.id) && editorIsDirty(dialog.id)) {
+      event.preventDefault();
+      if (await confirmEditorClose(dialog)) dialog.close();
+      return;
+    }
+    if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; }
+    restoreDialogFocus();
+  });
+  dialog.addEventListener("close", () => { if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus(); });
+});
 document.addEventListener("error", (event) => { const image = event.target; if (image.matches?.("img.source-avatar")) { const replacement = document.createElement("span"); replacement.className = "source-avatar"; replacement.textContent = image.dataset.avatarFallback || "♪"; image.replaceWith(replacement); } }, true);
 $("context-menu").addEventListener("keydown", (event) => {
   const items = [...$("context-menu").querySelectorAll("[data-menu-index]")];
