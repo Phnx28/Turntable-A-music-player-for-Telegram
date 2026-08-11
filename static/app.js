@@ -710,7 +710,9 @@ function revealLibrary() {
   if (!$("track-list").hidden) $("track-list").classList.add("library-reveal");
 }
 
-function trackRowHeight() { return 52; }
+function trackRowHeight() {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height")) || 64;
+}
 
 function focusTrackRow(index, { focus = true, reveal = true } = {}) {
   if (!state.totalTracks) return;

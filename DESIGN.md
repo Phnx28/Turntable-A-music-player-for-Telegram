@@ -93,7 +93,7 @@ components:
     backgroundColor: "{colors.surface-light}"
     textColor: "{colors.ink-light}"
     padding: "0 24px"
-    height: "84px"
+    height: "96px"
 ---
 
 # Design System: Telegram Turntable
@@ -132,7 +132,7 @@ Operate / music-library application.
 
 ### Signature effect
 
-Content physically scrolls beneath a 36px progressive glass layer. Glass belongs where a surface overlays moving content, not on every component.
+Content physically scrolls beneath a 36px progressive glass layer whose falloff extends 48px beyond the reserved header space. Glass belongs where a surface overlays moving content, not on every component.
 
 ### Blur scale
 
@@ -258,12 +258,12 @@ The system uses quiet layered shadows over tonal layering. Most library content 
 - **Responsive treatment:** On smaller screens the source rail becomes a drawer above the library and stops above the persistent player.
 
 ### Player Bar
-- **Shape:** A persistent `84px` control surface spanning the shell, with a thin progress rail above identity, transport, volume, and track actions.
+- **Shape:** A persistent `96px` floating control surface spanning the shell, with identity, transport, volume, and track actions in the first row and the native progress rail integrated along the lower edge.
 - **Hierarchy:** Track identity anchors the left, transport owns the center, and volume plus secondary actions sit to the right. The primary Play control is the strongest control by size and contrast.
 - **Behavior:** Keep seeking, playback state, and transport controls available while Now Playing or source navigation changes. Respect reduced motion.
 
 ### Track Rows
-- **Shape:** Dense `52px` rows with `40px` artwork and aligned mono metadata columns.
+- **Shape:** Dense `64px` rows with `48px` artwork and aligned mono metadata columns.
 - **State:** Ordinary rows stay flat; hover uses a surface shift; the current row uses a restrained Vinyl Red tint and a small playback mark.
 - **Overflow:** Track titles, artists, and source names truncate with ellipses while timestamps and counts remain aligned.
 

@@ -1351,7 +1351,7 @@ class LayoutTests(unittest.TestCase):
 
         page.evaluate("""() => {
           const library = document.getElementById('library-content');
-          library.scrollTop = document.getElementById('track-list').offsetTop + 4300;
+          library.scrollTop = document.getElementById('track-list').offsetTop + 5300;
           library.dispatchEvent(new Event('scroll'));
         }""")
         page.wait_for_selector('.day-separator[data-day-key="2025-07-28"]')
@@ -1366,12 +1366,12 @@ class LayoutTests(unittest.TestCase):
             rows: rows.length,
             unique: new Set(keys).size,
             keyed: keys.length,
-            accounted: spacer + rows.length * 52 + separators.length * 28,
+            accounted: spacer + rows.length * 64 + separators.length * 28,
           };
         }""")
         self.assertLessEqual(geometry["rows"], 80, "separator rows must not consume the 80-track budget")
         self.assertEqual(geometry["keyed"], geometry["unique"], "a boundary duplicated a track row")
-        self.assertEqual(121 * 52 + 3 * 28, geometry["accounted"], "separator height drifted out of spacers")
+        self.assertEqual(121 * 64 + 3 * 28, geometry["accounted"], "separator height drifted out of spacers")
 
         page.select_option("#track-sort", "title")
         page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
