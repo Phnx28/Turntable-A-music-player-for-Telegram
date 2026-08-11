@@ -33,6 +33,27 @@ const contrast = (a, b) => {
   return (high + 0.05) / (low + 0.05);
 };
 
+test("progressive material tokens define the approved scale", () => {
+  const light = tokenBlock(/^:root\s*\{/);
+  const dark = tokenBlock(/^html\[data-theme="dark"\]\s*\{/);
+
+  assert.equal(light["--blur-soft"], "20px");
+  assert.equal(light["--blur-strong"], "36px");
+  assert.equal(light["--space-1"], "4px");
+  assert.equal(light["--space-2"], "8px");
+  assert.equal(light["--space-3"], "12px");
+  assert.equal(light["--space-4"], "16px");
+  assert.equal(light["--space-5"], "24px");
+  assert.equal(light["--space-6"], "32px");
+  assert.equal(light["--space-7"], "48px");
+
+  for (const name of ["--glass-subtle", "--glass-medium", "--glass-strong", "--glass-border", "--glass-highlight"]) {
+    assert.match(light[name], /color-mix/);
+    assert.match(dark[name], /color-mix/);
+    assert.notEqual(light[name], dark[name], `${name} needs a dark-theme calibration`);
+  }
+});
+
 test("token contrast meets its requirement, computed not transcribed", () => {
   const light = tokenBlock(/^:root\s*\{/);
   const dark = tokenBlock(/^html\[data-theme="dark"\]\s*\{/);

@@ -46,6 +46,21 @@
   /* Read by updateNowHeader to work out how much height the collapse frees. Measured, not
      guessed: 132px holds the 40px tabs, the 40px close button and the 64px art. */
   --compact-header: 132px;
+  /* Progressive material vocabulary. Components adopt these incrementally. */
+  --blur-soft: 20px;
+  --blur-strong: 36px;
+  --glass-subtle: color-mix(in srgb, var(--surface) 64%, transparent);
+  --glass-medium: color-mix(in srgb, var(--surface) 52%, transparent);
+  --glass-strong: color-mix(in srgb, var(--paper) 76%, transparent);
+  --glass-border: color-mix(in srgb, var(--ink) 12%, transparent);
+  --glass-highlight: color-mix(in srgb, var(--surface) 78%, transparent);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
 }
 
 html[data-theme="dark"] {
@@ -65,6 +80,11 @@ html[data-theme="dark"] {
   --elev-1: 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent);
   --elev-2: 0 8px 28px color-mix(in srgb, var(--ink) 22%, transparent);
   --elev-3: 0 24px 80px color-mix(in srgb, var(--ink) 34%, transparent);
+  --glass-subtle: color-mix(in srgb, var(--surface) 72%, transparent);
+  --glass-medium: color-mix(in srgb, var(--surface) 60%, transparent);
+  --glass-strong: color-mix(in srgb, var(--paper) 68%, transparent);
+  --glass-border: color-mix(in srgb, var(--ink) 16%, transparent);
+  --glass-highlight: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -85,6 +105,11 @@ html[data-theme="dark"] {
     --elev-1: 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent);
     --elev-2: 0 8px 28px color-mix(in srgb, var(--ink) 22%, transparent);
     --elev-3: 0 24px 80px color-mix(in srgb, var(--ink) 34%, transparent);
+    --glass-subtle: color-mix(in srgb, var(--surface) 72%, transparent);
+    --glass-medium: color-mix(in srgb, var(--surface) 60%, transparent);
+    --glass-strong: color-mix(in srgb, var(--paper) 68%, transparent);
+    --glass-border: color-mix(in srgb, var(--ink) 16%, transparent);
+    --glass-highlight: color-mix(in srgb, var(--ink) 10%, transparent);
   }
 }
 
@@ -580,7 +605,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   column-gap: 14px;
 }
 
-.track-head { min-height: 34px; padding: 0 9px; border-bottom: 1px solid var(--rule-soft); color: var(--graphite); font-size: 10px; }
+.track-head { min-height: 34px; padding: 0 9px; border-bottom: 1px solid var(--rule-soft); color: var(--graphite); font-size: var(--text-micro); }
 .head-sort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: inherit; text-transform: inherit; cursor: pointer; }
 .head-sort:hover { color: var(--ink); }
 .head-sort[aria-sort] { color: var(--ink); font-weight: 620; }
@@ -1290,9 +1315,9 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 
 .mode-button { position: relative; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
 .mode-button.active {
-  border-color: color-mix(in srgb, var(--stamp) 58%, var(--rule));
-  background: color-mix(in srgb, var(--stamp) 14%, transparent);
-  color: var(--stamp);
+  border-color: var(--rule);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--ink);
 }
 #repeat-badge { position: absolute; right: 5px; bottom: 4px; font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; font-weight: 800; }
 
@@ -2028,6 +2053,6 @@ html[data-font="mono"] { --font-display: var(--font-mono); }
    the existing reduce-motion block. */
 .track-row.locate-flash { animation: locate-flash 1.1s var(--ease-out); }
 @keyframes locate-flash {
-  from { background: color-mix(in srgb, var(--stamp) 32%, transparent); }
+  from { background: color-mix(in srgb, var(--ink) 14%, transparent); }
   to { background: transparent; }
 }
