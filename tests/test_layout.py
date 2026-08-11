@@ -978,7 +978,14 @@ class LayoutTests(unittest.TestCase):
 
     def test_mixed_typography_roles_are_rendered_without_font_picker(self):
         page = self.page(1440, 900)
-        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.evaluate("""() => {
+          document.getElementById('app-shell').hidden = false;
+          document.getElementById('global-source-results').innerHTML = '<h3>Telegram sources</h3>';
+          const discover = document.createElement('section');
+          discover.className = 'discover-group';
+          discover.innerHTML = '<h3>Selected</h3>';
+          document.getElementById('discover-list').append(discover);
+        }""")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
         fonts = page.evaluate("""() => {
           const family = (selector) => getComputedStyle(document.querySelector(selector)).fontFamily;
@@ -996,13 +1003,20 @@ class LayoutTests(unittest.TestCase):
             time: family('.time-label'),
             attribution: family('.lyrics-attribution'),
             summary: family('.library-heading .small-copy'),
+            globalCount: family('#global-results-count'),
+            bulkCount: family('#bulk-count'),
+            cacheUsage: family('#cache-usage'),
+            passwordStatus: family('#password-state-label'),
+            qrStatus: family('#qr-status'),
+            globalHeading: family('#global-source-results h3'),
+            discoverHeading: family('.discover-group h3'),
             picker: document.querySelector('[data-setting="font"]'),
             dataFont: document.documentElement.dataset.font || null,
           };
         }""")
-        for name in ("title", "artist", "source", "heading", "tab", "button"):
+        for name in ("title", "artist", "source", "heading", "tab", "button", "globalHeading", "discoverHeading"):
             self.assertIn("Archivo", fonts[name], f"{name} must use the human-facing type: {fonts}")
-        for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary"):
+        for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary", "globalCount", "bulkCount", "cacheUsage", "passwordStatus", "qrStatus"):
             self.assertIn("IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}")
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])

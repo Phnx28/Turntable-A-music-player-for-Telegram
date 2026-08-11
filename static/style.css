@@ -247,12 +247,13 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
 :where(.brand-line, .source-copy strong, .track-copy strong, .track-copy small, .track-source,
   .player-copy strong, .player-copy small, .now-title h2, .now-title p, .library-heading h1,
   .modal-header h2, .tab, .button, .text-button, .settings-nav button, label, input, select,
-  textarea, .empty-state h2, .global-result strong, .discover-copy strong) {
+  textarea, .empty-state h2, .global-result strong, .global-result-group h3, .discover-group h3, .discover-copy strong) {
   font-family: var(--font-ui);
 }
 :where(.utility, .source-copy small, .source-kind, .source-count, .track-ordinal, .track-posted, .track-duration,
   .library-heading .small-copy, .time-label, .volume-pct, .lyrics-attribution, .details-pane dt,
-  .details-pane dd.detail-data, .result-provenance, .sync-strip, .dialog-status, .login-status, .restart-notice, .field-label,
+  .details-pane dd.detail-data, #global-results-count, #bulk-count, #cache-usage, #password-state-label,
+  #qr-status, .result-provenance, .sync-strip, .dialog-status, .login-status, .restart-notice, .field-label,
   .sort-control select, .queue-state, .cache-state, .discover-copy small) {
   font-family: var(--font-data);
 }
@@ -452,7 +453,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-search-signal span { width: 7px; height: 7px; border-radius: 50%; background: var(--graphite); outline: 0 solid color-mix(in srgb, var(--graphite) 60%, transparent); animation: search-pulse 1.2s var(--ease-out) infinite; }
 .global-search-signal small { font-family: var(--font-data); font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .055em; }
 .global-result-group:empty { display: none; }
-.global-result-group h3 { margin: 14px 0 5px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.global-result-group h3 { margin: 14px 0 5px; color: var(--graphite); font-family: var(--font-ui); font-size: var(--text-micro); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 .global-result {
   display: grid;
   width: 100%;
@@ -1448,7 +1449,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .discover-filters { display: flex; align-items: center; gap: 8px; }
 .discover-filters input, .discover-filters select { min-height: 34px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); font-size: 12px; }
 .discover-filters input { height: 34px; }
-.discover-group h3 { position: sticky; z-index: 1; top: -27px; margin: 0; padding: 14px 0 8px; background: var(--surface); color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
+.discover-group h3 { position: sticky; z-index: 1; top: -27px; margin: 0; padding: 14px 0 8px; background: var(--surface); color: var(--graphite); font-family: var(--font-ui); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .discover-row { grid-template-columns: 36px 1fr auto; padding: 5px 0; }
 .discover-row.pending { background: var(--surface); }
 .discover-row input { accent-color: var(--ink); }
