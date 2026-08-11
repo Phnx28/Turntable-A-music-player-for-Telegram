@@ -1138,6 +1138,59 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(attribution.is_visible())
         self.assertEqual("Lyrics from LRCLIB", attribution.text_content())
 
+    def test_empty_lyrics_state_stays_connected_to_tabs(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.evaluate("""() => {
+          const lines = document.getElementById('lyrics-lines');
+          lines.replaceChildren();
+          const empty = document.getElementById('lyrics-empty');
+          empty.hidden = false;
+          empty.textContent = 'No lyrics found for this track.';
+          document.getElementById('add-lyrics-empty').hidden = false;
+        }""")
+        shape = page.evaluate("""() => {
+          const box = selector => document.querySelector(selector).getBoundingClientRect();
+          const tabs = box('.now-tabs');
+          const empty = box('#lyrics-empty');
+          const add = box('#add-lyrics-empty');
+          const attribution = box('#lyrics-attribution');
+          const lines = getComputedStyle(document.getElementById('lyrics-lines'));
+          return {
+            tabsBottom: tabs.bottom,
+            emptyTop: empty.top,
+            emptyBottom: empty.bottom,
+            addTop: add.top,
+            addBottom: add.bottom,
+            attributionTop: attribution.top,
+            linePaddingTop: lines.paddingTop,
+          };
+        }""")
+        self.assertGreaterEqual(shape["emptyTop"] - shape["tabsBottom"], 28, shape)
+        self.assertLessEqual(shape["emptyTop"] - shape["tabsBottom"], 40, shape)
+        self.assertGreaterEqual(shape["addTop"] - shape["emptyBottom"], 18, shape)
+        self.assertLessEqual(shape["addTop"] - shape["emptyBottom"], 30, shape)
+        self.assertGreaterEqual(shape["attributionTop"] - shape["addBottom"], 20, shape)
+        self.assertEqual("0px", shape["linePaddingTop"], shape)
+
+    def test_expanded_now_identity_block_has_artwork_clearance(self):
+        for width, height in ((1440, 900), (1280, 720)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                self.open_now_panel(page)
+                shape = page.evaluate("""() => {
+                  const art = document.querySelector('.large-art-wrap').getBoundingClientRect();
+                  const title = document.querySelector('.now-title').getBoundingClientRect();
+                  return {
+                    artWidth: art.width,
+                    artHeight: art.height,
+                    titleTop: title.top,
+                    artBottom: art.bottom,
+                  };
+                }""")
+                self.assertAlmostEqual(shape["artWidth"], shape["artHeight"], delta=1, msg=shape)
+                self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 4, shape)
+
     def test_non_classifying_eyebrows_are_removed(self):
         page = self.page(1440, 900)
         page.route("**/api/tracks*", lambda route: route.fulfill(
@@ -1303,7 +1356,8 @@ class LayoutTests(unittest.TestCase):
                   });
                   return { ratio: header.height / panel.height, overflow: header.scrollHeight > header.clientHeight + 1, boxes };
                 }""")
-                self.assertLessEqual(geometry["ratio"], .45 + .002)
+                expected_ratio = .60 if width <= 860 else .45
+                self.assertLessEqual(geometry["ratio"], expected_ratio + .002)
                 self.assertFalse(geometry["overflow"], f"expanded header overflowed at {width}x{height}")
                 self.assertTrue(all(item["visible"] and item["contained"] for item in geometry["boxes"]), geometry["boxes"])
 

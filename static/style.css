@@ -1399,6 +1399,18 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .cache-state { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); font-variant-numeric: tabular-nums; text-transform: uppercase; }
 .cache-state.ready { color: var(--ok); }
 
+/* Final optical pass: give the expanded record a little more air above it while keeping the
+   identity block close enough to read as one object. The empty lyrics state is its own rhythm;
+   synchronized sheets keep their generous scroll padding and are not affected by these rules. */
+@media (min-width: 861px) {
+  .now-header:not(.is-compact) .now-title p { margin-bottom: 16px; }
+}
+.lyrics-pane:has(#lyrics-empty:not([hidden])) { padding-top: 28px; }
+.lyrics-pane:has(#lyrics-empty:not([hidden])) #lyrics-lines { min-height: 0; gap: 0; padding: 0; }
+.lyrics-pane:has(#lyrics-empty:not([hidden])) #lyrics-empty { margin: 0 0 20px; }
+.lyrics-pane:has(#lyrics-empty:not([hidden])) [id="add-lyrics-empty"] { align-self: flex-start; margin: 0; }
+.lyrics-pane:has(#lyrics-empty:not([hidden])) .lyrics-attribution { margin-top: 24px; }
+
 .dialog-status { min-height: 20px; margin: 12px 0 0; color: var(--graphite); font-size: 12px; }
 #lyrics-form { gap: 8px; margin-top: 16px; }
 #share-dialog .modal-header { margin-bottom: 16px; }
@@ -1936,7 +1948,7 @@ html[data-theme="dark"] {
   .library-header { gap: 10px; padding-block: 12px 8px; }
   .library-heading h1 { max-width: none; }
   .now-panel { padding-inline: max(20px, calc((100vw - 580px) / 2)); }
-  .now-header:not(.is-compact) { height: 40%; max-height: 40%; }
+  .now-header:not(.is-compact) { height: 60%; max-height: 60%; }
 }
 @media (max-width: 620px) {
   .library { padding-inline: 13px; }
@@ -2104,17 +2116,24 @@ html[data-theme="dark"] {
 }
 
 
-/* Queue and artwork corrections from the live panel. */
+/* Queue and artwork corrections from the live panel. Keep the expanded desktop disc square and
+   bounded by the panel width/viewport instead of letting it overlap the identity block. */
 .label-disc { aspect-ratio: 1 / 1; }
-.now-header:not(.is-compact) .large-art-wrap {
-  width: min(76%, 236px) !important;
-  max-width: 32dvh !important;
-  height: auto !important;
-  aspect-ratio: 1 / 1 !important;
-  align-self: center;
-  justify-self: center;
-  border-radius: 50% !important;
-  overflow: hidden;
+@media (min-width: 861px) {
+  .now-header:not(.is-compact) .large-art-wrap {
+    width: min(58%, 132px);
+    max-width: min(32dvh, 132px);
+    height: auto;
+    aspect-ratio: 1 / 1;
+    margin: 28px auto 16px;
+    align-self: center;
+    justify-self: center;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+}
+@media (min-width: 861px) and (max-height: 760px) {
+  .now-header:not(.is-compact) { height: 60%; max-height: 60%; }
 }
 .queue-header {
   position: sticky;
