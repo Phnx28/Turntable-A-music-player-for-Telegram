@@ -113,6 +113,60 @@ The visual language treats the library as a curated crate rather than a generic 
 - Dense, scan-friendly library rows with generous separation between functional regions.
 - Quiet layered elevation for panels, menus, and the persistent player.
 
+## 1.1 Redesign contract
+
+The redesign keeps the Record Crate identity while making the relationship between moving content and a small number of physical interface layers explicit.
+
+### Product mode
+
+Operate / music-library application.
+
+### Core identity
+
+- Warm paper
+- Smoked glass
+- Album artwork
+- Catalogue typography
+- Vinyl-red playback indication
+- Subtle grain
+
+### Signature effect
+
+Content physically scrolls beneath a 36px progressive glass layer. Glass belongs where a surface overlays moving content, not on every component.
+
+### Blur scale
+
+- `0px` = normal content
+- `20px` = secondary glass
+- `36px` = signature glass
+
+### Accent
+
+Vinyl red only. Use it for meaningful playback or status indication, not decoration.
+
+### Typography
+
+- **Archivo** = UI and display typography
+- **IBM Plex Mono** = metadata and catalogue/data typography
+
+Do not introduce another font for the redesign.
+
+### Motion
+
+Motion is restrained and purposeful. Preserve existing interaction choreography and always respect `prefers-reduced-motion`.
+
+### Additional anti-patterns
+
+- No glass on every component
+- No purple/blue AI gradients
+- No random glow
+- No decorative waveform spam
+- No arbitrary new fonts
+
+### Glass decision rule
+
+Before adding a glass background to a new button or component, ask whether it overlays moving content or represents a deliberate physical layer. Usually the answer is no. Normal controls should generally use a transparent or quiet surface treatment.
+
 ## 2. Colors
 
 The palette is a restrained warm-neutral field: old paper and ivory in light mode, charred paper and warm graphite in dark mode, with Vinyl Red acting as the occasional physical mark of playback.
