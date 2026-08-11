@@ -1185,6 +1185,7 @@ class LayoutTests(unittest.TestCase):
                               radius: parseFloat(getComputedStyle(player).borderTopLeftRadius) },
                     transport: { bottom: transportBox.bottom, playBottom: playBox.bottom },
                     progress: { top: progressBox.top, bottom: progressBox.bottom },
+                    playAboveDivider: playBox.bottom <= progressBox.top,
                     content: { bottom: contentBox.bottom, scrollable: content.scrollHeight > content.clientHeight,
                                atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1 },
                     playHit: hit('#play'), progressHit: hit('#progress'), viewport: { width: innerWidth, height: innerHeight },
@@ -1196,12 +1197,75 @@ class LayoutTests(unittest.TestCase):
                 self.assertLessEqual(shape["transport"]["bottom"], shape["viewport"]["height"] + 1, shape)
                 self.assertLessEqual(shape["transport"]["playBottom"], shape["viewport"]["height"] + 1, shape)
                 self.assertGreater(shape["progress"]["top"], shape["player"]["top"] + 0.5 * (shape["player"]["bottom"] - shape["player"]["top"]), shape)
+                self.assertTrue(shape["playAboveDivider"], shape)
                 self.assertLessEqual(abs(shape["progress"]["bottom"] - shape["player"]["bottom"]), 2, shape)
                 self.assertGreater(shape["player"]["radius"], 0, shape)
                 self.assertLessEqual(shape["content"]["bottom"], shape["player"]["top"] + 1, shape)
                 self.assertTrue(shape["content"]["scrollable"] and shape["content"]["atEnd"], shape)
                 self.assertEqual("play", shape["playHit"], shape)
                 self.assertEqual("progress", shape["progressHit"], shape)
+
+    def test_desktop_transport_is_physically_centered_and_resets_on_mobile(self):
+        for width, height in ((1440, 900), (1280, 720), (1024, 768), (861, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                # A long title must not shift the transport.
+                page.evaluate("""() => {
+                  document.getElementById('player-title').textContent =
+                    'An extremely long track title that keeps going and going and never stops';
+                }""")
+                page.wait_for_timeout(120)
+                shape = page.evaluate("""() => {
+                  const main = document.querySelector('.player-main').getBoundingClientRect();
+                  const play = document.getElementById('play').getBoundingClientRect();
+                  const actions = document.querySelector('.player-track-actions').getBoundingClientRect();
+                  return {
+                    delta: (play.left + play.right) / 2 - (main.left + main.right) / 2,
+                    transportPos: getComputedStyle(document.querySelector('.transport')).position,
+                    playOverlapsActions: actions.left < play.right && actions.right > play.left,
+                  };
+                }""")
+                if width >= 1121:
+                    self.assertLessEqual(abs(shape["delta"]), 1, shape)
+                    self.assertEqual("absolute", shape["transportPos"], shape)
+                else:
+                    self.assertLessEqual(abs(shape["delta"]), 1, shape)
+                    self.assertNotEqual("absolute", shape["transportPos"], shape)
+                self.assertFalse(shape["playOverlapsActions"], shape)
+
+    def test_track_actions_sit_beside_track_identity_and_utilities_stay_right(self):
+        for width, height in ((1440, 900), (1024, 768), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                shape = page.evaluate("""() => {
+                  const box = selector => document.querySelector(selector).getBoundingClientRect();
+                  const track = box('.player-track');
+                  const identity = box('.player-identity');
+                  const actions = box('.player-track-actions');
+                  const copy = box('.player-copy');
+                  const utilities = box('.player-utilities');
+                  const visible = [...document.querySelectorAll('.player-track-actions .icon-button')]
+                    .filter((el) => getComputedStyle(el).display !== 'none').length;
+                  return {
+                    track: { left: track.left, right: track.right },
+                    identity: { left: identity.left, right: identity.right },
+                    actions: { left: actions.left, right: actions.right },
+                    copyRight: copy.right,
+                    actionsVisible: visible,
+                    utilitiesRight: utilities.right,
+                    playerRight: document.querySelector('.player-main').getBoundingClientRect().right,
+                    volumeVisible: getComputedStyle(document.querySelector('.volume-control')).display !== 'none',
+                    lyricsVisible: getComputedStyle(document.getElementById('show-lyrics')).display !== 'none',
+                  };
+                }""")
+                self.assertLessEqual(shape["actions"]["right"], shape["track"]["right"], shape)
+                self.assertGreaterEqual(shape["actions"]["left"], shape["copyRight"] - 2, shape)
+                self.assertGreaterEqual(shape["actionsVisible"], 2, shape)
+                self.assertLessEqual(shape["utilitiesRight"], shape["playerRight"] + 1, shape)
+                self.assertTrue(shape["volumeVisible"] or width <= 1120, shape)
+                self.assertTrue(shape["lyricsVisible"] or width <= 480, shape)
 
     def test_source_column_only_appears_across_sources(self):
         page = self.page(1440, 900)

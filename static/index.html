@@ -293,7 +293,15 @@
               <img id="mini-art" class="mini-art" src="/assets/icon-192.png" alt="" hidden>
               <div id="mini-art-placeholder" class="art-placeholder mini" aria-hidden="true"><span></span></div>
             </span></button>
-            <button id="player-locate" class="player-copy" type="button" aria-label="Locate current track" title="Locate current track"><strong id="player-title">No track selected</strong><small id="player-artist">Search or pick a chat</small></button>
+            <div class="player-identity">
+              <button id="player-locate" class="player-copy" type="button" aria-label="Locate current track" title="Locate current track"><strong id="player-title">No track selected</strong><small id="player-artist">Search or pick a chat</small></button>
+              <div class="player-track-actions">
+                <button id="like-current" class="icon-button" type="button" aria-label="Like current track" aria-pressed="false" title="Like current track"><svg><use href="#i-heart"/></svg></button>
+                <button id="save-current-telegram" class="icon-button desktop-action" type="button" aria-label="Save to Saved Messages" title="Save to Saved Messages"><svg><use href="#i-bookmark"/></svg></button>
+                <button id="share-current" class="icon-button desktop-action" type="button" aria-label="Send to a Telegram contact" title="Send to a Telegram contact"><svg><use href="#i-send"/></svg></button>
+                <button id="player-more" class="icon-button" type="button" aria-label="More track actions" title="More track actions"><svg><use href="#i-more"/></svg></button>
+              </div>
+            </div>
           </div>
           <div class="transport">
             <button id="shuffle" class="icon-button mode-button" type="button" aria-label="Shuffle off" aria-pressed="false" title="Shuffle"><svg><use href="#i-shuffle"/></svg></button>
@@ -311,12 +319,6 @@
               <label class="sr-only" for="volume">Volume</label>
               <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-valuetext="80 percent">
               <span id="volume-pct" class="volume-pct">80</span>
-            </div>
-            <div class="player-track-actions">
-              <button id="like-current" class="icon-button" type="button" aria-label="Like current track" aria-pressed="false" title="Like current track"><svg><use href="#i-heart"/></svg></button>
-              <button id="save-current-telegram" class="icon-button desktop-action" type="button" aria-label="Save to Saved Messages" title="Save to Saved Messages"><svg><use href="#i-bookmark"/></svg></button>
-              <button id="share-current" class="icon-button desktop-action" type="button" aria-label="Send to a Telegram contact" title="Send to a Telegram contact"><svg><use href="#i-send"/></svg></button>
-              <button id="player-more" class="icon-button" type="button" aria-label="More track actions" title="More track actions"><svg><use href="#i-more"/></svg></button>
             </div>
             <button id="show-lyrics" class="icon-button" type="button" aria-label="Show lyrics" title="Show lyrics"><svg><use href="#i-lyrics"/></svg></button>
           </div>

@@ -595,7 +595,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
 .sort-control { display: flex; height: 34px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
 .sort-control:has(select:focus-visible) { outline: 0; }
-.sort-control select { height: 32px; min-height: 32px; padding: 0 26px 0 9px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 10px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
+.sort-control select { height: 32px; min-height: 32px; padding: 0 26px 0 9px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
 .sort-control select:focus-visible { outline: 0; box-shadow: none; }
 .sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
 
@@ -1019,7 +1019,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .player-track { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
 .player-cover-button, .player-copy { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-.player-track-actions { display: flex; align-items: center; gap: 1px; }
+/* Identity is one flex row so the track actions hug the title/artist: a grid 1fr column
+   would keep its full share even when the title truncates, stranding the actions at the
+   column edge. The copy shrinks (flex 1 1 auto, min-width 0, ellipsis) while the actions
+   stay fixed. */
+.player-identity { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.player-track-actions { display: flex; align-items: center; gap: 1px; margin-left: 6px; }
 .player-track-actions .icon-button { width: 32px; height: 32px; }
 .icon-button.active { color: var(--ink); }
 .mini-art-wrap { position: relative; display: block; width: 48px; height: 48px; flex: 0 0 auto; overflow: hidden; border-radius: var(--radius-art); box-shadow: var(--elev-1); }
@@ -1030,6 +1035,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .art-placeholder.mini.is-covered { opacity: 0; }
 .player-copy strong { font-size: 13px; }
 .player-copy small { margin-top: 2px; color: var(--graphite); font-size: 11px; }
+/* The identity truncates in place: without overflow handling a long title's min-content
+   forced the track column wider and pushed the transport off the physical centre. */
+.player-copy strong, .player-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .transport { display: flex; align-items: center; justify-self: center; gap: 10px; }
 .transport .play-button { margin-inline: 10px; }
 .play-button { position: relative; border-color: var(--ink); border-radius: 50%; background: var(--ink); color: var(--paper); transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-spring); }
@@ -1218,17 +1226,24 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   .now-header.is-compact { margin: 0 calc(-1 * max(20px, (100vw - 580px) / 2)); padding: 4px max(20px, calc((100vw - 580px) / 2)) 0; }
   /* auto for the utilities column: a fixed 44px could not hold the track actions once the
      transport kept prev/next, so like/more overlapped the skip buttons by up to 21px. */
-  .player-main { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; padding: 0 max(13px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(13px, env(safe-area-inset-left)); }
+  /* The player is two deliberate rows on mobile: the identity row (art, title, track
+     actions, lyrics shortcut) and the transport row below it. The transport owns its own
+     row instead of balancing between content columns, and the track actions stay reachable
+     beside the identity rather than competing with the transport for width. */
+  .player-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 46px 52px;
+    gap: 0 8px;
+    padding: 0 max(13px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(13px, env(safe-area-inset-left));
+  }
+  .player-track { grid-column: 1; grid-row: 1; overflow: hidden; }
+  .player-utilities { grid-column: 2; grid-row: 1; justify-self: end; }
+  .transport { grid-column: 1 / -1; grid-row: 2; justify-self: center; gap: 6px; }
   .progress-row { padding: 4px max(13px, env(safe-area-inset-right)) 2px max(13px, env(safe-area-inset-left)); }
-  /* Shuffle and repeat remain first-class controls on touch screens. At phone widths the
-     player gets a second row below the track identity, rather than hiding transport state or
-     shrinking five controls into an accidental hit-target cluster. */
-  .transport { gap: 6px; }
+  /* Shuffle and repeat remain first-class controls on touch screens. */
   .transport .mode-button { opacity: .95; }
   .transport .icon-button { width: 40px; height: 40px; }
-  .player-track-actions .desktop-action { display: none; }
   .player-utilities { gap: 0; }
-  .player-track { overflow: hidden; }
 }
 
 @media (max-width: 620px) {
@@ -1571,18 +1586,10 @@ dialog.modal[open]::backdrop { opacity: 1; }
 
 @media (max-width: 480px) {
   /* The 154px reserved shell row leaves a 144px dock after its 10px bottom margin: the 23px
-     progress rail, 46px identity row, and 52px transport row all stay inside the footer. */
+     progress rail, 46px identity row, and 52px transport row all stay inside the footer.
+     The two-row geometry itself lives in the <=860 block; phones only drop the lyrics
+     shortcut from the identity row. */
   :root { --player-height: calc(154px + env(safe-area-inset-bottom)); }
-  .player-main {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: 46px 52px;
-    gap: 0 8px;
-    padding: 0 max(13px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(13px, env(safe-area-inset-left));
-  }
-  .player-track { grid-column: 1; grid-row: 1; }
-  .player-utilities { grid-column: 2; grid-row: 1; }
-  .transport { grid-column: 1 / -1; grid-row: 2; justify-self: center; gap: 4px; }
-  .transport .play-button { margin-inline: 6px; }
   /* The cover already opens Now Playing; keep the top row about identity and actions. */
   #show-lyrics { display: none; }
 }
@@ -2273,4 +2280,62 @@ textarea { min-height: 150px; max-height: 52dvh; }
 @keyframes locate-flash {
   from { background: color-mix(in srgb, var(--ink) 14%, transparent); }
   to { background: transparent; }
+}
+
+
+/* =========================================================================
+   Player information architecture (geometry correction pass). The dock has
+   three clear semantic zones: track identity and track actions on the left,
+   transport centred in the dock, and player utilities (volume, lyrics) on
+   the right. Appended last: these rules win over the earlier three-column
+   grid at the same breakpoints.
+   ========================================================================= */
+
+/* The Play button keeps its size and the divider stays straight: the main row grows tall
+   enough to contain the 52px button instead of letting it cross the progress row's top
+   border. 60px is the ceiling: the 96px dock must still leave ~26px for the progress row,
+   so the button sits inside with ~12px of clearance above the divider. */
+@media (min-width: 861px) {
+  .player-main {
+    min-height: 60px;
+    padding: 4px 24px;
+  }
+}
+
+/* Narrow desktops (861-1120) keep the in-flow three-column grid: the equal 1fr columns
+   already put the transport at the physical centre, and the identity row truncates in
+   place, so nothing can collide with the transport. */
+
+/* Full desktops: the transport leaves the grid and floats at the physical middle of the
+   dock, so title length and action count can never shift it. */
+@media (min-width: 1121px) {
+  .player-main {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 28px;
+  }
+  .player-track { grid-column: 1; }
+  .player-utilities { grid-column: 2; justify-self: end; }
+  .transport {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+  /* The transport spans 284px (142px each way) around the dock centre. The identity row is
+     capped in viewport units (percentages would resolve against the grid area) so its
+     trailing actions always stop clear of the transport's left edge, however long the
+     title gets. */
+  .player-identity {
+    justify-self: start;
+    max-width: calc(50vw - 255px);
+  }
+}
+
+/* The dock stays wide enough for the full action set on true desktops; on narrow desktop
+   widths the save/share shortcuts retire beside the title, matching the volume control's
+   existing <=1120 retirement. */
+@media (max-width: 1120px) {
+  .player-track-actions .desktop-action { display: none; }
 }
