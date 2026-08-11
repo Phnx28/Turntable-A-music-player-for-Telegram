@@ -8,7 +8,7 @@ const app = fs.readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const iconIds = [
   "play-filled", "pause", "prev", "next", "volume", "search", "sync", "plus", "more",
   "close", "download", "edit", "menu", "lyrics", "shuffle", "repeat", "collapse", "heart",
-  "heart-filled", "bookmark", "send", "locate", "pin",
+  "heart-filled", "bookmark", "send", "locate", "pin", "settings",
 ];
 
 test("the generated sprite contains every Hugeicons app icon", () => {

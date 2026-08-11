@@ -330,12 +330,13 @@ class LayoutTests(unittest.TestCase):
           const add = document.getElementById('add-source');
           const settings = document.getElementById('open-settings');
           return {
-            icons: [iconLeft(sync), iconLeft(add)],
-            labels: [labelLeft(sync), labelLeft(add), settings.getBoundingClientRect().left],
-            widths: [Math.round(sync.getBoundingClientRect().width), Math.round(add.getBoundingClientRect().width)],
+            icons: [iconLeft(sync), iconLeft(add), iconLeft(settings)],
+            labels: [labelLeft(sync), labelLeft(add), labelLeft(settings)],
+            widths: [Math.round(sync.getBoundingClientRect().width), Math.round(add.getBoundingClientRect().width), Math.round(settings.getBoundingClientRect().width)],
           };
         }""")
         self.assertAlmostEqual(shape["icons"][0], shape["icons"][1], delta=1, msg=shape)
+        self.assertAlmostEqual(shape["icons"][1], shape["icons"][2], delta=1, msg=shape)
         self.assertAlmostEqual(shape["labels"][0], shape["labels"][1], delta=1, msg=shape)
         self.assertAlmostEqual(shape["labels"][1], shape["labels"][2], delta=1,
                                msg="Settings text must land under the utility labels")
@@ -1134,6 +1135,96 @@ class LayoutTests(unittest.TestCase):
                   return { offenders, player: { left: player.left, right: player.right, top: player.top, bottom: player.bottom } };
                 }""")
                 self.assertEqual([], bounds["offenders"], bounds)
+
+    def test_source_sort_menu_trigger_and_drag_sync(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector("#source-list .source-entry[data-source]")
+
+        # Trigger opens the existing context menu with all four modes.
+        page.click("#sidebar-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
+        self.assertEqual(4, len(items), items)
+        for label in ("Custom order", "Name", "Recent activity", "Track count"):
+            self.assertTrue(any(label in item for item in items), (label, items))
+
+        # A manual drag reorder (custom mode) forces Custom order everywhere.
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+        page.evaluate("""() => {
+          const rows = [...document.querySelectorAll('#source-list .source-entry[draggable=true]')];
+          const source = rows[1];
+          source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }));
+        }""")
+        page.evaluate("""() => {
+          const rows = [...document.querySelectorAll('#source-list .source-entry[draggable=true]')];
+          const target = rows[0];
+          target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientY: target.getBoundingClientRect().top + 4 }));
+          target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientY: target.getBoundingClientRect().top + 4 }));
+        }""")
+        page.wait_for_function("() => document.getElementById('sidebar-sort').value === 'custom'")
+        self.assertEqual("Custom order", page.evaluate("() => document.getElementById('sidebar-sort-label').textContent"))
+        self.assertEqual("custom", page.evaluate("() => localStorage.getItem('tm-source-sort')"))
+
+        # Choosing Name updates the hidden state source, the label and localStorage.
+        page.click("#sidebar-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.click('#context-menu button:has-text("Name")')
+        page.wait_for_function("() => document.getElementById('sidebar-sort-label').textContent === 'Name'")
+        self.assertEqual("name", page.evaluate("() => document.getElementById('sidebar-sort').value"))
+        self.assertEqual("name", page.evaluate("() => localStorage.getItem('tm-source-sort')"))
+
+    def test_collapse_expand_semantics_and_settings_visibility(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        expanded = page.evaluate("""() => {
+          const button = document.getElementById('collapse-sidebar');
+          const svg = button.querySelector('svg');
+          return {
+            label: button.getAttribute('aria-label'),
+            title: button.title,
+            transform: getComputedStyle(svg).transform,
+            settingsVisible: getComputedStyle(document.getElementById('open-settings')).display !== 'none',
+          };
+        }""")
+        self.assertEqual("Collapse sources", expanded["label"], expanded)
+        self.assertEqual("Collapse sources", expanded["title"], expanded)
+        self.assertEqual("none", expanded["transform"], expanded)
+        self.assertTrue(expanded["settingsVisible"], expanded)
+
+        page.click("#collapse-sidebar")
+        page.wait_for_function("() => document.getElementById('app-shell').classList.contains('sidebar-collapsed')")
+        collapsed = page.evaluate("""() => {
+          const button = document.getElementById('collapse-sidebar');
+          const settings = document.getElementById('open-settings');
+          const box = settings.getBoundingClientRect();
+          return {
+            label: button.getAttribute('aria-label'),
+            title: button.title,
+            transform: getComputedStyle(button.querySelector('svg')).transform,
+            settingsVisible: getComputedStyle(settings).display !== 'none',
+            settingsWidth: box.width,
+            stored: localStorage.getItem('tm-sidebar'),
+          };
+        }""")
+        self.assertEqual("Expand sources", collapsed["label"], collapsed)
+        self.assertEqual("Expand sources", collapsed["title"], collapsed)
+        self.assertNotEqual("none", collapsed["transform"], collapsed)
+        self.assertTrue(collapsed["settingsVisible"], collapsed)
+        self.assertGreaterEqual(collapsed["settingsWidth"], 44, collapsed)
+        self.assertEqual("collapsed", collapsed["stored"], collapsed)
+
+        # Reload: the collapsed state and the aria/title labels come back from localStorage.
+        page.reload(wait_until="load")
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_timeout(150)
+        restored = page.evaluate("""() => ({
+          collapsed: document.getElementById('app-shell').classList.contains('sidebar-collapsed'),
+          label: document.getElementById('collapse-sidebar').getAttribute('aria-label'),
+        })""")
+        self.assertTrue(restored["collapsed"], restored)
+        self.assertEqual("Expand sources", restored["label"], restored)
 
     def test_player_is_one_uniform_glass_surface_on_the_canvas(self):
         for width, height in ((1440, 900), (390, 844)):

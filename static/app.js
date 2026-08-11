@@ -235,6 +235,21 @@ async function restorePlayerState(saved) {
   }
 }
 
+function setSidebarCollapsed(collapsed, { persist = true } = {}) {
+  const shell = $("app-shell");
+  const button = $("collapse-sidebar");
+
+  shell.classList.toggle("sidebar-collapsed", collapsed);
+
+  const label = collapsed ? "Expand sources" : "Collapse sources";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+
+  if (persist) {
+    localStorage.setItem("tm-sidebar", collapsed ? "collapsed" : "expanded");
+  }
+}
+
 function applyPreferences() {
   restoreSleepTimer();
   // The accent picker is gone, but a browser that used it still holds tm-accent and a
@@ -249,7 +264,7 @@ function applyPreferences() {
     button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
   });
 
-  $("app-shell").classList.toggle("sidebar-collapsed", localStorage.getItem("tm-sidebar") === "collapsed");
+  setSidebarCollapsed(localStorage.getItem("tm-sidebar") === "collapsed", { persist: false });
   document.documentElement.style.setProperty("--rail-width", `${Math.max(220, Math.min(420, Number(localStorage.getItem("tm-rail-width")) || 260))}px`);
   document.documentElement.style.setProperty("--panel-width", `${Math.max(300, Math.min(640, Number(localStorage.getItem("tm-panel-width")) || 368))}px`);
   updateModes();
@@ -607,6 +622,7 @@ function avatarMarkup(source) {
 
 function renderSources() {
   const sorted = sourceSort(state.sources);
+  syncSidebarSortTrigger();
   $("all-count").textContent = state.allMusicTotal === null ? "—" : state.allMusicTotal.toLocaleString();
   $("liked-count").textContent = state.likedCount.toLocaleString();
   $("liked-source").classList.toggle("active", state.likedMode);
@@ -1836,6 +1852,40 @@ function openTrackSortMenu() {
   );
 }
 
+const SOURCE_SORT_LABELS = {
+  custom: "Custom order",
+  name: "Name",
+  recent: "Recent activity",
+  count: "Track count",
+};
+
+function syncSidebarSortTrigger() {
+  const value = $("sidebar-sort").value || "custom";
+  const label = SOURCE_SORT_LABELS[value] || "Custom order";
+  $("sidebar-sort-label").textContent = label;
+  $("sidebar-sort-trigger").setAttribute("aria-label", `Sort sources: ${label}`);
+}
+
+function openSidebarSortMenu() {
+  const trigger = $("sidebar-sort-trigger");
+  const rect = trigger.getBoundingClientRect();
+  const current = $("sidebar-sort").value || "custom";
+
+  openMenu(
+    Object.entries(SOURCE_SORT_LABELS).map(([value, label]) => ({
+      label: `${value === current ? "✓ " : ""}${label}`,
+      action: () => {
+        $("sidebar-sort").value = value;
+        localStorage.setItem("tm-source-sort", value);
+        syncSidebarSortTrigger();
+        renderSources();
+      },
+    })),
+    Math.max(8, rect.left),
+    rect.bottom + 6,
+  );
+}
+
 function updateRowLikeUi(key, liked) {
   document.querySelectorAll(`[data-row-like-key="${CSS.escape(key)}"]`).forEach((button) => {
     button.classList.toggle("active", liked);
@@ -2424,6 +2474,8 @@ $("source-list").addEventListener("drop", async (event) => {
   try {
     await api("/api/sources/order", { method: "PATCH", body: JSON.stringify({ chatIds: ordered }) });
     $("sidebar-sort").value = "custom";
+    localStorage.setItem("tm-source-sort", "custom");
+    syncSidebarSortTrigger();
     await loadLibrary(true);
   } catch (error) { showError(error); }
   draggedSource = "";
@@ -2503,9 +2555,10 @@ $("keep-source").addEventListener("click", () => keepTemporarySource().catch(sho
 $("add-source").addEventListener("click", openSources); document.querySelector('[data-action="add-source"]').addEventListener("click", openSources);
 $("sync-all-sources").addEventListener("click", () => syncAllSources().catch(showError));
 $("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", renderDiscovered);
-$("sidebar-sort").value = localStorage.getItem("tm-source-sort") || "custom"; $("sidebar-sort").addEventListener("change", () => { localStorage.setItem("tm-source-sort", $("sidebar-sort").value); renderSources(); });
+$("sidebar-sort").value = localStorage.getItem("tm-source-sort") || "custom"; $("sidebar-sort").addEventListener("change", () => { localStorage.setItem("tm-source-sort", $("sidebar-sort").value); renderSources(); }); syncSidebarSortTrigger();
+$("sidebar-sort-trigger").addEventListener("click", openSidebarSortMenu);
 $("bulk-sources").addEventListener("click", () => { state.bulk = true; $("bulk-bar").hidden = false; renderSources(); }); $("bulk-cancel").addEventListener("click", () => { state.bulk = false; state.selectedSources.clear(); $("bulk-bar").hidden = true; renderSources(); }); $("bulk-unselect").addEventListener("click", () => unselectSources([...state.selectedSources]));
-$("collapse-sidebar").addEventListener("click", () => { const collapsed = !$("app-shell").classList.contains("sidebar-collapsed"); $("app-shell").classList.toggle("sidebar-collapsed", collapsed); localStorage.setItem("tm-sidebar", collapsed ? "collapsed" : "expanded"); $("collapse-sidebar").setAttribute("aria-label", collapsed ? "Expand sources" : "Collapse sources"); });
+$("collapse-sidebar").addEventListener("click", () => { setSidebarCollapsed(!$("app-shell").classList.contains("sidebar-collapsed")); });
 $("liked-source").addEventListener("click", selectLiked);
 
 $("play").addEventListener("click", () => togglePlayback().catch(showError)); $("previous").addEventListener("click", () => audio.currentTime > 3 ? audio.currentTime = 0 : move(-1).catch(showError)); $("next").addEventListener("click", () => move(1).catch(showError)); $("shuffle").addEventListener("click", () => toggleShuffle().catch(showError)); $("repeat").addEventListener("click", () => { state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off"; updateModes(); toast(`Repeat ${state.repeat}`); });
