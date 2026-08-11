@@ -301,6 +301,64 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("0px", shape["collapsedBorder"], shape)
         self.assertEqual(shape["collapsedNav"]["client"], shape["collapsedNav"]["scroll"], shape)
 
+    def test_select_controls_are_compact_and_do_not_compete_with_primary_actions(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        shape = page.evaluate("""() => {
+          const height = (selector) => Math.round(document.querySelector(selector).getBoundingClientRect().height);
+          const play = document.querySelector('#play-playlist');
+          return {
+            sourceSort: height('#sidebar-sort'),
+            trackSort: height('.sort-control'),
+            trackSortSelect: height('.sort-control select'),
+            play: height('#play-playlist'),
+          };
+        }""")
+        self.assertLessEqual(shape["sourceSort"], 34, shape)
+        self.assertLessEqual(shape["trackSort"], 36, shape)
+        self.assertLessEqual(shape["trackSortSelect"], 34, shape)
+        self.assertGreater(shape["play"], shape["trackSort"],
+                           "the Play button must stay visually stronger than the sort control")
+
+    def test_rail_utility_rows_share_one_optical_grid_and_collapse_unaffected(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        shape = page.evaluate("""() => {
+          const iconLeft = (button) => button.querySelector('svg').getBoundingClientRect().left;
+          const labelLeft = (button) => [...button.querySelectorAll(':scope > span')]
+            .find((s) => getComputedStyle(s).display !== 'none')?.getBoundingClientRect().left ?? null;
+          const sync = document.getElementById('sync-all-sources');
+          const add = document.getElementById('add-source');
+          const settings = document.getElementById('open-settings');
+          return {
+            icons: [iconLeft(sync), iconLeft(add)],
+            labels: [labelLeft(sync), labelLeft(add), settings.getBoundingClientRect().left],
+            widths: [Math.round(sync.getBoundingClientRect().width), Math.round(add.getBoundingClientRect().width)],
+          };
+        }""")
+        self.assertAlmostEqual(shape["icons"][0], shape["icons"][1], delta=1, msg=shape)
+        self.assertAlmostEqual(shape["labels"][0], shape["labels"][1], delta=1, msg=shape)
+        self.assertAlmostEqual(shape["labels"][1], shape["labels"][2], delta=1,
+                               msg="Settings text must land under the utility labels")
+        for width in shape["widths"]:
+            self.assertGreater(width, 0)
+
+        collapsed = page.evaluate("""() => {
+          const shell = document.querySelector('.app-shell');
+          shell.classList.add('sidebar-collapsed');
+          const sync = document.getElementById('sync-all-sources');
+          const add = document.getElementById('add-source');
+          const nav = document.querySelector('#source-list').closest('nav');
+          return {
+            sync: Math.round(sync.getBoundingClientRect().width),
+            add: Math.round(add.getBoundingClientRect().width),
+            nav: { client: nav.clientWidth, scroll: nav.scrollWidth },
+          };
+        }""")
+        self.assertEqual(46, collapsed["sync"], "collapsed sync button must stay a centered icon square")
+        self.assertEqual(46, collapsed["add"], "collapsed add button must stay a centered icon square")
+        self.assertEqual(collapsed["nav"]["client"], collapsed["nav"]["scroll"], collapsed)
+
     def test_metadata_dialog_buttons_are_not_stretched(self):
         page = self.page(1440, 900)
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")

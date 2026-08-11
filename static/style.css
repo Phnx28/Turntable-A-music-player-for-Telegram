@@ -593,9 +593,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
-.sort-control { display: flex; height: 40px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
+.sort-control { display: flex; height: 34px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
 .sort-control:has(select:focus-visible) { outline: 0; }
-.sort-control select { height: 38px; min-height: 38px; padding: 0 30px 0 10px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
+.sort-control select { height: 32px; min-height: 32px; padding: 0 26px 0 9px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 10px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
 .sort-control select:focus-visible { outline: 0; box-shadow: none; }
 .sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
 
@@ -1278,7 +1278,7 @@ button[aria-busy="true"]::after { width: 12px; height: 12px; border: 1.5px solid
 
 .desktop-only { display: inline-grid; }
 .source-tools { display: flex; gap: 6px; padding: 0 3px 12px; }
-.source-tools select { min-width: 0; height: 34px; flex: 1; padding: 0 8px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11px; }
+.source-tools select { min-width: 0; height: 31px; min-height: 31px; flex: 1; padding: 0 8px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11px; }
 .bulk-bar { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 8px; border-block: 1px solid var(--rule); font-size: 11px; }
 .bulk-bar span { margin-right: auto; }
 .source-link { position: relative; grid-template-columns: 34px minmax(0, 1fr) auto 30px; gap: 10px; min-height: 54px; transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), opacity var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
@@ -1877,6 +1877,26 @@ html[data-theme="dark"] {
 .rail-utilities .sync-all { min-height: 36px; margin: 0 9px; }
 .rail-utilities .add-source { min-height: 36px; margin-top: 4px; }
 .rail-utilities .rail-footer { padding: 10px 7px 0; }
+/* One optical grid for the utility rows: a fixed 18px icon column plus the label, so the
+   icons and the label text land on the same two x edges instead of each row choosing its own
+   inset (sync 9px, add 0px, settings 7px). Scoped to the expanded rail: the collapsed rail
+   keeps its icon-only geometry. */
+.app-shell:not(.sidebar-collapsed) .rail-utilities .sync-all,
+.app-shell:not(.sidebar-collapsed) .rail-utilities .add-source {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  margin-inline: 0;
+  padding-left: 9px;
+}
+.app-shell:not(.sidebar-collapsed) .rail-utilities .sync-all svg,
+.app-shell:not(.sidebar-collapsed) .rail-utilities .add-source svg { width: 16px; height: 16px; }
+.app-shell:not(.sidebar-collapsed) .rail-utilities .rail-footer {
+  padding: 10px 9px 0;
+  /* 9px inset + 18px icon column + 8px gap: Settings text lands under the two labels. */
+  padding-left: 35px;
+}
 .sidebar-collapsed .rail-utilities { margin-top: 8px; padding-top: 0; border-top: 0; }
 .sidebar-collapsed .rail-utilities .sync-all { margin-inline: 0; }
 .sidebar-collapsed .rail-utilities .add-source { min-height: 46px; margin-top: 0; }
