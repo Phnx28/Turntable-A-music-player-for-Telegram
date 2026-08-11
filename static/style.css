@@ -2021,29 +2021,31 @@ html[data-theme="dark"] {
    ========================================================= */
 
 /* The blur is one physical plane for the whole header, not a repeated row treatment. The mask
-   lets tracks continue underneath it while the lower edge dissolves instead of snapping. */
+   lets tracks continue underneath it while the lower edge dissolves instead of snapping.
+   The layer runs past the toolbar and the mask holds full strength through the action row,
+   so the first sharp track appears below the toolbar, never inside it. */
 .library-header-blur {
   position: absolute;
   z-index: 0;
   top: 0;
   right: 0;
   left: 0;
-  height: calc(var(--library-header-space) + 48px);
+  height: calc(var(--library-header-space) + 70px);
   pointer-events: none;
   background: var(--paper);
   background: linear-gradient(
     to bottom,
     var(--glass-strong) 0%,
-    var(--glass-strong) 35%,
-    color-mix(in srgb, var(--glass-strong) 90%, transparent) 50%,
-    color-mix(in srgb, var(--glass-strong) 60%, transparent) 67%,
-    color-mix(in srgb, var(--glass-strong) 25%, transparent) 82%,
+    var(--glass-strong) 58%,
+    color-mix(in srgb, var(--glass-strong) 92%, transparent) 68%,
+    color-mix(in srgb, var(--glass-strong) 62%, transparent) 78%,
+    color-mix(in srgb, var(--glass-strong) 25%, transparent) 90%,
     transparent 100%
   );
   backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
   -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
-  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 35%, rgb(0 0 0 / .90) 50%, rgb(0 0 0 / .60) 67%, rgb(0 0 0 / .25) 82%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 35%, rgb(0 0 0 / .90) 50%, rgb(0 0 0 / .60) 67%, rgb(0 0 0 / .25) 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0 / .90) 68%, rgb(0 0 0 / .60) 78%, rgb(0 0 0 / .25) 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0 / .90) 68%, rgb(0 0 0 / .60) 78%, rgb(0 0 0 / .25) 90%, transparent 100%);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

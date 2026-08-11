@@ -1119,11 +1119,12 @@ class LayoutTests(unittest.TestCase):
             mask: style.maskImage || style.webkitMaskImage,
           };
         }""")
-        self.assertGreaterEqual(shape["height"] - shape["space"], 48, shape)
+        self.assertGreaterEqual(shape["height"] - shape["space"], 70, shape)
         self.assertIn("36px", shape["filter"], shape)
-        self.assertIn("50%", shape["mask"], shape)
-        self.assertIn("67%", shape["mask"], shape)
-        self.assertIn("82%", shape["mask"], shape)
+        self.assertIn("58%", shape["mask"], shape)
+        self.assertIn("68%", shape["mask"], shape)
+        self.assertIn("78%", shape["mask"], shape)
+        self.assertIn("90%", shape["mask"], shape)
 
     def test_ambient_artwork_is_one_noninteractive_surface(self):
         page = self.page(1440, 900)
