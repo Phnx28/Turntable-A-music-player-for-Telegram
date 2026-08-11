@@ -310,14 +310,12 @@ class LayoutTests(unittest.TestCase):
           const play = document.querySelector('#play-playlist');
           return {
             sourceSort: height('#sidebar-sort'),
-            trackSort: height('.sort-control'),
-            trackSortSelect: height('.sort-control select'),
+            trackSort: height('#track-sort-trigger'),
             play: height('#play-playlist'),
           };
         }""")
         self.assertLessEqual(shape["sourceSort"], 34, shape)
         self.assertLessEqual(shape["trackSort"], 36, shape)
-        self.assertLessEqual(shape["trackSortSelect"], 34, shape)
         self.assertGreater(shape["play"], shape["trackSort"],
                            "the Play button must stay visually stronger than the sort control")
 
@@ -1080,30 +1078,106 @@ class LayoutTests(unittest.TestCase):
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
 
-    def test_library_header_toolbar_aligns_and_long_titles_wrap_intentionally(self):
+    def test_source_title_takes_the_full_desktop_row_and_stays_one_line(self):
         page = self.page(1440, 900)
         page.evaluate("""() => {
           document.getElementById('app-shell').hidden = false;
           document.getElementById('source-title').textContent = 'Dance in Doubt and Fear';
         }""")
+        page.wait_for_timeout(80)
         shape = page.evaluate("""() => {
           const title = document.getElementById('source-title');
           const play = document.getElementById('play-playlist');
           const filter = document.querySelector('.search-control');
           const style = getComputedStyle(title);
           const lineHeight = parseFloat(style.lineHeight);
+          const titleBox = title.getBoundingClientRect();
           return {
-            titleHeight: title.getBoundingClientRect().height,
+            titleHeight: titleBox.height,
             lineHeight,
             maxWidth: style.maxWidth,
-            playBottom: play.getBoundingClientRect().bottom,
-            filterBottom: filter.getBoundingClientRect().bottom,
+            whiteSpace: style.whiteSpace,
+            playTop: play.getBoundingClientRect().top,
+            filterTop: filter.getBoundingClientRect().top,
+            titleBottom: titleBox.bottom,
+            titleRight: titleBox.right,
+            headingRight: document.querySelector('.library-heading').getBoundingClientRect().right,
+            headerRight: document.querySelector('.library-header-inner').getBoundingClientRect().right,
           };
         }""")
-        self.assertNotEqual(shape["maxWidth"], "none", shape)
-        self.assertGreater(shape["titleHeight"], shape["lineHeight"] * 1.5, shape)
-        self.assertLess(shape["titleHeight"], shape["lineHeight"] * 3.1, shape)
-        self.assertLessEqual(abs(shape["playBottom"] - shape["filterBottom"]), 1, shape)
+        self.assertLessEqual(shape["titleHeight"], shape["lineHeight"] * 1.2, shape)
+        self.assertEqual("none", shape["maxWidth"], shape)
+        self.assertEqual("nowrap", shape["whiteSpace"], shape)
+        self.assertGreater(shape["playTop"], shape["titleBottom"], shape)
+        self.assertGreater(shape["filterTop"], shape["titleBottom"], shape)
+        self.assertGreaterEqual(shape["titleRight"], shape["headingRight"] - 1, shape)
+
+    def test_long_source_title_truncates_on_desktop_and_wraps_on_mobile(self):
+        for width, height, wraps in ((1440, 900, False), (390, 844, True)):
+            with self.subTest(viewport=(width, height), wraps=wraps):
+                page = self.page(width, height)
+                page.evaluate("""() => {
+                  document.getElementById('app-shell').hidden = false;
+                  document.getElementById('source-title').textContent =
+                    'An extremely long source title that keeps going and going and never stops ' +
+                    'even after the first line is long gone and the text simply refuses to end ' +
+                    'because the uploader never met a word limit they liked in their entire life';
+                }""")
+                page.wait_for_timeout(80)
+                shape = page.evaluate("""() => {
+                  const title = document.getElementById('source-title');
+                  const style = getComputedStyle(title);
+                  const lineHeight = parseFloat(style.lineHeight);
+                  return {
+                    height: title.getBoundingClientRect().height,
+                    lineHeight,
+                    whiteSpace: style.whiteSpace,
+                    truncated: title.scrollWidth > title.clientWidth,
+                  };
+                }""")
+                if wraps:
+                    self.assertGreater(shape["height"], shape["lineHeight"] * 1.4, shape)
+                else:
+                    self.assertLessEqual(shape["height"], shape["lineHeight"] * 1.2, shape)
+                    self.assertTrue(shape["truncated"], shape)
+
+    def test_sort_menu_trigger_replaces_the_visible_select(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        # The hidden select stays the state source; the visible control is a menu trigger.
+        state = page.evaluate("""() => {
+          const select = document.getElementById('track-sort');
+          const trigger = document.getElementById('track-sort-trigger');
+          return {
+            selectHidden: getComputedStyle(select).clipPath === 'rect(0px, 0px, 0px, 0px)' ||
+                           getComputedStyle(select).clip !== 'auto',
+            selectTabIndex: select.tabIndex,
+            trigger: { hasPopup: trigger.getAttribute('aria-haspopup'), label: document.getElementById('track-sort-label').textContent },
+          };
+        }""")
+        self.assertEqual(-1, state["selectTabIndex"], state)
+        self.assertEqual("menu", state["trigger"]["hasPopup"], state)
+        self.assertEqual("Posted", state["trigger"]["label"], state)
+
+        # Click the trigger: the existing context menu opens with all four options.
+        page.click("#track-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
+        self.assertEqual(4, len(items), items)
+        self.assertTrue(any("Title · A–Z" in item for item in items), items)
+        self.assertTrue(any("Posted · newest first" in item for item in items), items)
+
+        # Choosing Title updates the hidden state source, the visible label and the request.
+        page.click('#context-menu button:has-text("Title · A–Z")')
+        page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Title'")
+        self.assertEqual("title", page.evaluate("() => document.getElementById('track-sort').value"))
+        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+
+        # The track-head sort still works and re-syncs the visible label.
+        page.click('.head-sort[data-sort="posted"]')
+        page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Posted'")
+        self.assertEqual("posted", page.evaluate("() => document.getElementById('track-sort').value"))
 
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
@@ -1111,6 +1185,7 @@ class LayoutTests(unittest.TestCase):
         shape = page.evaluate("""() => {
           const library = document.getElementById('library');
           const blur = document.querySelector('.library-header-blur');
+          const actions = document.querySelector('.header-actions');
           const style = getComputedStyle(blur);
           const space = parseFloat(getComputedStyle(library).getPropertyValue('--library-header-space'));
           return {
@@ -1118,14 +1193,18 @@ class LayoutTests(unittest.TestCase):
             space,
             filter: style.backdropFilter || style.webkitBackdropFilter,
             mask: style.maskImage || style.webkitMaskImage,
+            pointerEvents: style.pointerEvents,
+            actionsBottom: actions.getBoundingClientRect().bottom,
           };
         }""")
         self.assertGreaterEqual(shape["height"] - shape["space"], 70, shape)
         self.assertIn("36px", shape["filter"], shape)
-        self.assertIn("58%", shape["mask"], shape)
-        self.assertIn("68%", shape["mask"], shape)
-        self.assertIn("78%", shape["mask"], shape)
-        self.assertIn("90%", shape["mask"], shape)
+        self.assertIn("64%", shape["mask"], shape)
+        self.assertIn("72%", shape["mask"], shape)
+        self.assertIn("82%", shape["mask"], shape)
+        self.assertIn("92%", shape["mask"], shape)
+        self.assertEqual("none", shape["pointerEvents"], shape)
+        self.assertGreaterEqual(shape["height"] - shape["actionsBottom"], 56, shape)
 
     def test_ambient_artwork_is_one_noninteractive_surface(self):
         page = self.page(1440, 900)

@@ -575,19 +575,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .library-heading { flex: 1; min-width: 0; }
 .library-heading h1 { margin: 8px 0 4px; font-size: var(--text-display); font-stretch: 62%; font-weight: 480; letter-spacing: .01em; line-height: 1; overflow-wrap: anywhere; }
 .library-heading h1.is-truncated { cursor: help; }
-.library-heading .small-copy { margin: 0; }
+.library-heading .small-copy { margin: 0; color: var(--content-secondary); }
 .header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 
 .search-control {
   display: flex;
   width: 200px;
-  height: 38px;
+  height: 34px;
   align-items: center;
   gap: 7px;
   padding: 0 10px;
-  border: 1px solid var(--rule);
+  border: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
   border-radius: var(--radius-control);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
+}
+.search-control:hover { background: color-mix(in srgb, var(--surface) 68%, transparent); }
+.search-control:has(input:focus-visible) {
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
 }
 .search-control:has(input:focus-visible), .sort-control:has(select:focus-visible) { border-color: var(--ink); } /* one ink, no double paper halo */
 .search-control svg { width: 16px; height: 16px; color: var(--graphite); }
@@ -598,6 +603,29 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sort-control select { height: 32px; min-height: 32px; padding: 0 26px 0 9px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
 .sort-control select:focus-visible { outline: 0; box-shadow: none; }
 .sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
+
+.sort-trigger {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--graphite);
+  cursor: pointer;
+  font-family: var(--font-data);
+  font-size: 11px;
+}
+
+.sort-trigger:hover,
+.sort-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--rule) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  color: var(--ink);
+}
+.sort-caret { font-size: 12px; line-height: 1; }
 
 .icon-button {
   display: inline-grid;
@@ -1200,7 +1228,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
     gap: 8px;
   }
   .search-control { width: auto; min-width: 0; grid-column: 1; }
-  .sort-control { grid-column: 2; }
+  .sort-trigger { grid-column: 2; }
   #sync-source { grid-column: 3; }
   #keep-source { grid-column: 1 / -1; justify-self: start; }
   .now-panel {
@@ -2029,9 +2057,13 @@ html[data-theme="dark"] {
 
 /* The blur is one physical plane for the whole header, not a repeated row treatment. The mask
    lets tracks continue underneath it while the lower edge dissolves instead of snapping.
-   The layer runs past the toolbar and the mask holds full strength through the action row,
-   so the first sharp track appears below the toolbar, never inside it. */
+   The tint is header-specific: stronger than the global glass tokens so the title and the
+   action row stay in a clearly frosted zone, without touching the shared blur vocabulary
+   (still 36px). The layer runs well below the toolbar so the first sharp track appears
+   below the action row, never inside it. */
 .library-header-blur {
+  --header-glass-top: color-mix(in srgb, var(--paper) 84%, transparent);
+
   position: absolute;
   z-index: 0;
   top: 0;
@@ -2042,17 +2074,17 @@ html[data-theme="dark"] {
   background: var(--paper);
   background: linear-gradient(
     to bottom,
-    var(--glass-strong) 0%,
-    var(--glass-strong) 58%,
-    color-mix(in srgb, var(--glass-strong) 92%, transparent) 68%,
-    color-mix(in srgb, var(--glass-strong) 62%, transparent) 78%,
-    color-mix(in srgb, var(--glass-strong) 25%, transparent) 90%,
+    var(--header-glass-top) 0%,
+    var(--header-glass-top) 64%,
+    color-mix(in srgb, var(--header-glass-top) 90%, transparent) 72%,
+    color-mix(in srgb, var(--header-glass-top) 58%, transparent) 82%,
+    color-mix(in srgb, var(--header-glass-top) 24%, transparent) 92%,
     transparent 100%
   );
-  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
-  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
-  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0 / .90) 68%, rgb(0 0 0 / .60) 78%, rgb(0 0 0 / .25) 90%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0 / .90) 68%, rgb(0 0 0 / .60) 78%, rgb(0 0 0 / .25) 90%, transparent 100%);
+  backdrop-filter: blur(36px) saturate(1.03);
+  -webkit-backdrop-filter: blur(36px) saturate(1.03);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 64%, rgb(0 0 0 / .90) 72%, rgb(0 0 0 / .58) 82%, rgb(0 0 0 / .24) 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 64%, rgb(0 0 0 / .90) 72%, rgb(0 0 0 / .58) 82%, rgb(0 0 0 / .24) 92%, transparent 100%);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -2111,10 +2143,10 @@ html[data-theme="dark"] {
   scroll-padding-top: var(--library-header-space);
 }
 @media (max-width: 1120px) and (min-width: 861px) {
-  .library { --library-gutter: 20px; }
+  .library { --library-gutter: 20px; --library-header-space: 212px; }
 }
 @media (max-width: 860px) {
-  .library { --library-gutter: 16px; --library-header-space: 204px; }
+  .library { --library-gutter: 16px; --library-header-space: 216px; }
   .library-header-inner {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -2130,17 +2162,30 @@ html[data-theme="dark"] {
   .library-header-inner {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "heading heading"
+      "playlist tools";
     align-items: end;
     column-gap: 24px;
+    row-gap: 12px;
   }
-  .library-heading { grid-column: 1; }
-  .library-heading h1 { max-width: 18ch; line-height: 1.04; }
-  .header-actions { grid-column: 2; align-self: end; }
-  .playlist-actions { align-items: center; }
+  .library-heading { grid-area: heading; min-width: 0; }
+  .library-heading h1 {
+    max-width: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .playlist-actions { grid-area: playlist; margin: 0; align-self: center; }
   .playlist-actions .button { height: 40px; min-height: 40px; }
+  .header-actions { grid-area: tools; align-self: center; }
 }
 @media (max-width: 860px) {
-  .library-heading h1 { max-width: none; }
+  .library-heading h1 {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
 }
 .library-content::-webkit-scrollbar,
 .now-content::-webkit-scrollbar,

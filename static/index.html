@@ -182,26 +182,32 @@
               <p id="source-kind" class="eyebrow">Your Telegram is a crate</p>
               <h1 id="source-title">Crate from Telegram</h1>
               <p id="library-summary" class="small-copy">Forwarded rips, Saved Messages queue & bot dumps — play without downloading.</p>
-              <div class="playlist-actions">
-                <button id="play-playlist" class="button primary" type="button"><svg><use href="#i-play-filled"/></svg>Play</button>
-                <button id="shuffle-playlist" class="button" type="button"><svg><use href="#i-shuffle"/></svg>Shuffle</button>
-              </div>
+            </div>
+            <div class="playlist-actions">
+              <button id="play-playlist" class="button primary" type="button"><svg><use href="#i-play-filled"/></svg>Play</button>
+              <button id="shuffle-playlist" class="button" type="button"><svg><use href="#i-shuffle"/></svg>Shuffle</button>
             </div>
             <div class="header-actions">
               <label class="search-control">
                 <svg><use href="#i-search"/></svg>
                 <span class="sr-only">Search tracks</span>
-                <input id="track-search" type="search" placeholder="Filter this playlist" title="Filter this playlist">
+                <input id="track-search" type="search" placeholder="Search tracks" title="Search tracks">
               </label>
-              <label class="sort-control">
-                <span class="sr-only">Sort tracks</span>
-                <select id="track-sort">
-                  <option value="posted" selected>Posted</option>
-                  <option value="title">Title</option>
-                  <option value="artist">Artist</option>
-                  <option value="duration">Duration</option>
-                </select>
-              </label>
+              <select id="track-sort" class="sr-only" tabindex="-1" aria-hidden="true">
+                <option value="posted" selected>Posted</option>
+                <option value="title">Title</option>
+                <option value="artist">Artist</option>
+                <option value="duration">Duration</option>
+              </select>
+              <button id="track-sort-trigger"
+                      class="sort-trigger"
+                      type="button"
+                      aria-haspopup="menu"
+                      aria-label="Sort tracks: Posted"
+                      title="Sort tracks">
+                <span id="track-sort-label">Posted</span>
+                <span class="sort-caret" aria-hidden="true">⌄</span>
+              </button>
               <button id="keep-source" class="button primary" type="button" hidden>
                 <svg><use href="#i-plus"/></svg>Add to library
               </button>

@@ -766,6 +766,7 @@ function renderTracks(force = false) {
     else cell.removeAttribute("aria-sort");
   }
   $("track-sort").value = state.sort;
+  syncTrackSortTrigger();
   const empty = state.totalTracks === 0 && !state.libraryLoading;
   $("empty-library").hidden = !empty; list.hidden = empty;
   if (empty) {
@@ -1788,6 +1789,46 @@ function sourceMenu(chatId, x, y) {
   ], x, y);
 }
 
+const TRACK_SORT_LABELS = {
+  posted: "Posted",
+  title: "Title",
+  artist: "Artist",
+  duration: "Duration",
+};
+
+function syncTrackSortTrigger() {
+  const value = $("track-sort").value || state.sort || "posted";
+  const label = TRACK_SORT_LABELS[value] || "Posted";
+  $("track-sort-label").textContent = label;
+  $("track-sort-trigger").setAttribute("aria-label", `Sort tracks: ${label}`);
+}
+
+function openTrackSortMenu() {
+  const trigger = $("track-sort-trigger");
+  const rect = trigger.getBoundingClientRect();
+  const current = $("track-sort").value || state.sort || "posted";
+
+  const descriptions = {
+    posted: "Posted · newest first",
+    title: "Title · A–Z",
+    artist: "Artist · A–Z",
+    duration: "Duration · longest first",
+  };
+
+  openMenu(
+    Object.keys(TRACK_SORT_LABELS).map((value) => ({
+      label: `${value === current ? "✓ " : ""}${descriptions[value]}`,
+      action: () => {
+        $("track-sort").value = value;
+        $("track-sort").dispatchEvent(new Event("change"));
+        syncTrackSortTrigger();
+      },
+    })),
+    Math.max(8, rect.right - 205),
+    rect.bottom + 6,
+  );
+}
+
 function updateRowLikeUi(key, liked) {
   document.querySelectorAll(`[data-row-like-key="${CSS.escape(key)}"]`).forEach((button) => {
     button.classList.toggle("active", liked);
@@ -2412,6 +2453,7 @@ document.querySelector(".track-head").addEventListener("click", (event) => {
   $("track-sort").value = cell.dataset.sort;
   $("track-sort").dispatchEvent(new Event("change"));
 });
+$("track-sort-trigger").addEventListener("click", openTrackSortMenu);
 $("track-list").addEventListener("contextmenu", (event) => { const row = event.target.closest("[data-track-key]"); if (row) { event.preventDefault(); trackMenu(row.dataset.trackKey, event.clientX, event.clientY); } });
 $("track-list").addEventListener("error", (event) => { if (event.target.matches(".row-art")) { event.target.classList.remove("is-ready"); event.target.nextElementSibling?.classList.remove("is-covered"); } }, true);
 // The row may be replaced by an innerHTML re-render between load and the rAF
@@ -2613,7 +2655,11 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowLeft") { event.preventDefault(); audio.currentTime = Math.max(0, audio.currentTime - 5); return; }
   if (event.key === "ArrowRight") { event.preventDefault(); audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 5); return; }
   if (event.key === "l" || event.key === "L") { event.preventDefault(); $("like-current")?.click(); return; }
-  if (event.key === "/") { event.preventDefault(); $("global-search")?.focus(); return; }
+  if (event.key === "/") {
+    event.preventDefault();
+    if (!document.querySelector("dialog[open]")) $("track-search")?.focus();
+    return;
+  }
   if (event.key === "m" || event.key === "M") { event.preventDefault(); $("volume-toggle")?.click(); return; }
 });
 $("open-nav").addEventListener("click", () => { $("source-rail").classList.add("open"); $("rail-scrim").hidden = false; }); $("close-nav").addEventListener("click", () => { $("source-rail").classList.remove("open"); $("rail-scrim").hidden = true; }); $("rail-scrim").addEventListener("click", () => { $("source-rail").classList.remove("open"); $("rail-scrim").hidden = true; });
