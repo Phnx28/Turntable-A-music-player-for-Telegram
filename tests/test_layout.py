@@ -255,6 +255,44 @@ class LayoutTests(unittest.TestCase):
         self.assertNotEqual(shape["rail"], shape["active"], shape)
         self.assertNotEqual("dashed", shape["add"]["borderStyle"], shape)
 
+    def test_dock_and_rail_utilities_keep_inset_and_grouped(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        shape = page.evaluate("""() => {
+          const box = selector => document.querySelector(selector).getBoundingClientRect();
+          const player = document.getElementById('player');
+          const utilities = box('.rail-utilities');
+          const sync = box('#sync-all-sources');
+          const add = box('#add-source');
+          const settings = box('#open-settings');
+          const expandedBorder = getComputedStyle(document.querySelector('.rail-utilities')).borderTopWidth;
+          const expandedPaddingTop = parseFloat(getComputedStyle(document.querySelector('.rail-utilities')).paddingTop);
+          const collapsed = document.querySelector('.app-shell');
+          collapsed.classList.add('sidebar-collapsed');
+          const nav = document.querySelector('#source-list').closest('nav');
+          return {
+            playerMarginBottom: parseFloat(getComputedStyle(player).marginBottom),
+            utilityBorder: expandedBorder,
+            utilityPaddingTop: expandedPaddingTop,
+            syncTop: sync.top,
+            utilityTop: utilities.top,
+            addGap: add.top - sync.bottom,
+            settingsGap: settings.top - add.bottom,
+            collapsedBorder: getComputedStyle(document.querySelector('.rail-utilities')).borderTopWidth,
+            collapsedNav: { client: nav.clientWidth, scroll: nav.scrollWidth },
+          };
+        }""")
+        self.assertGreaterEqual(shape["playerMarginBottom"], 10, shape)
+        self.assertLessEqual(shape["playerMarginBottom"], 14, shape)
+        self.assertEqual("1px", shape["utilityBorder"], shape)
+        self.assertGreaterEqual(shape["syncTop"] - shape["utilityTop"], shape["utilityPaddingTop"], shape)
+        self.assertGreaterEqual(shape["addGap"], 0, shape)
+        self.assertLessEqual(shape["addGap"], 12, shape)
+        self.assertGreaterEqual(shape["settingsGap"], 8, shape)
+        self.assertLessEqual(shape["settingsGap"], 30, shape)
+        self.assertEqual("0px", shape["collapsedBorder"], shape)
+        self.assertEqual(shape["collapsedNav"]["client"], shape["collapsedNav"]["scroll"], shape)
+
     def test_metadata_dialog_buttons_are_not_stretched(self):
         page = self.page(1440, 900)
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")

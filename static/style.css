@@ -1861,6 +1861,17 @@ html[data-theme="dark"] {
 .add-source:hover { border-color: transparent; background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); color: var(--ink); }
 .sync-all { color: color-mix(in srgb, var(--ink) 62%, var(--graphite)); }
 .rail-footer { padding-top: 14px; }
+.rail-utilities {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule-soft);
+}
+.rail-utilities .sync-all { min-height: 36px; margin: 0 9px; }
+.rail-utilities .add-source { min-height: 36px; margin-top: 4px; }
+.rail-utilities .rail-footer { padding: 10px 7px 0; }
+.sidebar-collapsed .rail-utilities { margin-top: 8px; padding-top: 0; border-top: 0; }
+.sidebar-collapsed .rail-utilities .sync-all { margin-inline: 0; }
+.sidebar-collapsed .rail-utilities .add-source { min-height: 46px; margin-top: 0; }
 .sidebar-collapsed nav {
   display: grid;
   align-content: start;
