@@ -68,6 +68,45 @@ def _rel_lum(rgb):
     return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
 
 
+def material(page, selector):
+    return page.evaluate(
+        """(selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+
+          const style = getComputedStyle(element);
+          return {
+            filter: style.backdropFilter || style.webkitBackdropFilter || "none",
+            mask: style.maskImage || style.webkitMaskImage || "none",
+            background: style.backgroundColor,
+            display: style.display,
+          };
+        }""",
+        selector,
+    )
+
+
+def background_alpha(page, selector):
+    return page.evaluate(
+        """(selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+
+          const value = getComputedStyle(element).backgroundColor;
+          const rgba = value.match(
+            /rgba\\([^,]+,[^,]+,[^,]+,\\s*([\\d.]+)\\)/
+          );
+          if (rgba) return Number(rgba[1]);
+
+          const slash = value.match(/\\/\\s*([\\d.]+)\\s*\\)?$/);
+          if (slash) return Number(slash[1]);
+
+          return 1;
+        }""",
+        selector,
+    )
+
+
 class Handler(SimpleHTTPRequestHandler):
     # index.html asks for /assets/style.css because app.py:299 mounts /assets -> static/.
     # Without this rewrite every stylesheet 404s and every geometry assertion measures
@@ -162,6 +201,251 @@ class LayoutTests(unittest.TestCase):
         }""")
         page.wait_for_timeout(400)
 
+    def open_track_editor(self, page, editor):
+        track = {
+            "key": "-1001:1000",
+            "metadata": {"title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998},
+            "overrides": {},
+            "source": {"title": "Hyperdub", "selected": True},
+        }
+        if editor == "metadata":
+            page.evaluate("track => window.__openMetadataForTest(track)", track)
+        else:
+            page.evaluate("track => window.__openLyricsEditorForTest(track, {syncedText: '[00:00.00] initial', plainText: 'initial'})", track)
+        page.wait_for_selector(f"#{editor}-dialog[open]")
+
+    def test_metadata_editor_has_anchored_header_and_field_cover_control(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
+        shape = page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const body = dialog.querySelector('.editor-modal-body');
+          const disc = dialog.querySelector('[name="discNumber"]')?.closest('label');
+          const cover = dialog.querySelector('.metadata-cover-field');
+          const actions = dialog.querySelector('.form-actions');
+          return {
+            classes: [...dialog.classList],
+            display: getComputedStyle(dialog).display,
+            overflow: getComputedStyle(dialog).overflow,
+            bodyOverflow: body && getComputedStyle(body).overflowY,
+            coverAfterDisc: Boolean(disc && cover && disc.compareDocumentPosition(cover) & 4),
+            actionLabels: [...actions.querySelectorAll('label')].map((label) => label.textContent.trim()),
+            saveId: dialog.querySelector('button[type="submit"]')?.id,
+            spinner: getComputedStyle(dialog.querySelector('[name="year"]')).appearance,
+          };
+        }""")
+        self.assertIn("metadata-editor", shape["classes"])
+        self.assertEqual("grid", shape["display"])
+        self.assertIn("hidden", shape["overflow"])
+        self.assertEqual("auto", shape["bodyOverflow"])
+        self.assertTrue(shape["coverAfterDisc"], shape)
+        self.assertEqual([], shape["actionLabels"], shape)
+        self.assertEqual("save-metadata", shape["saveId"])
+        self.assertIn(shape["spinner"], {"none", "textfield"}, shape)
+
+    def test_metadata_header_stays_visible_when_candidates_scroll(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          dialog.showModal();
+          const section = document.getElementById('candidate-section');
+          section.hidden = false;
+          document.getElementById('candidate-list').innerHTML =
+            Array.from({length: 18}, (_, index) => `<article class="candidate-row">
+              <div class="candidate-cover"></div>
+              <div class="candidate-copy"><strong>Candidate ${index}</strong><span>Artist · Album ${index}</span></div>
+              <button class="button" type="button">Use match</button>
+            </article>`).join('');
+        }""")
+        before = page.evaluate("""() => {
+          const box = document.querySelector('#metadata-dialog .modal-header').getBoundingClientRect();
+          return {top: box.top, bottom: box.bottom};
+        }""")
+        page.evaluate("""() => {
+          const body = document.querySelector('#metadata-dialog .editor-modal-body');
+          body.scrollTop = body.scrollHeight;
+        }""")
+        after = page.evaluate("""() => {
+          const header = document.querySelector('#metadata-dialog .modal-header').getBoundingClientRect();
+          const dialog = document.getElementById('metadata-dialog').getBoundingClientRect();
+          return {top: header.top, bottom: header.bottom, dialogTop: dialog.top, dialogBottom: dialog.bottom};
+        }""")
+        self.assertLessEqual(abs(before["top"] - after["top"]), 1, after)
+        self.assertGreaterEqual(after["top"], after["dialogTop"], after)
+        self.assertLessEqual(after["bottom"], after["dialogBottom"], after)
+
+    def test_metadata_matches_explain_differences_without_repeating_perfect_scores(self):
+        page = self.page(1440, 900)
+        candidates = [
+            {"id": "same", "title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998, "score": 100},
+            {"id": "different", "title": "Angels", "artist": "Burial", "album": "Untrue", "year": 2000, "score": 87},
+        ]
+        page.route("**/metadata/search", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(candidates)))
+        self.open_track_editor(page, "metadata")
+        for selector, value in (("[name='title']", "Angels"), ("[name='artist']", "Burial"),
+                                ("[name='album']", "Untrue"), ("[name='year']", "1998")):
+            page.fill(f"#metadata-form {selector}", value)
+        page.click("#fetch-metadata")
+        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        rows = page.evaluate("""() => [...document.querySelectorAll('.candidate-row')].map((row) => ({
+          text: row.textContent,
+          differences: row.querySelector('.candidate-differences, .candidate-same')?.textContent || '',
+          button: row.querySelector('[data-candidate]')?.textContent.trim(),
+        }))""")
+        self.assertEqual(2, len(rows), rows)
+        self.assertIn("Matches the visible metadata", rows[0]["differences"])
+        self.assertNotIn("100%", rows[0]["text"])
+        self.assertIn("87%", rows[1]["text"])
+        self.assertIn("Year", rows[1]["differences"])
+        self.assertIn("2000", rows[1]["differences"])
+        self.assertNotIn("Artist", rows[1]["differences"])
+        self.assertEqual(["Use match", "Use match"], [row["button"] for row in rows])
+        self.assertEqual("Refresh matches", page.locator("#fetch-metadata").text_content())
+        page.evaluate("track => window.__openMetadataForTest(track)", {
+            "key": "-1001:1000",
+            "metadata": {"title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998},
+            "overrides": {},
+            "source": {"title": "Hyperdub", "selected": True},
+        })
+        self.assertEqual("Fetch metadata", page.locator("#fetch-metadata").text_content())
+
+    def test_metadata_candidates_reflow_without_mobile_horizontal_overflow(self):
+        page = self.page(390, 844)
+        candidates = [
+            {"id": str(index), "title": f"Candidate {index}", "artist": "Artist", "album": "Album", "year": 1998, "score": 92}
+            for index in range(6)
+        ]
+        page.route("**/metadata/search", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(candidates)))
+        self.open_track_editor(page, "metadata")
+        page.click("#fetch-metadata")
+        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        geometry = page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const body = dialog.querySelector('.editor-modal-body');
+          return {
+            dialogOverflow: dialog.scrollWidth > dialog.clientWidth,
+            bodyOverflow: body.scrollWidth > body.clientWidth,
+            rows: [...document.querySelectorAll('.candidate-row')].map((row) => ({
+              right: row.getBoundingClientRect().right,
+              bodyRight: body.getBoundingClientRect().right,
+            })),
+          };
+        }""")
+        self.assertFalse(geometry["dialogOverflow"], geometry)
+        self.assertFalse(geometry["bodyOverflow"], geometry)
+        self.assertTrue(all(row["right"] <= row["bodyRight"] + 1 for row in geometry["rows"]), geometry)
+
+    def test_metadata_dirty_state_protects_close_paths_and_save_state(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "metadata")
+        self.assertTrue(page.locator("#save-metadata").is_disabled())
+        title = page.locator("#metadata-form [name='title']")
+        title.fill("Changed title")
+        self.assertFalse(page.locator("#save-metadata").is_disabled())
+        title.fill("Angels")
+        self.assertTrue(page.locator("#save-metadata").is_disabled())
+        title.fill("Changed title")
+
+        page.locator("#metadata-dialog [data-close='metadata-dialog']").click()
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+        page.locator("#confirm-dialog [data-close='confirm-dialog']").click()
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.locator("#confirm-accept").click()
+        page.wait_for_function("() => !document.getElementById('metadata-dialog').open")
+
+    def test_metadata_dirty_backdrop_click_is_guarded(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "metadata")
+        page.fill("#metadata-form [name='title']", "Changed title")
+        page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const rect = dialog.getBoundingClientRect();
+          dialog.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            clientX: rect.left - 2,
+            clientY: rect.top - 2,
+          }));
+        }""")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+        page.click("#confirm-accept")
+        page.wait_for_function("() => !document.getElementById('metadata-dialog').open")
+
+    def test_lyrics_editor_tracks_dirty_state_and_fetch_again_updates_source(self):
+        page = self.page(1440, 900)
+
+        def lyrics_route(route):
+            if route.request.method == "DELETE":
+                return route.fulfill(status=200, content_type="application/json",
+                                     body='{"syncedText":"[00:01.00] fetched","plainText":"fetched"}')
+            if route.request.method == "PUT":
+                return route.fulfill(status=200, content_type="application/json",
+                                     body='{"syncedText":"[00:02.00] saved","plainText":"saved"}')
+            return route.fallback()
+
+        page.route("**/api/tracks/*/lyrics", lyrics_route)
+        self.open_track_editor(page, "lyrics")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+        style = page.evaluate("""() => {
+          const text = document.getElementById('lyrics-text');
+          const computed = getComputedStyle(text);
+          return {
+            family: computed.fontFamily,
+            filter: computed.backdropFilter || computed.webkitBackdropFilter || 'none',
+            background: computed.backgroundColor,
+          };
+        }""")
+        self.assertIn("JetBrains Mono", style["family"])
+        self.assertIn(style["filter"], {"none", ""}, style)
+        self.assertNotIn(style["background"], {"rgba(0, 0, 0, 0)", "transparent"}, style)
+
+        textarea = page.locator("#lyrics-text")
+        textarea.fill("manual unsaved lyrics")
+        self.assertFalse(page.locator("#save-lyrics").is_disabled())
+        page.click("#reset-lyrics")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertEqual("Replace unsaved lyrics?", page.locator("#confirm-title").text_content())
+        page.locator("#confirm-dialog [data-close='confirm-dialog']").click()
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertEqual("manual unsaved lyrics", textarea.input_value())
+
+        page.click("#reset-lyrics")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.click("#confirm-accept")
+        page.wait_for_function("() => document.getElementById('lyrics-text').value.includes('fetched')")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+
+        textarea.fill("manual saved lyrics")
+        page.click("#save-lyrics")
+        page.wait_for_function("() => document.getElementById('lyrics-status').textContent === 'Lyrics saved.'")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+
+        page.click("#lyrics-dialog [data-close='lyrics-dialog']")
+        page.wait_for_function("() => !document.getElementById('lyrics-dialog').open")
+        self.assertFalse(page.locator("#confirm-dialog[open]").count())
+
+    def test_lyrics_dirty_escape_is_guarded(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "lyrics")
+        page.fill("#lyrics-text", "manual unsaved lyrics")
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#lyrics-dialog[open]").count())
+        page.click("#confirm-dialog [data-close='confirm-dialog']")
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertTrue(page.locator("#lyrics-dialog[open]").count())
+        page.click("#lyrics-dialog [data-close='lyrics-dialog']")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.click("#confirm-accept")
+        page.wait_for_function("() => !document.getElementById('lyrics-dialog').open")
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
@@ -189,9 +473,9 @@ class LayoutTests(unittest.TestCase):
           duration: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Duration').nextElementSibling).fontFamily,
           format: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Format').nextElementSibling).fontFamily,
         })""")
-        self.assertIn("Archivo", detail_fonts["source"])
-        self.assertIn("IBM Plex Mono", detail_fonts["duration"])
-        self.assertIn("IBM Plex Mono", detail_fonts["format"])
+        self.assertIn("Be Vietnam Pro", detail_fonts["source"])
+        self.assertIn("JetBrains Mono", detail_fonts["duration"])
+        self.assertIn("JetBrains Mono", detail_fonts["format"])
 
         # Actions must be reachable without scrolling the pane: DOCUMENT_POSITION_FOLLOWING (4)
         # means the list comes after the actions.
@@ -274,13 +558,16 @@ class LayoutTests(unittest.TestCase):
           const sync = box('#sync-all-sources');
           const add = box('#add-source');
           const settings = box('#open-settings');
+          const playerBox = player.getBoundingClientRect();
           const expandedBorder = getComputedStyle(document.querySelector('.rail-utilities')).borderTopWidth;
           const expandedPaddingTop = parseFloat(getComputedStyle(document.querySelector('.rail-utilities')).paddingTop);
           const collapsed = document.querySelector('.app-shell');
           collapsed.classList.add('sidebar-collapsed');
           const nav = document.querySelector('#source-list').closest('nav');
           return {
-            playerMarginBottom: parseFloat(getComputedStyle(player).marginBottom),
+            playerBottomGap: innerHeight - playerBox.bottom,
+            utilityBottom: utilities.bottom,
+            playerTop: playerBox.top,
             utilityBorder: expandedBorder,
             utilityPaddingTop: expandedPaddingTop,
             syncTop: sync.top,
@@ -291,8 +578,9 @@ class LayoutTests(unittest.TestCase):
             collapsedNav: { client: nav.clientWidth, scroll: nav.scrollWidth },
           };
         }""")
-        self.assertGreaterEqual(shape["playerMarginBottom"], 10, shape)
-        self.assertLessEqual(shape["playerMarginBottom"], 14, shape)
+        self.assertGreaterEqual(shape["playerBottomGap"], 10, shape)
+        self.assertLessEqual(shape["playerBottomGap"], 14, shape)
+        self.assertLessEqual(shape["utilityBottom"], shape["playerTop"] - 12, shape)
         self.assertEqual("1px", shape["utilityBorder"], shape)
         self.assertGreaterEqual(shape["syncTop"] - shape["utilityTop"], shape["utilityPaddingTop"], shape)
         self.assertGreaterEqual(shape["addGap"], 0, shape)
@@ -310,14 +598,12 @@ class LayoutTests(unittest.TestCase):
           const play = document.querySelector('#play-playlist');
           return {
             sourceSort: height('#sidebar-sort'),
-            trackSort: height('.sort-control'),
-            trackSortSelect: height('.sort-control select'),
+            trackSort: height('#track-sort-trigger'),
             play: height('#play-playlist'),
           };
         }""")
         self.assertLessEqual(shape["sourceSort"], 34, shape)
         self.assertLessEqual(shape["trackSort"], 36, shape)
-        self.assertLessEqual(shape["trackSortSelect"], 34, shape)
         self.assertGreater(shape["play"], shape["trackSort"],
                            "the Play button must stay visually stronger than the sort control")
 
@@ -332,12 +618,13 @@ class LayoutTests(unittest.TestCase):
           const add = document.getElementById('add-source');
           const settings = document.getElementById('open-settings');
           return {
-            icons: [iconLeft(sync), iconLeft(add)],
-            labels: [labelLeft(sync), labelLeft(add), settings.getBoundingClientRect().left],
-            widths: [Math.round(sync.getBoundingClientRect().width), Math.round(add.getBoundingClientRect().width)],
+            icons: [iconLeft(sync), iconLeft(add), iconLeft(settings)],
+            labels: [labelLeft(sync), labelLeft(add), labelLeft(settings)],
+            widths: [Math.round(sync.getBoundingClientRect().width), Math.round(add.getBoundingClientRect().width), Math.round(settings.getBoundingClientRect().width)],
           };
         }""")
         self.assertAlmostEqual(shape["icons"][0], shape["icons"][1], delta=1, msg=shape)
+        self.assertAlmostEqual(shape["icons"][1], shape["icons"][2], delta=1, msg=shape)
         self.assertAlmostEqual(shape["labels"][0], shape["labels"][1], delta=1, msg=shape)
         self.assertAlmostEqual(shape["labels"][1], shape["labels"][2], delta=1,
                                msg="Settings text must land under the utility labels")
@@ -365,10 +652,10 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
         page.wait_for_timeout(120)
         display, heights = page.evaluate("""() => [
-          getComputedStyle(document.querySelector('.metadata-form .inline-choice')).display,
+          getComputedStyle(document.querySelector('.metadata-cover-field')).display,
           [...document.querySelectorAll('#metadata-form .form-actions .button')].map((b) => Math.round(b.getBoundingClientRect().height)),
         ]""")
-        self.assertIn(display, {"flex", "inline-flex"})
+        self.assertEqual("grid", display)
         self.assertTrue(all(h == 40 for h in heights), f"buttons stretched to {heights} instead of 40px")
 
     def test_failed_metadata_lookup_clears_its_skeleton(self):
@@ -1035,6 +1322,142 @@ class LayoutTests(unittest.TestCase):
         page.locator("#track-search").click()
         self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
 
+    def test_turntable_blur_material_matrix(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById("app-shell").hidden = false;
+          document.getElementById("now-panel").hidden = false;
+          document.querySelector(".now-header").classList.add("is-compact");
+        }""")
+
+        expected = [
+            (".library-header-blur", "36px", True),
+            ("#player", "36px", False),
+            ("#now-panel", "36px", False),
+            (".now-header.is-compact", "36px", False),
+            (".global-results", "36px", False),
+            ("#settings-dialog", "20px", False),
+            ("#metadata-dialog", "20px", False),
+            ("#lyrics-dialog", "20px", False),
+        ]
+
+        for selector, blur, must_have_mask in expected:
+            with self.subTest(selector=selector):
+                result = material(page, selector)
+                self.assertIsNotNone(result, selector)
+                self.assertIn(blur, result["filter"], result)
+                if must_have_mask:
+                    self.assertNotIn(result["mask"], ("none", ""), result)
+                else:
+                    self.assertIn(result["mask"], ("none", ""), result)
+
+    def test_unplanned_surfaces_do_not_use_backdrop_blur(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById("app-shell").hidden = false;
+          document.getElementById("queue-list").innerHTML = '<div class="queue-row"></div>';
+        }""")
+
+        selectors = [
+            ".source-rail",
+            ".track-row",
+            ".queue-row",
+            ".details-pane",
+            "#context-menu",
+            ".rail-scrim",
+        ]
+
+        for selector in selectors:
+            with self.subTest(selector=selector):
+                value = page.evaluate(
+                    """(selector) => {
+                      const element = document.querySelector(selector);
+                      if (!element) return "missing";
+                      const style = getComputedStyle(element);
+                      return style.backdropFilter || style.webkitBackdropFilter || "none";
+                    }""",
+                    selector,
+                )
+                self.assertIn(value, ("none", "", "missing"), (selector, value))
+
+        generic_dialog_blur = page.evaluate("""() => {
+          const dialog = document.querySelector(
+            "dialog.modal:not(#settings-dialog):not(#metadata-dialog):not(#lyrics-dialog)"
+          );
+          if (!dialog) return "missing";
+          const style = getComputedStyle(dialog);
+          return style.backdropFilter || style.webkitBackdropFilter || "none";
+        }""")
+        self.assertIn(generic_dialog_blur, ("none", "", "missing"), generic_dialog_blur)
+
+    def test_intended_glass_surfaces_are_translucent(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+
+        for selector in (
+            "#player",
+            "#now-panel",
+            ".global-results",
+            "#settings-dialog",
+            "#metadata-dialog",
+            "#lyrics-dialog",
+        ):
+            with self.subTest(selector=selector):
+                alpha = background_alpha(page, selector)
+                self.assertIsNotNone(alpha, selector)
+                self.assertLess(alpha, 0.98, (selector, alpha))
+
+    def test_player_physically_overlays_library_content(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        geometry = page.evaluate("""() => {
+          const player = document.getElementById("player").getBoundingClientRect();
+          const library = document.querySelector(".library-content").getBoundingClientRect();
+          const rail = document.getElementById("source-rail").getBoundingClientRect();
+          return {
+            player: { left: player.left, right: player.right, top: player.top, bottom: player.bottom },
+            library: { left: library.left, right: library.right, top: library.top, bottom: library.bottom },
+            railRight: rail.right,
+            viewportWidth: innerWidth,
+          };
+        }""")
+
+        overlap_y = (
+            min(geometry["player"]["bottom"], geometry["library"]["bottom"])
+            - max(geometry["player"]["top"], geometry["library"]["top"])
+        )
+        self.assertGreater(overlap_y, 20, geometry)
+        overlap_x = (
+            min(geometry["player"]["right"], geometry["library"]["right"])
+            - max(geometry["player"]["left"], geometry["library"]["left"])
+        )
+        self.assertGreater(overlap_x, 20, geometry)
+        self.assertAlmostEqual(geometry["player"]["left"], 16, delta=1, msg=geometry)
+        self.assertAlmostEqual(
+            geometry["viewportWidth"] - geometry["player"]["right"],
+            16,
+            delta=1,
+            msg=geometry,
+        )
+
+    def test_sidebar_collapse_does_not_change_player_horizontal_geometry(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        expanded = page.evaluate("""() => {
+          const box = document.getElementById('player').getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }""")
+        page.evaluate("() => document.getElementById('app-shell').classList.add('sidebar-collapsed')")
+        page.wait_for_timeout(320)
+        collapsed = page.evaluate("""() => {
+          const box = document.getElementById('player').getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }""")
+
+        self.assertLessEqual(abs(expanded["left"] - collapsed["left"]), 1, (expanded, collapsed))
+        self.assertLessEqual(abs(expanded["right"] - collapsed["right"]), 1, (expanded, collapsed))
+        self.assertLessEqual(abs(expanded["width"] - collapsed["width"]), 1, (expanded, collapsed))
+
     def test_mixed_typography_roles_are_rendered_without_font_picker(self):
         page = self.page(1440, 900)
         page.evaluate("""() => {
@@ -1074,36 +1497,348 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         for name in ("title", "artist", "source", "heading", "tab", "button", "globalHeading", "discoverHeading"):
-            self.assertIn("Archivo", fonts[name], f"{name} must use the human-facing type: {fonts}")
+            self.assertIn("Be Vietnam Pro", fonts[name], f"{name} must use the human-facing type: {fonts}")
         for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary", "globalCount", "bulkCount", "cacheUsage", "passwordStatus", "qrStatus"):
-            self.assertIn("IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}")
+            self.assertIn("JetBrains Mono", fonts[name], f"{name} must use the data type: {fonts}")
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
 
-    def test_library_header_toolbar_aligns_and_long_titles_wrap_intentionally(self):
+    def test_track_action_position_is_fixed_regardless_of_title_length(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        before = page.evaluate("""() => {
+          const actions = document.querySelector('.player-track-actions').getBoundingClientRect();
+          return { left: actions.left, right: actions.right };
+        }""")
+        page.evaluate("""() => {
+          document.getElementById('player-title').textContent =
+            'An extremely long track title that keeps going and going and never stops ' +
+            'even after the line is long gone and the text simply refuses to end';
+        }""")
+        page.wait_for_timeout(120)
+        after = page.evaluate("""() => {
+          const title = document.getElementById('player-title');
+          const actions = document.querySelector('.player-track-actions').getBoundingClientRect();
+          const main = document.querySelector('.player-main').getBoundingClientRect();
+          const play = document.getElementById('play').getBoundingClientRect();
+          return {
+            left: actions.left, right: actions.right,
+            centerDelta: (play.left + play.right) / 2 - (main.left + main.right) / 2,
+            truncated: title.scrollWidth > title.clientWidth,
+            overlap: actions.left < play.right && actions.right > play.left,
+          };
+        }""")
+        self.assertLessEqual(abs(after["left"] - before["left"]), 1, (before, after))
+        self.assertLessEqual(abs(after["right"] - before["right"]), 1, (before, after))
+        self.assertLessEqual(abs(after["centerDelta"]), 1, after)
+        self.assertTrue(after["truncated"], after)
+        self.assertFalse(after["overlap"], after)
+
+    def test_every_visible_player_child_stays_inside_the_dock(self):
+        for width, height in ((1440, 900), (1024, 768), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                bounds = page.evaluate("""() => {
+                  const player = document.getElementById('player').getBoundingClientRect();
+                  const offenders = [];
+                  for (const selector of [
+                    '#player-open', '#like-current', '#save-current-telegram', '#share-current',
+                    '#player-more', '#shuffle', '#previous', '#play', '#next', '#repeat',
+                    '#volume-toggle', '#show-lyrics', '#progress',
+                  ]) {
+                    const element = document.querySelector(selector);
+                    if (!element) continue;
+                    if (getComputedStyle(element).display === 'none') continue;
+                    const box = element.getBoundingClientRect();
+                    if (box.width === 0 || box.height === 0) continue;
+                    const inside = box.left >= player.left - 1 && box.right <= player.right + 1 &&
+                                   box.top >= player.top - 1 && box.bottom <= player.bottom + 1;
+                    if (!inside) offenders.push(selector);
+                  }
+                  return { offenders, player: { left: player.left, right: player.right, top: player.top, bottom: player.bottom } };
+                }""")
+                self.assertEqual([], bounds["offenders"], bounds)
+
+    def test_source_sort_menu_trigger_and_drag_sync(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector("#source-list .source-entry[data-source]")
+
+        # Trigger opens the existing context menu with all four modes.
+        page.click("#sidebar-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
+        self.assertEqual(4, len(items), items)
+        for label in ("Custom order", "Name", "Recent activity", "Track count"):
+            self.assertTrue(any(label in item for item in items), (label, items))
+
+        # A manual drag reorder (custom mode) forces Custom order everywhere.
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+        page.evaluate("""() => {
+          const rows = [...document.querySelectorAll('#source-list .source-entry[draggable=true]')];
+          const source = rows[1];
+          source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }));
+        }""")
+        page.evaluate("""() => {
+          const rows = [...document.querySelectorAll('#source-list .source-entry[draggable=true]')];
+          const target = rows[0];
+          target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientY: target.getBoundingClientRect().top + 4 }));
+          target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientY: target.getBoundingClientRect().top + 4 }));
+        }""")
+        page.wait_for_function("() => document.getElementById('sidebar-sort').value === 'custom'")
+        self.assertEqual("Custom order", page.evaluate("() => document.getElementById('sidebar-sort-label').textContent"))
+        self.assertEqual("custom", page.evaluate("() => localStorage.getItem('tm-source-sort')"))
+
+        # Choosing Name updates the hidden state source, the label and localStorage.
+        page.click("#sidebar-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.click('#context-menu button:has-text("Name")')
+        page.wait_for_function("() => document.getElementById('sidebar-sort-label').textContent === 'Name'")
+        self.assertEqual("name", page.evaluate("() => document.getElementById('sidebar-sort').value"))
+        self.assertEqual("name", page.evaluate("() => localStorage.getItem('tm-source-sort')"))
+
+    def test_collapse_expand_semantics_and_settings_visibility(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        expanded = page.evaluate("""() => {
+          const button = document.getElementById('collapse-sidebar');
+          const svg = button.querySelector('svg');
+          return {
+            label: button.getAttribute('aria-label'),
+            title: button.title,
+            transform: getComputedStyle(svg).transform,
+            settingsVisible: getComputedStyle(document.getElementById('open-settings')).display !== 'none',
+          };
+        }""")
+        self.assertEqual("Collapse sources", expanded["label"], expanded)
+        self.assertEqual("Collapse sources", expanded["title"], expanded)
+        self.assertEqual("none", expanded["transform"], expanded)
+        self.assertTrue(expanded["settingsVisible"], expanded)
+
+        page.click("#collapse-sidebar")
+        page.wait_for_function("() => document.getElementById('app-shell').classList.contains('sidebar-collapsed')")
+        collapsed = page.evaluate("""() => {
+          const button = document.getElementById('collapse-sidebar');
+          const settings = document.getElementById('open-settings');
+          const box = settings.getBoundingClientRect();
+          return {
+            label: button.getAttribute('aria-label'),
+            title: button.title,
+            transform: getComputedStyle(button.querySelector('svg')).transform,
+            settingsVisible: getComputedStyle(settings).display !== 'none',
+            settingsWidth: box.width,
+            stored: localStorage.getItem('tm-sidebar'),
+          };
+        }""")
+        self.assertEqual("Expand sources", collapsed["label"], collapsed)
+        self.assertEqual("Expand sources", collapsed["title"], collapsed)
+        self.assertNotEqual("none", collapsed["transform"], collapsed)
+        self.assertTrue(collapsed["settingsVisible"], collapsed)
+        self.assertGreaterEqual(collapsed["settingsWidth"], 44, collapsed)
+        self.assertEqual("collapsed", collapsed["stored"], collapsed)
+
+        # Reload: the collapsed state and the aria/title labels come back from localStorage.
+        page.reload(wait_until="load")
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_timeout(150)
+        restored = page.evaluate("""() => ({
+          collapsed: document.getElementById('app-shell').classList.contains('sidebar-collapsed'),
+          label: document.getElementById('collapse-sidebar').getAttribute('aria-label'),
+        })""")
+        self.assertTrue(restored["collapsed"], restored)
+        self.assertEqual("Expand sources", restored["label"], restored)
+
+    def test_settings_is_a_stable_glass_workspace_across_tabs(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.click("#open-settings")
+        page.wait_for_selector("#settings-dialog[open]")
+        page.wait_for_timeout(150)
+
+        base = page.evaluate("""() => {
+          const dialog = document.getElementById('settings-dialog');
+          const content = document.querySelector('.settings-content');
+          const close = dialog.querySelector('[data-close="settings-dialog"]');
+          return {
+            width: dialog.getBoundingClientRect().width,
+            height: dialog.getBoundingClientRect().height,
+            contentHeight: content.getBoundingClientRect().height,
+            closeWidth: close.getBoundingClientRect().width,
+            closeHeight: close.getBoundingClientRect().height,
+            filter: getComputedStyle(dialog).backdropFilter || getComputedStyle(dialog).webkitBackdropFilter,
+          };
+        }""")
+        self.assertIn("20px", base["filter"], base)
+        self.assertGreaterEqual(base["closeWidth"], 39.5, base)
+        self.assertGreaterEqual(base["closeHeight"], 39.5, base)
+        self.assertAlmostEqual(base["contentHeight"], 300, delta=8, msg=base)
+
+        # No backdrop blur: the scrim dims, it never frosts.
+        self.assertNotIn("blur", page.evaluate("() => getComputedStyle(document.getElementById('settings-dialog')).backdrop || ''"))
+
+        # The frame must not shift when switching tabs.
+        for tab in ("appearance", "playback", "metadata", "network", "account"):
+            page.click(f'[data-settings-tab="{tab}"]')
+            page.wait_for_timeout(60)
+            frame = page.evaluate("""() => {
+              const dialog = document.getElementById('settings-dialog');
+              return { width: dialog.getBoundingClientRect().width, height: dialog.getBoundingClientRect().height };
+            }""")
+            self.assertLessEqual(abs(frame["width"] - base["width"]), 1, (tab, frame, base))
+            self.assertLessEqual(abs(frame["height"] - base["height"]), 1, (tab, frame, base))
+
+        # Metadata overflows its pane scroll rather than growing the dialog.
+        page.click('[data-settings-tab="metadata"]')
+        page.wait_for_timeout(80)
+        scroll = page.evaluate("""() => {
+          const content = document.querySelector('.settings-content');
+          return { scrollable: content.scrollHeight > content.clientHeight,
+                   clientHeight: content.clientHeight, scrollHeight: content.scrollHeight };
+        }""")
+        self.assertTrue(scroll["scrollable"], scroll)
+
+        # Network choices render as vertical radio rows with the mark.
+        page.click('[data-settings-tab="network"]')
+        page.wait_for_timeout(80)
+        network = page.evaluate("""() => {
+          const choices = [...document.querySelectorAll('.network-choice')];
+          return {
+            count: choices.length,
+            marked: choices.some((el) => el.querySelector('.network-choice-mark')),
+            pressed: choices.map((el) => el.getAttribute('aria-pressed')),
+          };
+        }""")
+        self.assertEqual(2, network["count"], network)
+        self.assertTrue(network["marked"], network)
+        self.assertEqual(1, len([v for v in network["pressed"] if v == "true"]), network)
+
+    def test_player_is_one_uniform_glass_surface_on_the_canvas(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                shape = page.evaluate("""() => {
+                  const player = document.getElementById('player');
+                  const progress = document.querySelector('.progress-row');
+                  const shell = document.getElementById('app-shell');
+                  const playerBox = player.getBoundingClientRect();
+                  return {
+                    filter: getComputedStyle(player).backdropFilter || getComputedStyle(player).webkitBackdropFilter,
+                    progressBackground: getComputedStyle(progress).backgroundColor,
+                    shellBackground: getComputedStyle(shell).backgroundColor,
+                    bodyBackground: getComputedStyle(document.body).backgroundColor,
+                    playerLeft: playerBox.left,
+                    playerRight: innerWidth - playerBox.right,
+                  };
+                }""")
+                self.assertIn("36px", shape["filter"], shape)
+                self.assertEqual("rgba(0, 0, 0, 0)", shape["progressBackground"], shape)
+                self.assertEqual(shape["shellBackground"], shape["bodyBackground"], shape)
+                self.assertGreater(shape["playerLeft"], 0, shape)
+                self.assertGreater(shape["playerRight"], 0, shape)
+
+    def test_source_title_takes_the_full_desktop_row_and_stays_one_line(self):
         page = self.page(1440, 900)
         page.evaluate("""() => {
           document.getElementById('app-shell').hidden = false;
           document.getElementById('source-title').textContent = 'Dance in Doubt and Fear';
         }""")
+        page.wait_for_timeout(80)
         shape = page.evaluate("""() => {
           const title = document.getElementById('source-title');
           const play = document.getElementById('play-playlist');
           const filter = document.querySelector('.search-control');
           const style = getComputedStyle(title);
           const lineHeight = parseFloat(style.lineHeight);
+          const titleBox = title.getBoundingClientRect();
           return {
-            titleHeight: title.getBoundingClientRect().height,
+            titleHeight: titleBox.height,
             lineHeight,
             maxWidth: style.maxWidth,
-            playBottom: play.getBoundingClientRect().bottom,
-            filterBottom: filter.getBoundingClientRect().bottom,
+            whiteSpace: style.whiteSpace,
+            playTop: play.getBoundingClientRect().top,
+            filterTop: filter.getBoundingClientRect().top,
+            titleBottom: titleBox.bottom,
+            titleRight: titleBox.right,
+            headingRight: document.querySelector('.library-heading').getBoundingClientRect().right,
+            headerRight: document.querySelector('.library-header-inner').getBoundingClientRect().right,
           };
         }""")
-        self.assertNotEqual(shape["maxWidth"], "none", shape)
-        self.assertGreater(shape["titleHeight"], shape["lineHeight"] * 1.5, shape)
-        self.assertLess(shape["titleHeight"], shape["lineHeight"] * 3.1, shape)
-        self.assertLessEqual(abs(shape["playBottom"] - shape["filterBottom"]), 1, shape)
+        self.assertLessEqual(shape["titleHeight"], shape["lineHeight"] * 1.2, shape)
+        self.assertEqual("none", shape["maxWidth"], shape)
+        self.assertEqual("nowrap", shape["whiteSpace"], shape)
+        self.assertGreater(shape["playTop"], shape["titleBottom"], shape)
+        self.assertGreater(shape["filterTop"], shape["titleBottom"], shape)
+        self.assertGreaterEqual(shape["titleRight"], shape["headingRight"] - 1, shape)
+
+    def test_long_source_title_truncates_on_desktop_and_wraps_on_mobile(self):
+        for width, height, wraps in ((1440, 900, False), (390, 844, True)):
+            with self.subTest(viewport=(width, height), wraps=wraps):
+                page = self.page(width, height)
+                page.evaluate("""() => {
+                  document.getElementById('app-shell').hidden = false;
+                  document.getElementById('source-title').textContent =
+                    'An extremely long source title that keeps going and going and never stops ' +
+                    'even after the first line is long gone and the text simply refuses to end ' +
+                    'because the uploader never met a word limit they liked in their entire life';
+                }""")
+                page.wait_for_timeout(80)
+                shape = page.evaluate("""() => {
+                  const title = document.getElementById('source-title');
+                  const style = getComputedStyle(title);
+                  const lineHeight = parseFloat(style.lineHeight);
+                  return {
+                    height: title.getBoundingClientRect().height,
+                    lineHeight,
+                    whiteSpace: style.whiteSpace,
+                    truncated: title.scrollWidth > title.clientWidth,
+                  };
+                }""")
+                if wraps:
+                    self.assertGreater(shape["height"], shape["lineHeight"] * 1.4, shape)
+                else:
+                    self.assertLessEqual(shape["height"], shape["lineHeight"] * 1.2, shape)
+                    self.assertTrue(shape["truncated"], shape)
+
+    def test_sort_menu_trigger_replaces_the_visible_select(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        # The hidden select stays the state source; the visible control is a menu trigger.
+        state = page.evaluate("""() => {
+          const select = document.getElementById('track-sort');
+          const trigger = document.getElementById('track-sort-trigger');
+          return {
+            selectHidden: getComputedStyle(select).clipPath === 'rect(0px, 0px, 0px, 0px)' ||
+                           getComputedStyle(select).clip !== 'auto',
+            selectTabIndex: select.tabIndex,
+            trigger: { hasPopup: trigger.getAttribute('aria-haspopup'), label: document.getElementById('track-sort-label').textContent },
+          };
+        }""")
+        self.assertEqual(-1, state["selectTabIndex"], state)
+        self.assertEqual("menu", state["trigger"]["hasPopup"], state)
+        self.assertEqual("Posted", state["trigger"]["label"], state)
+
+        # Click the trigger: the existing context menu opens with all four options.
+        page.click("#track-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
+        self.assertEqual(4, len(items), items)
+        self.assertTrue(any("Title · A–Z" in item for item in items), items)
+        self.assertTrue(any("Posted · newest first" in item for item in items), items)
+
+        # Choosing Title updates the hidden state source, the visible label and the request.
+        page.click('#context-menu button:has-text("Title · A–Z")')
+        page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Title'")
+        self.assertEqual("title", page.evaluate("() => document.getElementById('track-sort').value"))
+        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+
+        # The track-head sort still works and re-syncs the visible label.
+        page.click('.head-sort[data-sort="posted"]')
+        page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Posted'")
+        self.assertEqual("posted", page.evaluate("() => document.getElementById('track-sort').value"))
 
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
@@ -1111,6 +1846,7 @@ class LayoutTests(unittest.TestCase):
         shape = page.evaluate("""() => {
           const library = document.getElementById('library');
           const blur = document.querySelector('.library-header-blur');
+          const actions = document.querySelector('.header-actions');
           const style = getComputedStyle(blur);
           const space = parseFloat(getComputedStyle(library).getPropertyValue('--library-header-space'));
           return {
@@ -1118,14 +1854,18 @@ class LayoutTests(unittest.TestCase):
             space,
             filter: style.backdropFilter || style.webkitBackdropFilter,
             mask: style.maskImage || style.webkitMaskImage,
+            pointerEvents: style.pointerEvents,
+            actionsBottom: actions.getBoundingClientRect().bottom,
           };
         }""")
         self.assertGreaterEqual(shape["height"] - shape["space"], 70, shape)
         self.assertIn("36px", shape["filter"], shape)
-        self.assertIn("58%", shape["mask"], shape)
-        self.assertIn("68%", shape["mask"], shape)
-        self.assertIn("78%", shape["mask"], shape)
-        self.assertIn("90%", shape["mask"], shape)
+        self.assertIn("64%", shape["mask"], shape)
+        self.assertIn("72%", shape["mask"], shape)
+        self.assertIn("82%", shape["mask"], shape)
+        self.assertIn("92%", shape["mask"], shape)
+        self.assertEqual("none", shape["pointerEvents"], shape)
+        self.assertGreaterEqual(shape["height"] - shape["actionsBottom"], 56, shape)
 
     def test_ambient_artwork_is_one_noninteractive_surface(self):
         page = self.page(1440, 900)
@@ -1176,6 +1916,8 @@ class LayoutTests(unittest.TestCase):
                   const progressBox = document.querySelector('.progress-row').getBoundingClientRect();
                   const playerBox = player.getBoundingClientRect();
                   const contentBox = content.getBoundingClientRect();
+                  const tracks = [...document.querySelectorAll('.track-row:not(.track-placeholder)')];
+                  const lastTrackBox = tracks.at(-1)?.getBoundingClientRect();
                   const hit = (selector) => {
                     const box = document.querySelector(selector).getBoundingClientRect();
                     return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest(selector)?.id || '';
@@ -1187,7 +1929,8 @@ class LayoutTests(unittest.TestCase):
                     progress: { top: progressBox.top, bottom: progressBox.bottom },
                     playAboveDivider: playBox.bottom <= progressBox.top,
                     content: { bottom: contentBox.bottom, scrollable: content.scrollHeight > content.clientHeight,
-                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1 },
+                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1,
+                               lastTrackBottom: lastTrackBox?.bottom ?? null },
                     playHit: hit('#play'), progressHit: hit('#progress'), viewport: { width: innerWidth, height: innerHeight },
                   };
                 }""")
@@ -1200,8 +1943,10 @@ class LayoutTests(unittest.TestCase):
                 self.assertTrue(shape["playAboveDivider"], shape)
                 self.assertLessEqual(abs(shape["progress"]["bottom"] - shape["player"]["bottom"]), 2, shape)
                 self.assertGreater(shape["player"]["radius"], 0, shape)
-                self.assertLessEqual(shape["content"]["bottom"], shape["player"]["top"] + 1, shape)
                 self.assertTrue(shape["content"]["scrollable"] and shape["content"]["atEnd"], shape)
+                self.assertGreaterEqual(shape["content"]["bottom"], shape["viewport"]["height"] - 1, shape)
+                self.assertIsNotNone(shape["content"]["lastTrackBottom"], shape)
+                self.assertLessEqual(shape["content"]["lastTrackBottom"], shape["player"]["top"] - 12, shape)
                 self.assertEqual("play", shape["playHit"], shape)
                 self.assertEqual("progress", shape["progressHit"], shape)
 
@@ -1446,8 +2191,32 @@ class LayoutTests(unittest.TestCase):
         self.assertLessEqual(shape["lastBottom"], shape["syncTop"] - 8, shape)
         self.assertLessEqual(shape["lastTop"], shape["syncTop"], shape)
 
+    def test_queue_labels_only_mark_played_and_playing_without_default_noise(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.click("#queue-tab")
+        page.wait_for_timeout(100)
+        page.evaluate("""() => window.__setQueueForTest(
+          ['-1001:1', '-1001:2', '-1001:3', '-1001:4'], 1,
+          { '-1001:3': 'ready', '-1001:4': 'loading' },
+        )""")
+        labels = page.evaluate("""() => ({
+          sections: [...document.querySelectorAll('.queue-row .queue-state')].map((el) => el.textContent),
+          cache: [...document.querySelectorAll('.queue-row .cache-state')].map((el) => el.textContent),
+        })""")
+        self.assertEqual(["Played", "Playing"], labels["sections"], labels)
+        self.assertNotIn("Up next", labels["sections"], labels)
+        self.assertNotIn("queued", labels["cache"], labels)
+        self.assertIn("ready", labels["cache"], labels)
+        self.assertIn("loading", labels["cache"], labels)
+
+        # No cache state at all: the row renders without a badge, not with a default label.
+        page.evaluate("""() => window.__setQueueForTest(['-1001:1', '-1001:2'], 0, {})""")
+        bare = page.evaluate("""() => [...document.querySelectorAll('.queue-row .cache-state')].map((el) => el.textContent)""")
+        self.assertEqual([], bare, bare)
+
     def test_expanded_now_identity_block_has_artwork_clearance(self):
-        for width, height in ((1440, 900), (1280, 720)):
+        for width, height in ((1440, 900), (1280, 720), (1024, 768)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
                 self.open_now_panel(page)
@@ -1465,9 +2234,9 @@ class LayoutTests(unittest.TestCase):
                   };
                 }""")
                 self.assertAlmostEqual(shape["artWidth"], shape["artHeight"], delta=1, msg=shape)
-                self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 4, shape)
-                self.assertGreaterEqual(shape["artWidth"], 150, shape)
-                self.assertLessEqual(shape["artWidth"], 160, shape)
+                self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 16, shape)
+                self.assertGreaterEqual(shape["artWidth"], 180, shape)
+                self.assertLessEqual(shape["artWidth"], 188, shape)
 
     def test_expanded_now_header_is_content_sized_with_no_dead_band(self):
         for width, height in ((1440, 900), (390, 844)):
@@ -1663,6 +2432,25 @@ class LayoutTests(unittest.TestCase):
                 self.assertLess(geometry["ratio"], 0.6, geometry)
                 self.assertFalse(geometry["overflow"], f"expanded header overflowed at {width}x{height}")
                 self.assertTrue(all(item["visible"] and item["contained"] for item in geometry["boxes"]), geometry["boxes"])
+
+    def test_compact_now_header_stays_inside_now_panel_across_breakpoints(self):
+        for width, height in ((1440, 900), (1120, 900), (1024, 900), (861, 900), (860, 844), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                self.open_now_panel(page)
+                page.evaluate("() => document.querySelector('.now-header').classList.add('is-compact')")
+                page.wait_for_timeout(80)
+                bounds = page.evaluate("""() => {
+                  const panel = document.getElementById('now-panel').getBoundingClientRect();
+                  const header = document.querySelector('.now-header.is-compact').getBoundingClientRect();
+                  return {
+                    panel: { left: panel.left, right: panel.right },
+                    header: { left: header.left, right: header.right },
+                    padding: getComputedStyle(document.getElementById('now-panel')).paddingLeft,
+                  };
+                }""")
+                self.assertGreaterEqual(bounds["header"]["left"], bounds["panel"]["left"] - 1, bounds)
+                self.assertLessEqual(bounds["header"]["right"], bounds["panel"]["right"] + 1, bounds)
 
     def test_search_results_reuse_the_library_row_system(self):
         page = self.page(1440, 900)

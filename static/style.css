@@ -29,9 +29,9 @@
   --dur-1: 120ms;
   --dur-2: 180ms;
   --dur-3: 280ms;
-  --font-ui: "Archivo", Avenir, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --font-data: "IBM Plex Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
-  --font-display: "Archivo", var(--font-ui);
+  --font-ui: "Be Vietnam Pro", Avenir, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-data: "JetBrains Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  --font-display: "Be Vietnam Pro", var(--font-ui);
   --text-display: clamp(32px, 5vw, 44px);
   --text-title: 22px;
   --text-body: 15px;
@@ -53,6 +53,8 @@
   --glass-subtle: color-mix(in srgb, var(--surface) 64%, transparent);
   --glass-medium: color-mix(in srgb, var(--surface) 52%, transparent);
   --glass-strong: color-mix(in srgb, var(--paper) 76%, transparent);
+  --glass-reading: color-mix(in srgb, var(--surface) 84%, transparent);
+  --glass-editor: color-mix(in srgb, var(--surface-raised) 92%, transparent);
   --glass-border: color-mix(in srgb, var(--ink) 12%, transparent);
   --glass-highlight: color-mix(in srgb, var(--surface) 78%, transparent);
   --space-1: 4px;
@@ -86,6 +88,8 @@ html[data-theme="dark"] {
   --glass-subtle: color-mix(in srgb, var(--surface) 72%, transparent);
   --glass-medium: color-mix(in srgb, var(--surface) 60%, transparent);
   --glass-strong: color-mix(in srgb, var(--paper) 68%, transparent);
+  --glass-reading: color-mix(in srgb, var(--surface) 76%, transparent);
+  --glass-editor: color-mix(in srgb, var(--surface-raised) 86%, transparent);
   --glass-border: color-mix(in srgb, var(--ink) 16%, transparent);
   --glass-highlight: color-mix(in srgb, var(--ink) 10%, transparent);
 }
@@ -111,6 +115,8 @@ html[data-theme="dark"] {
     --glass-subtle: color-mix(in srgb, var(--surface) 72%, transparent);
     --glass-medium: color-mix(in srgb, var(--surface) 60%, transparent);
     --glass-strong: color-mix(in srgb, var(--paper) 68%, transparent);
+    --glass-reading: color-mix(in srgb, var(--surface) 76%, transparent);
+    --glass-editor: color-mix(in srgb, var(--surface-raised) 86%, transparent);
     --glass-border: color-mix(in srgb, var(--ink) 16%, transparent);
     --glass-highlight: color-mix(in srgb, var(--ink) 10%, transparent);
   }
@@ -151,29 +157,63 @@ html { scroll-behavior: smooth; }
 ::-webkit-scrollbar-thumb:hover { background: var(--graphite); background-clip: content-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* Self-hosted Archivo carries the interface identity instead of falling back to a platform
-   sans. One variable file covers display and body, and its wdth axis supplies the condensed title. */
+/* Self-hosted families keep the interface typography stable across platforms. Be Vietnam Pro
+   carries human-facing UI and display text; JetBrains Mono carries data and catalogue text. */
 @font-face {
-  font-family: "Archivo";
-  font-style: normal;
-  font-weight: 100 900;
-  font-stretch: 62% 125%;
-  font-display: swap;
-  src: url("fonts/archivo-variable.woff2") format("woff2-variations");
-}
-@font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "Be Vietnam Pro";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("fonts/plex-mono-400.woff2") format("woff2");
+  src: url("fonts/be-vietnam-pro-400.ttf") format("truetype");
 }
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "Be Vietnam Pro";
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url("fonts/plex-mono-500.woff2") format("woff2");
+  src: url("fonts/be-vietnam-pro-500.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Be Vietnam Pro";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/be-vietnam-pro-600.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Be Vietnam Pro";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/be-vietnam-pro-700.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-500.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-600.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-700.ttf") format("truetype");
 }
 
 * { box-sizing: border-box; }
@@ -243,7 +283,7 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
 .eyebrow { letter-spacing: .1em; }
 .now-title h2, .library-heading h1, .modal-header h2 { font-family: var(--font-display); }
 
-/* One product-owned type system: Archivo carries human-facing language; Plex Mono carries data. */
+/* One product-owned type system: Be Vietnam Pro carries human-facing language; JetBrains Mono carries data. */
 :where(.brand-line, .source-copy strong, .track-copy strong, .track-copy small, .track-source,
   .player-copy strong, .player-copy small, .now-title h2, .now-title p, .library-heading h1,
   .modal-header h2, .tab, .button, .text-button, .settings-nav button, label, input, select,
@@ -254,7 +294,7 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
   .library-heading .small-copy, .time-label, .volume-pct, .lyrics-attribution, .details-pane dt,
   .details-pane dd.detail-data, #global-results-count, #bulk-count, #cache-usage, #password-state-label,
   #qr-status, .result-provenance, .sync-strip, .dialog-status, .login-status, .restart-notice, .field-label,
-  .sort-control select, .queue-state, .cache-state, .discover-copy small) {
+  .sort-trigger, .queue-state, .cache-state, .discover-copy small) {
   font-family: var(--font-data);
 }
 
@@ -363,7 +403,8 @@ input::placeholder, textarea::placeholder { color: var(--graphite); opacity: .75
   width: 100%;
   height: 100%;
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) var(--player-height);
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--paper);
 }
 .app-shell > :not(#ambient-art) { z-index: 1; }
 .app-shell > #ambient-art { z-index: 0; }
@@ -414,20 +455,24 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-right: 1px solid var(--rule);
   background: var(--rail);
 }
+@media (min-width: 861px) {
+  .source-rail { padding-bottom: calc(var(--player-height) + 20px); }
+}
 
 .global-search-wrap { position: relative; margin: 0 0 12px; }
 .global-search-control {
   display: grid;
-  height: 40px;
+  height: 38px;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  border: 1px solid var(--rule);
+  border: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
   border-radius: var(--radius-control);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
 }
-.global-search-control:has(input:focus-visible) { border-color: var(--ink); } /* avoid cramped double halo inside rail */
+.global-search-control:hover { background: color-mix(in srgb, var(--surface) 68%, transparent); }
+.global-search-control:has(input:focus-visible) { border-color: var(--ink); background: color-mix(in srgb, var(--surface) 78%, transparent); } /* avoid cramped double halo inside rail */
 .global-search-trigger { display: grid; width: 18px; height: 100%; place-items: center; padding: 0; border: 0; background: transparent; color: var(--graphite); cursor: pointer; }
 .global-search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .global-search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; font-size: 13px; }
@@ -442,7 +487,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   overflow-y: auto;
   border: 1px solid var(--rule);
   border-radius: var(--radius-panel);
-  background: var(--surface-raised);
+  background: var(--glass-reading);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  border-color: var(--glass-border);
   box-shadow: var(--elev-3);
   animation: surface-in var(--dur-2) var(--ease-out) both;
 }
@@ -525,25 +573,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .source-mark { width: 7px; height: 7px; border: 1px solid var(--graphite); border-radius: 50%; }
 .source-link.active .source-mark { border-color: var(--ink); background: var(--ink); }
 
-.add-source {
-  display: flex;
-  min-height: 43px;
-  align-items: center;
-  gap: 9px;
-  margin-top: 16px;
-  padding: 0 9px;
-  border: 1px dashed var(--rule);
-  border-radius: var(--radius-control);
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-}
-.sync-all { display: inline-flex; align-items: center; gap: 6px; margin: 14px 9px 0; }
-.sync-all svg { width: 12px; height: 12px; }
-.add-source:hover { border-style: solid; border-color: var(--ink); }
-.rail-footer { display: flex; justify-content: space-between; padding: 18px 7px 0; }
-
 .text-button { padding: 0; border: 0; background: transparent; color: var(--graphite); cursor: pointer; font-size: 11px; transition: color var(--dur-1) var(--ease-out); }
 .text-button:hover { color: var(--ink); }
 .text-button.danger { color: var(--danger); }
@@ -573,31 +602,54 @@ body.resizing { cursor: col-resize; user-select: none; }
 .library-header.is-scrolled { box-shadow: var(--elev-1); }
 
 .library-heading { flex: 1; min-width: 0; }
-.library-heading h1 { margin: 8px 0 4px; font-size: var(--text-display); font-stretch: 62%; font-weight: 480; letter-spacing: .01em; line-height: 1; overflow-wrap: anywhere; }
+.library-heading h1 { margin: 8px 0 4px; font-size: var(--text-display); font-weight: 480; letter-spacing: .01em; line-height: 1; overflow-wrap: anywhere; }
 .library-heading h1.is-truncated { cursor: help; }
-.library-heading .small-copy { margin: 0; }
+.library-heading .small-copy { margin: 0; color: var(--content-secondary); }
 .header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 
 .search-control {
   display: flex;
   width: 200px;
-  height: 38px;
+  height: 34px;
   align-items: center;
   gap: 7px;
   padding: 0 10px;
-  border: 1px solid var(--rule);
+  border: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
   border-radius: var(--radius-control);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
 }
-.search-control:has(input:focus-visible), .sort-control:has(select:focus-visible) { border-color: var(--ink); } /* one ink, no double paper halo */
+.search-control:hover { background: color-mix(in srgb, var(--surface) 68%, transparent); }
+.search-control:has(input:focus-visible) {
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+}
+.search-control:has(input:focus-visible) { border-color: var(--ink); } /* one ink, no double paper halo */
 .search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
-.sort-control { display: flex; height: 34px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
-.sort-control:has(select:focus-visible) { outline: 0; }
-.sort-control select { height: 32px; min-height: 32px; padding: 0 26px 0 9px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
-.sort-control select:focus-visible { outline: 0; box-shadow: none; }
-.sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
+
+.sort-trigger {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--graphite);
+  cursor: pointer;
+  font-family: var(--font-data);
+  font-size: 11px;
+}
+
+.sort-trigger:hover,
+.sort-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--rule) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  color: var(--ink);
+}
+.sort-caret { font-size: 12px; line-height: 1; }
 
 .icon-button {
   display: inline-grid;
@@ -716,14 +768,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .empty-art { display: grid; width: 56px; height: 56px; place-items: center; border: 1px solid var(--rule); border-radius: 50%; background: var(--surface); color: var(--graphite); }
 
 .now-panel {
+  --now-panel-pad-x: 16px;
   grid-row: 1;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  padding: 20px 16px 28px;
-  border-left: 1px solid var(--rule);
-  background: var(--surface);
+  padding: 20px var(--now-panel-pad-x) 28px;
+  border-left: 1px solid var(--glass-border);
+  background: var(--glass-reading);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
 }
 /* The header is sticky so the tabs and the current track stay reachable, and it collapses
    on scroll: expanded it ate 61-68% of the viewport, leaving 106px of content on a laptop
@@ -735,7 +790,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   z-index: 2;
   top: 0;
   flex-shrink: 0;
-  background: var(--surface);
+  background: transparent;
 }
 .now-header:not(.is-compact) {
   display: grid;
@@ -768,9 +823,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 .now-header.is-compact .now-title h2 { font-size: 17px; -webkit-line-clamp: 1; }
 .now-header.is-compact .now-title p { margin: 2px 0 0; font-size: 12px; }
 .now-header.is-compact .now-tabs { margin-top: 8px; grid-area: tabs; }
-/* Opaque and edge-to-edge, otherwise lines scrolling behind the sticky header show in the
-   panel's horizontal padding. */
-.now-header.is-compact { margin: 0 -24px; padding: 4px 24px 0; box-shadow: 0 6px 14px -12px rgb(4 3 3 / .45); }
+/* Edge-to-edge so lines scrolling behind the sticky header are covered by one uniform
+   reading-glass plane rather than showing through its horizontal padding. */
+.now-header.is-compact {
+  margin: 0 calc(-1 * var(--now-panel-pad-x));
+  padding: 4px var(--now-panel-pad-x) 0;
+  background: var(--glass-reading);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
+  box-shadow: 0 6px 14px -12px rgb(4 3 3 / .45);
+}
 
 /* Geometry is animated by the FLIP pass in updateNowHeader, not by a CSS transition: the
    expanded art has no explicit width, and a transition out of `auto` is not interpolable, so
@@ -872,7 +934,6 @@ body.resizing { cursor: col-resize; user-select: none; }
   color: var(--ink);
   font-family: var(--font-display);
   font-size: clamp(11px, 2.2vw, 20px);
-  font-stretch: 62%;
   font-weight: 620;
   letter-spacing: .06em;
   line-height: 1.15;
@@ -926,24 +987,28 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .details-pane dt { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); text-transform: uppercase; }
 .details-pane dd { margin: 0; overflow-wrap: anywhere; }
-.detail-actions { display: grid; gap: 8px; margin-bottom: 24px; }
-.detail-actions .button { width: 100%; justify-content: flex-start; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.detail-actions .button { width: auto; min-height: 34px; justify-content: center; padding-inline: 10px; background: transparent; }
 
 .player {
-  position: relative;
-  z-index: 10;
-  grid-column: 1 / -1;
-  grid-row: 2;
+  position: absolute;
+  z-index: 40;
+  grid-column: auto;
+  grid-row: auto;
+  left: 16px;
+  right: 16px;
+  bottom: 10px;
+  height: calc(var(--player-height) - 10px);
   display: grid;
   grid-template-rows: auto 1fr;
-  margin: 0 20px 10px;
+  margin: 0;
   overflow: visible;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-panel);
   background: var(--glass-medium);
   backdrop-filter: blur(var(--blur-strong)) saturate(1.02);
   -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.02);
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--ink) 10%, transparent), inset 0 1px 0 var(--glass-highlight);
+  box-shadow: 0 -14px 30px var(--shadow-color), inset 0 1px 0 var(--glass-highlight);
 }
 
 .progress-row {
@@ -954,7 +1019,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   gap: 10px;
   padding: 2px 22px 4px;
   border-top: 1px solid color-mix(in srgb, var(--glass-border) 72%, transparent);
-  background: color-mix(in srgb, var(--glass-strong) 20%, transparent);
+  background: transparent;
   border-radius: 0 0 var(--radius-panel) var(--radius-panel);
 }
 
@@ -1085,6 +1150,25 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 .modal-header h2 { margin: 6px 0 0; font-size: 28px; font-weight: 520; letter-spacing: -.035em; }
 .modal > .small-copy { margin: 12px 0 22px; }
 
+#metadata-dialog[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+#metadata-dialog .modal-header {
+  position: relative;
+  z-index: 2;
+  margin-bottom: 14px;
+}
+#metadata-dialog .editor-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
 .discover-list { border-top: 1px solid var(--rule); }
 .discover-list.is-revealing .discover-row { animation: row-in var(--dur-2) var(--ease-out) both; }
 .discover-list.is-revealing .discover-row:nth-child(1) { animation-delay: 0ms; }
@@ -1100,20 +1184,34 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 
 .metadata-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; }
 :where(.metadata-form) label { display: grid; gap: 8px; }
+.metadata-cover-field { max-width: 220px; }
+#cover-quality { width: 100%; }
+#metadata-form input[type="number"] { appearance: textfield; }
+#metadata-form input[type="number"]::-webkit-inner-spin-button,
+#metadata-form input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .full-row { grid-column: 1 / -1; }
 .section-rule { display: flex; align-items: center; margin: 16px 0 8px; color: var(--graphite); }
 .section-rule::after { height: 1px; flex: 1; margin-left: 12px; background: var(--rule); content: ""; }
-.candidate-row { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); }
-.candidate-cover { width: 68px; height: 68px; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--paper); object-fit: cover; }
+.candidate-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); }
+.candidate-cover { width: 64px; height: 64px; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--paper); object-fit: cover; }
+.candidate-copy { min-width: 0; }
 .candidate-copy strong, .candidate-copy span { display: block; }
 .candidate-copy span { margin-top: 3px; color: var(--graphite); font-size: 12px; }
+.candidate-confidence { display: block; margin-top: 6px; color: var(--graphite); }
+.candidate-differences { display: grid; gap: 3px; margin-top: 7px; color: var(--content-secondary); font-size: 11px; }
+.candidate-differences span { min-width: 0; overflow-wrap: anywhere; }
+.candidate-differences strong { margin-right: 5px; color: var(--graphite); font-family: var(--font-data); font-size: 11px; font-weight: 500; text-transform: uppercase; }
+.candidate-differences small { margin-left: 5px; color: var(--graphite); }
+.candidate-same { display: block; margin-top: 6px; color: var(--graphite); font-size: 11px; }
+.candidate-row > .button { align-self: center; white-space: nowrap; background: transparent; }
 
 .choice-group { margin: 28px 0 0; padding: 0; border: 0; }
 .choice-group legend { margin-bottom: 9px; font-size: 12px; font-weight: 650; }
 /* auto-flow column rather than repeat(3, 1fr): the hardcoded three tracks left the two-button
    Network control filling only two thirds of its row, with a dead third column after it. */
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--rule); border-radius: var(--radius-control); overflow: hidden; }
+.segmented[data-setting="theme"] { width: min(100%, 380px); }
 .segmented button { min-height: 40px; border: 0; border-right: 1px solid var(--rule); background: transparent; cursor: pointer; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
 .segmented button:last-child { border-right: 0; }
 .segmented button.active { background: var(--ink); color: var(--paper); }
@@ -1150,7 +1248,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   .app-shell.panel-open { grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--panel-width); }
   .track-head, .track-row { grid-template-columns: 40px minmax(190px, 1fr) 72px 64px 36px 44px; }
   .track-head span:nth-child(3), .track-source { display: none; }
-  .player-main { grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr); gap: 12px; }
+  .player-main { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; }
   .volume-control { display: none; }
 }
 
@@ -1173,7 +1271,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   /* The drawer slides on a springy curve and over the scrim's window, so the sheet and its
      dimming settle together instead of the scrim finishing first. */
   .source-rail { transition: transform var(--dur-3) var(--ease-out); }
-.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(4 3 3 / .3); backdrop-filter: blur(4px); transition: opacity var(--dur-3) var(--ease-out); }
+.rail-scrim { position: fixed; inset: 0; z-index: 29; background: rgb(4 3 3 / .3); backdrop-filter: none; -webkit-backdrop-filter: none; transition: opacity var(--dur-3) var(--ease-out); }
 .rail-scrim[hidden] { display: block !important; pointer-events: none; opacity: 0; }
   .library { grid-column: 1; padding: 0 20px; }
   .track-head { display: none; }
@@ -1200,7 +1298,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
     gap: 8px;
   }
   .search-control { width: auto; min-width: 0; grid-column: 1; }
-  .sort-control { grid-column: 2; }
+  .sort-trigger { grid-column: 2; }
   #sync-source { grid-column: 3; }
   #keep-source { grid-column: 1 / -1; justify-self: start; }
   .now-panel {
@@ -1222,8 +1320,6 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   /* The phone art is 56px, not 64px, so the collapsed header lands 12px shorter. */
   :root { --compact-header: 120px; }
   
-  /* Match the panel's own responsive side padding so the sticky bar stays edge-to-edge. */
-  .now-header.is-compact { margin: 0 calc(-1 * max(20px, (100vw - 580px) / 2)); padding: 4px max(20px, calc((100vw - 580px) / 2)) 0; }
   /* auto for the utilities column: a fixed 44px could not hold the track actions once the
      transport kept prev/next, so like/more overlapped the skip buttons by up to 21px. */
   /* The player is two deliberate rows on mobile: the identity row (art, title, track
@@ -1293,7 +1389,28 @@ button[aria-busy="true"]::after { width: 12px; height: 12px; border: 1.5px solid
 
 .desktop-only { display: inline-grid; }
 .source-tools { display: flex; gap: 6px; padding: 0 3px 12px; }
-.source-tools select { min-width: 0; height: 31px; min-height: 31px; flex: 1; padding: 0 8px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-size: 11px; }
+.source-sort-trigger {
+  flex: 1 1 auto;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--graphite);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.source-sort-trigger:hover,
+.source-sort-trigger:focus-visible {
+  border-color: var(--rule);
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  color: var(--ink);
+}
 .bulk-bar { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 8px; border-block: 1px solid var(--rule); font-size: 11px; }
 .bulk-bar span { margin-right: auto; }
 .source-link { position: relative; grid-template-columns: 34px minmax(0, 1fr) auto 30px; gap: 10px; min-height: 54px; transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), opacity var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
@@ -1311,7 +1428,8 @@ img.source-avatar { object-fit: cover; }
 .source-count { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
 /* Always rendered, never opacity: 0. The count used to live inside an invisible overlay that
    also painted over the title on hover -- two bugs from one piece of hidden content. */
-.source-menu { width: 30px; height: 30px; color: var(--graphite); }
+.source-menu { width: 30px; height: 30px; color: var(--graphite); opacity: 0; transition: opacity var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
+.source-link:hover .source-menu, .source-link:focus-within .source-menu, .source-link.active .source-menu, .source-menu:focus-visible { opacity: 1; }
 .source-link:hover .source-menu, .source-link:focus-within .source-menu { color: var(--ink); }
 .source-error-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: 1px; }
 .source-sync-spin { display: inline-block; width: 10px; height: 10px; margin-left: 7px; border: 1.5px solid color-mix(in srgb, var(--graphite) 45%, transparent); border-top-color: var(--ink); border-radius: 50%; vertical-align: -1px; animation: spin .7s linear infinite; }
@@ -1332,9 +1450,11 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
    and the collapse button 16px past the rail's edge. */
 .sidebar-collapsed .brand-row { flex-direction: column; align-items: center; justify-content: flex-start; gap: 8px; padding-inline: 0; }
 .sidebar-collapsed .brand-group { flex: 0 0 auto; }
-.sidebar-collapsed .brand-text, .sidebar-collapsed #account-name, .sidebar-collapsed .source-tools, .sidebar-collapsed .bulk-bar, .sidebar-collapsed .source-copy, .sidebar-collapsed .source-count, .sidebar-collapsed .add-source span, .sidebar-collapsed .sync-all span, .sidebar-collapsed .rail-footer, .sidebar-collapsed .global-search-control input { display: none; }
+.sidebar-collapsed .brand-text, .sidebar-collapsed #account-name, .sidebar-collapsed .source-tools, .sidebar-collapsed .bulk-bar, .sidebar-collapsed .source-copy, .sidebar-collapsed .source-count, .sidebar-collapsed .add-source span, .sidebar-collapsed .sync-all span, .sidebar-collapsed .global-search-control input { display: none; }
 .sidebar-collapsed .global-search-wrap { width: 46px; margin-inline: auto; }
-.sidebar-collapsed .global-search-control { width: 46px; height: 46px; grid-template-columns: 1fr; justify-items: center; padding: 0; }
+.sidebar-collapsed .global-search-control { width: 46px; height: 46px; grid-template-columns: 1fr; justify-items: center; padding: 0; border-color: transparent; background: transparent; }
+.sidebar-collapsed .global-search-control:hover,
+.sidebar-collapsed .global-search-control:focus-within { border-color: var(--rule); background: var(--surface); }
 .sidebar-collapsed .global-search-trigger { width: 46px; height: 46px; }
 .sidebar-collapsed .global-results { left: 58px; width: min(560px, calc(100vw - 86px)); }
 .sidebar-collapsed .source-link { width: 100%; max-width: 46px; min-height: 46px; grid-template-columns: 1fr; place-items: center; padding: 0; border-left: 0; border-bottom-color: transparent; border-radius: var(--radius-control); }
@@ -1342,6 +1462,11 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .sidebar-collapsed .source-avatar { width: 34px; height: 34px; }
 /* Sync all keeps only its glyph: the 40px label could not fit the 46px column and spilled
    over the rail's right edge in two wrapped lines. */
+#collapse-sidebar svg { transition: transform var(--dur-2) var(--ease-out); }
+.sidebar-collapsed #collapse-sidebar svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  #collapse-sidebar svg { transition: none; }
+}
 .sidebar-collapsed #collapse-sidebar, .sidebar-collapsed .add-source, .sidebar-collapsed .sync-all { width: 46px; height: 46px; justify-content: center; padding: 0; }
 .sidebar-collapsed .sync-all { margin-inline: 0; }
 .sidebar-collapsed .sync-all svg { width: 17px; height: 17px; }
@@ -1397,9 +1522,9 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 
 .lyrics-pane { min-height: 300px; padding-top: 14px; }
 .lyrics-lines { gap: 2px; padding: 4px 0 calc(20vh + 64px); font-family: var(--font-ui); }
-.lyrics-lines button, .lyric-line { width: 100%; min-width: 0; padding: 8px 0; border: 0; border-radius: var(--radius-art); background: transparent; color: color-mix(in srgb, var(--graphite) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 560; line-height: 1.42; overflow-wrap: anywhere; text-align: left; }
+.lyrics-lines button, .lyric-line { width: 100%; min-width: 0; padding: 8px 0; border: 0; border-radius: var(--radius-art); background: transparent; color: color-mix(in srgb, var(--graphite) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 520; line-height: 1.42; overflow-wrap: anywhere; text-align: left; }
 .lyrics-lines button:hover { color: var(--ink); transform: translateX(2px); }
-.lyrics-lines button.active { color: var(--ink); transform: translateX(3px); }
+.lyrics-lines button.active { color: var(--ink); font-weight: 650; transform: translateX(3px); }
 .lyrics-lines button.seek-pulse { animation: lyric-seek 220ms var(--ease-out); }
 .lyrics-lines p { margin: 0; padding: 5px 0; font-family: var(--font-ui); font-size: 18px; line-height: 1.45; }
 @keyframes lyric-seek { 50% { background: color-mix(in srgb, var(--rule-soft) 28%, transparent); } }
@@ -1410,7 +1535,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .queue-dragging { opacity: 0.3; }
 .queue-row:active { cursor: grabbing; }
 .queue-row.played { opacity: .55; }
-.queue-row.current { background: color-mix(in srgb, var(--stamp) 30%, transparent); opacity: 1; }
+.queue-row.current { background: color-mix(in srgb, var(--stamp) 10%, transparent); opacity: 1; }
 .queue-copy { min-width: 0; padding: 8px 10px; border: 0; background: transparent; cursor: inherit; text-align: left; }
 .queue-state { display: block; margin-bottom: 2px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-variant-numeric: tabular-nums; letter-spacing: .06em; text-transform: uppercase; }
 .queue-row strong, .queue-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1434,6 +1559,35 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .lyrics-pane:has(#lyrics-empty:not([hidden])) #lyrics-empty { margin: 0 0 20px; }
 .lyrics-pane:has(#lyrics-empty:not([hidden])) [id="add-lyrics-empty"] { align-self: flex-start; margin: 0; }
 .lyrics-pane:has(#lyrics-empty:not([hidden])) .lyrics-attribution { margin-top: 24px; }
+
+.network-choices { display: grid; gap: 6px; max-width: 520px; }
+
+.network-choice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.network-choice strong, .network-choice small { display: block; }
+.network-choice strong { font-size: 14px; font-weight: 600; }
+.network-choice small { margin-top: 2px; color: var(--graphite); font-size: 12px; }
+
+.network-choice-mark {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1px solid var(--graphite);
+  border-radius: 50%;
+}
+
+.network-choice.active .network-choice-mark {
+  border: 4px solid var(--ink);
+}
 
 .dialog-status { min-height: 20px; margin: 12px 0 0; color: var(--graphite); font-size: 12px; }
 #lyrics-form { gap: 8px; margin-top: 16px; }
@@ -1483,19 +1637,43 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .settings-nav button:hover { background: var(--surface); color: var(--ink); }
 /* Tinted background rather than an accent bar, matching .source-link.active and .track-row.current.
    A stronger mix on hover so a selected item still responds to the pointer. */
-.settings-nav button.active { background: var(--surface); color: var(--ink); }
+.settings-nav button.active { background: color-mix(in srgb, var(--surface) 48%, transparent); color: var(--ink); font-weight: 600; }
 .settings-nav button.active:hover { background: var(--surface-raised); }
 .settings-content {
-  min-width: 0; height: 340px; overflow-y: auto; padding-right: 4px;
+  min-width: 0; height: 300px; overflow-y: auto; padding-right: 4px;
   /* Gutter exists whether or not a pane overflows, so switching tabs cannot shift the
      content sideways. */
   scrollbar-gutter: stable;
+}
+/* Settings is the 20px secondary glass: a translucent raised surface over the dimmed
+   canvas. The backdrop stays dim-only (no blur). */
+#settings-dialog,
+#metadata-dialog,
+#lyrics-dialog {
+  background: var(--glass-editor);
+  backdrop-filter: blur(var(--blur-soft)) saturate(1.01);
+  -webkit-backdrop-filter: blur(var(--blur-soft)) saturate(1.01);
+  border-color: var(--glass-border);
+}
+@media (max-width: 860px) {
+  .settings-modal .modal-header .icon-button { width: 44px; height: 44px; }
 }
 .choice-group.first { margin-top: 0; }
 .setting-block { display: grid; gap: 9px; margin-bottom: 22px; }
 /* A 0-20 number and a three-option select do not need the full dialog width; a full-bleed input
    implies free text and makes the value harder to read against its label. */
 .setting-block.narrow input, .setting-block.narrow select { max-width: 200px; }
+#prefetch-count {
+  width: 92px;
+  appearance: textfield;
+}
+#prefetch-count::-webkit-outer-spin-button,
+#prefetch-count::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+#musicbrainz-contact { width: min(100%, 480px); }
+#default-cover-quality { width: 220px; }
 .field-label { margin: 0 0 6px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .account-summary { margin-bottom: 26px; }
 .account-name { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
@@ -1592,6 +1770,18 @@ dialog.modal[open]::backdrop { opacity: 1; }
   :root { --player-height: calc(154px + env(safe-area-inset-bottom)); }
   /* The cover already opens Now Playing; keep the top row about identity and actions. */
   #show-lyrics { display: none; }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .player,
+  .now-panel,
+  .now-header.is-compact,
+  .global-results,
+  #settings-dialog,
+  #metadata-dialog,
+  #lyrics-dialog {
+    background: var(--surface-raised);
+  }
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -1769,13 +1959,8 @@ dialog.modal[open]::backdrop { opacity: 1; }
 }
 
 
-/* Player polish: make the persistent control surface read as one calm instrument panel.
-   Identity, transport, and secondary actions now have clearer rhythm without adding chrome. */
-.player {
-  background: color-mix(in srgb, var(--surface) 94%, var(--paper));
-  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 -12px 30px color-mix(in srgb, var(--ink) 9%, transparent), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 86%, transparent);
-}
-.progress-row { padding: 6px 24px 3px; gap: 12px; }
+/* Player layout polish: the material and stacking geometry live in the base .player rule. */
+.progress-row { padding: 6px 24px 3px; gap: 12px; background: transparent; border-top-color: color-mix(in srgb, var(--glass-border) 32%, transparent); }
 .progress { height: 10px; }
 .progress::-webkit-slider-runnable-track { height: 4px; }
 .progress::-moz-range-track, .progress::-moz-range-progress { height: 4px; }
@@ -1784,8 +1969,8 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .player-track { gap: 12px; }
 .player-copy strong { font-size: 14px; font-weight: 650; }
 .player-copy small { font-size: 12px; }
-.transport { gap: 12px; }
-.transport .play-button { margin-inline: 12px; }
+.transport { gap: 14px; }
+.transport .play-button { margin-inline: 8px; }
 .player-utilities { gap: 18px; }
 .player-track-actions { gap: 3px; }
 .player-track-actions .icon-button, .volume-control button { transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-spring); }
@@ -1836,9 +2021,6 @@ html[data-theme="dark"] {
 .context-menu {
   box-shadow: 0 18px 44px var(--shadow-color-strong), 0 2px 8px var(--shadow-color);
 }
-.player {
-  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 -14px 30px var(--shadow-color), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 86%, transparent);
-}
 
 
 /* Sidebar polish: collapsed navigation should be a compact icon rail, not a second
@@ -1869,45 +2051,48 @@ html[data-theme="dark"] {
 .source-link:focus-visible { background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); }
 .source-link.active { background: color-mix(in srgb, var(--surface) 68%, var(--rail) 32%); }
 .source-link.active:hover { background: color-mix(in srgb, var(--surface-raised) 72%, var(--rail) 28%); }
-.add-source {
-  border: 0;
-  background: transparent;
-  color: color-mix(in srgb, var(--ink) 62%, var(--graphite));
-}
-.add-source:hover { border-color: transparent; background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); color: var(--ink); }
-.sync-all { color: color-mix(in srgb, var(--ink) 62%, var(--graphite)); }
-.rail-footer { padding-top: 14px; }
 .rail-utilities {
   margin-top: 12px;
   padding-top: 8px;
   border-top: 1px solid var(--rule-soft);
 }
-.rail-utilities .sync-all { min-height: 36px; margin: 0 9px; }
-.rail-utilities .add-source { min-height: 36px; margin-top: 4px; }
-.rail-utilities .rail-footer { padding: 10px 7px 0; }
-/* One optical grid for the utility rows: a fixed 18px icon column plus the label, so the
-   icons and the label text land on the same two x edges instead of each row choosing its own
-   inset (sync 9px, add 0px, settings 7px). Scoped to the expanded rail: the collapsed rail
-   keeps its icon-only geometry. */
-.app-shell:not(.sidebar-collapsed) .rail-utilities .sync-all,
-.app-shell:not(.sidebar-collapsed) .rail-utilities .add-source {
+.rail-utilities .rail-footer { padding: 10px 0 0; }
+/* Sync / Add / Settings share one utility button geometry: a fixed 18px icon column plus the
+   label, so the icons and the label text land on the same two x edges in every row. */
+.rail-utility-button {
   display: grid;
+  width: 100%;
+  min-height: 38px;
+  margin: 0;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   column-gap: 8px;
-  margin-inline: 0;
-  padding-left: 9px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 68%, var(--graphite));
+  cursor: pointer;
+  text-align: left;
 }
-.app-shell:not(.sidebar-collapsed) .rail-utilities .sync-all svg,
-.app-shell:not(.sidebar-collapsed) .rail-utilities .add-source svg { width: 16px; height: 16px; }
-.app-shell:not(.sidebar-collapsed) .rail-utilities .rail-footer {
-  padding: 10px 9px 0;
-  /* 9px inset + 18px icon column + 8px gap: Settings text lands under the two labels. */
-  padding-left: 35px;
+.rail-utility-button svg { width: 16px; height: 16px; }
+.rail-utility-button:hover,
+.rail-utility-button:focus-visible {
+  background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%);
+  color: var(--ink);
 }
+.rail-utilities .rail-footer { display: block; }
 .sidebar-collapsed .rail-utilities { margin-top: 8px; padding-top: 0; border-top: 0; }
-.sidebar-collapsed .rail-utilities .sync-all { margin-inline: 0; }
-.sidebar-collapsed .rail-utilities .add-source { min-height: 46px; margin-top: 0; }
+.sidebar-collapsed .rail-utility-button {
+  width: 46px;
+  height: 46px;
+  min-height: 46px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 0;
+}
+.sidebar-collapsed .rail-utility-button span { display: none; }
+.sidebar-collapsed .rail-footer { display: block; padding: 0; }
 .sidebar-collapsed nav {
   display: grid;
   align-content: start;
@@ -1983,18 +2168,22 @@ html[data-theme="dark"] {
   min-height: var(--row-height);
 }
 .now-panel {
-  padding: 20px 22px 28px;
+  --now-panel-pad-x: 22px;
+  padding: 20px var(--now-panel-pad-x) 28px;
 }
 
 @media (max-width: 1120px) and (min-width: 861px) {
   .library { padding-inline: 20px; }
-  .now-panel { padding-inline: 14px; }
+  .now-panel { --now-panel-pad-x: 14px; padding-inline: var(--now-panel-pad-x); }
 }
 @media (max-width: 860px) {
   .library { padding-inline: 16px; }
   .library-header { gap: 10px; padding-block: 12px 8px; }
   .library-heading h1 { max-width: none; }
-  .now-panel { padding-inline: max(20px, calc((100vw - 580px) / 2)); }
+  .now-panel {
+    --now-panel-pad-x: max(20px, calc((100vw - 580px) / 2));
+    padding-inline: var(--now-panel-pad-x);
+  }
 }
 @media (max-width: 620px) {
   .library { padding-inline: 13px; }
@@ -2029,9 +2218,13 @@ html[data-theme="dark"] {
 
 /* The blur is one physical plane for the whole header, not a repeated row treatment. The mask
    lets tracks continue underneath it while the lower edge dissolves instead of snapping.
-   The layer runs past the toolbar and the mask holds full strength through the action row,
-   so the first sharp track appears below the toolbar, never inside it. */
+   The tint is header-specific: stronger than the global glass tokens so the title and the
+   action row stay in a clearly frosted zone, without touching the shared blur vocabulary
+   (still 36px). The layer runs well below the toolbar so the first sharp track appears
+   below the action row, never inside it. */
 .library-header-blur {
+  --header-glass-top: color-mix(in srgb, var(--paper) 84%, transparent);
+
   position: absolute;
   z-index: 0;
   top: 0;
@@ -2042,17 +2235,17 @@ html[data-theme="dark"] {
   background: var(--paper);
   background: linear-gradient(
     to bottom,
-    var(--glass-strong) 0%,
-    var(--glass-strong) 58%,
-    color-mix(in srgb, var(--glass-strong) 92%, transparent) 68%,
-    color-mix(in srgb, var(--glass-strong) 62%, transparent) 78%,
-    color-mix(in srgb, var(--glass-strong) 25%, transparent) 90%,
+    var(--header-glass-top) 0%,
+    var(--header-glass-top) 64%,
+    color-mix(in srgb, var(--header-glass-top) 90%, transparent) 72%,
+    color-mix(in srgb, var(--header-glass-top) 58%, transparent) 82%,
+    color-mix(in srgb, var(--header-glass-top) 24%, transparent) 92%,
     transparent 100%
   );
-  backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
-  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
-  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0 / .90) 68%, rgb(0 0 0 / .60) 78%, rgb(0 0 0 / .25) 90%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0 / .90) 68%, rgb(0 0 0 / .60) 78%, rgb(0 0 0 / .25) 90%, transparent 100%);
+  backdrop-filter: blur(36px) saturate(1.03);
+  -webkit-backdrop-filter: blur(36px) saturate(1.03);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 64%, rgb(0 0 0 / .90) 72%, rgb(0 0 0 / .58) 82%, rgb(0 0 0 / .24) 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 64%, rgb(0 0 0 / .90) 72%, rgb(0 0 0 / .58) 82%, rgb(0 0 0 / .24) 92%, transparent 100%);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -2103,7 +2296,7 @@ html[data-theme="dark"] {
 .library-content {
   min-height: 0;
   flex: 1 1 auto;
-  padding: var(--library-header-space) var(--library-gutter) 0;
+  padding: var(--library-header-space) var(--library-gutter) calc(var(--player-height) + 24px);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: auto;
@@ -2111,10 +2304,10 @@ html[data-theme="dark"] {
   scroll-padding-top: var(--library-header-space);
 }
 @media (max-width: 1120px) and (min-width: 861px) {
-  .library { --library-gutter: 20px; }
+  .library { --library-gutter: 20px; --library-header-space: 212px; }
 }
 @media (max-width: 860px) {
-  .library { --library-gutter: 16px; --library-header-space: 204px; }
+  .library { --library-gutter: 16px; --library-header-space: 216px; }
   .library-header-inner {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -2127,20 +2320,34 @@ html[data-theme="dark"] {
   .library-header-inner { gap: 8px; padding-block: 10px 8px; }
 }
 @media (min-width: 861px) {
+  .now-content { padding-bottom: calc(var(--player-height) + 24px); }
   .library-header-inner {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "heading heading"
+      "playlist tools";
     align-items: end;
     column-gap: 24px;
+    row-gap: 12px;
   }
-  .library-heading { grid-column: 1; }
-  .library-heading h1 { max-width: 18ch; line-height: 1.04; }
-  .header-actions { grid-column: 2; align-self: end; }
-  .playlist-actions { align-items: center; }
+  .library-heading { grid-area: heading; min-width: 0; }
+  .library-heading h1 {
+    max-width: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .playlist-actions { grid-area: playlist; margin: 0; align-self: center; }
   .playlist-actions .button { height: 40px; min-height: 40px; }
+  .header-actions { grid-area: tools; align-self: center; }
 }
 @media (max-width: 860px) {
-  .library-heading h1 { max-width: none; }
+  .library-heading h1 {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
 }
 .library-content::-webkit-scrollbar,
 .now-content::-webkit-scrollbar,
@@ -2169,11 +2376,11 @@ html[data-theme="dark"] {
 .label-disc { aspect-ratio: 1 / 1; }
 @media (min-width: 861px) {
   .now-header:not(.is-compact) .large-art-wrap {
-    width: min(52%, 154px);
-    max-width: min(34dvh, 154px);
+    width: min(56%, 188px);
+    max-width: min(30dvh, 188px);
     height: auto;
     aspect-ratio: 1 / 1;
-    margin: 24px auto 16px;
+    margin: 20px auto 18px;
     align-self: center;
     justify-self: center;
     border-radius: 50%;
@@ -2187,7 +2394,7 @@ html[data-theme="dark"] {
   background: var(--surface);
 }
 .queue-row.current {
-  background: color-mix(in srgb, var(--stamp) 20%, transparent);
+  background: color-mix(in srgb, var(--stamp) 10%, transparent);
 }
 .source-rail {
   box-shadow: 4px 0 14px -10px var(--shadow-color);
@@ -2203,19 +2410,26 @@ html[data-theme="dark"] {
 }
 
 
-/* Auto cover-art toggle: a real checkbox row, not a 40px-tall input block. */
+/* Auto cover-art toggle: a real checkbox row beside its label, not a 40px-tall input block. */
 .setting-block.choice {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 14px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
 }
-.setting-block.choice input[type="checkbox"] {
+.setting-block.choice > input[type="checkbox"] {
+  grid-column: 1;
+  grid-row: 1;
   width: 18px;
   height: 18px;
   min-height: 0;
   margin: 0;
+  margin-top: 2px;
   padding: 0;
   accent-color: var(--ink);
+}
+.setting-block.choice > label {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 
@@ -2269,6 +2483,16 @@ label strong { color: var(--ink); }
 .modal-header { margin-bottom: 14px; }
 textarea { min-height: 150px; max-height: 52dvh; }
 .form-actions { margin-top: 16px; }
+#metadata-dialog .metadata-form > label,
+#lyrics-dialog label[for="lyrics-text"] { color: var(--content-secondary); }
+#lyrics-text {
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+  background: color-mix(in srgb, var(--surface) 88%, var(--paper));
+  border-color: var(--rule);
+}
 
 
 /* Player identity is two lines (title, artist); a locate must never grow a third line. */
@@ -2307,7 +2531,9 @@ textarea { min-height: 150px; max-height: 52dvh; }
    place, so nothing can collide with the transport. */
 
 /* Full desktops: the transport leaves the grid and floats at the physical middle of the
-   dock, so title length and action count can never shift it. */
+   dock, so title length and action count can never shift it. The identity zone has a fixed
+   width: the track caps at min(440px, 50vw - 230px) and the actions column inside it is a
+   fixed 134px, so the action edge stays put whether the title is one word or a paragraph. */
 @media (min-width: 1121px) {
   .player-main {
     position: relative;
@@ -2315,21 +2541,35 @@ textarea { min-height: 150px; max-height: 52dvh; }
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 28px;
   }
-  .player-track { grid-column: 1; }
+  .player-track {
+    grid-column: 1;
+    width: min(440px, calc(50vw - 230px));
+    min-width: 0;
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+  .player-identity {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) 134px;
+    align-items: center;
+    gap: 8px;
+    max-width: none;
+  }
+  .player-copy { min-width: 0; }
+  .player-track-actions {
+    display: grid;
+    width: 134px;
+    grid-template-columns: repeat(4, 32px);
+    gap: 2px;
+    margin-left: 0;
+  }
   .player-utilities { grid-column: 2; justify-self: end; }
   .transport {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-  }
-  /* The transport spans 284px (142px each way) around the dock centre. The identity row is
-     capped in viewport units (percentages would resolve against the grid area) so its
-     trailing actions always stop clear of the transport's left edge, however long the
-     title gets. */
-  .player-identity {
-    justify-self: start;
-    max-width: calc(50vw - 255px);
   }
 }
 
