@@ -42,7 +42,7 @@
   --art-row: 48px;
   --rail-width: 236px;
   --panel-width: 360px;
-  --player-height: 84px;
+  --player-height: 96px;
   /* Read by updateNowHeader to work out how much height the collapse frees. Measured, not
      guessed: 132px holds the 40px tabs, the 40px close button and the 64px art. */
   --compact-header: 132px;
@@ -934,10 +934,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .progress-row {
   position: relative;
+  grid-row: 2;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 22px 2px;
+  padding: 2px 22px 4px;
+  border-top: 1px solid color-mix(in srgb, var(--glass-border) 72%, transparent);
+  background: color-mix(in srgb, var(--glass-strong) 20%, transparent);
+  border-radius: 0 0 var(--radius-panel) var(--radius-panel);
 }
 
 .progress-tooltip {
@@ -971,11 +975,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .time-label:last-child { text-align: right; }
 
 .player-main {
+  grid-row: 1;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
   align-items: center;
   gap: 22px;
-  padding: 0 22px 4px;
+  padding: 0 22px;
 }
 
 .progress {

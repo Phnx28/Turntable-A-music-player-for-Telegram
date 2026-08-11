@@ -927,6 +927,7 @@ class LayoutTests(unittest.TestCase):
                   const content = document.getElementById('library-content');
                   const transportBox = document.querySelector('.transport').getBoundingClientRect();
                   const playBox = document.getElementById('play').getBoundingClientRect();
+                  const progressBox = document.querySelector('.progress-row').getBoundingClientRect();
                   const playerBox = player.getBoundingClientRect();
                   const contentBox = content.getBoundingClientRect();
                   const hit = (selector) => {
@@ -937,6 +938,7 @@ class LayoutTests(unittest.TestCase):
                     player: { left: playerBox.left, right: playerBox.right, top: playerBox.top, bottom: playerBox.bottom,
                               radius: parseFloat(getComputedStyle(player).borderTopLeftRadius) },
                     transport: { bottom: transportBox.bottom, playBottom: playBox.bottom },
+                    progress: { top: progressBox.top, bottom: progressBox.bottom },
                     content: { bottom: contentBox.bottom, scrollable: content.scrollHeight > content.clientHeight,
                                atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1 },
                     playHit: hit('#play'), progressHit: hit('#progress'), viewport: { width: innerWidth, height: innerHeight },
@@ -947,6 +949,8 @@ class LayoutTests(unittest.TestCase):
                 self.assertLessEqual(shape["player"]["bottom"], shape["viewport"]["height"] + 1, shape)
                 self.assertLessEqual(shape["transport"]["bottom"], shape["viewport"]["height"] + 1, shape)
                 self.assertLessEqual(shape["transport"]["playBottom"], shape["viewport"]["height"] + 1, shape)
+                self.assertGreater(shape["progress"]["top"], shape["player"]["top"] + 0.5 * (shape["player"]["bottom"] - shape["player"]["top"]), shape)
+                self.assertLessEqual(abs(shape["progress"]["bottom"] - shape["player"]["bottom"]), 2, shape)
                 self.assertGreater(shape["player"]["radius"], 0, shape)
                 self.assertLessEqual(shape["content"]["bottom"], shape["player"]["top"] + 1, shape)
                 self.assertTrue(shape["content"]["scrollable"] and shape["content"]["atEnd"], shape)
