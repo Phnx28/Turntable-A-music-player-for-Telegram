@@ -183,6 +183,14 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("10:02", values, f"duration not formatted: {values}")
         self.assertIn("MPEG", values, f"audio mime type not formatted: {values}")
         self.assertIn("14.0 MB", values, f"file size not formatted: {values}")
+        detail_fonts = page.evaluate("""() => ({
+          source: getComputedStyle(document.querySelector('#track-details dt + dd')).fontFamily,
+          duration: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Duration').nextElementSibling).fontFamily,
+          format: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Format').nextElementSibling).fontFamily,
+        })""")
+        self.assertIn("Archivo", detail_fonts["source"])
+        self.assertIn("IBM Plex Mono", detail_fonts["duration"])
+        self.assertIn("IBM Plex Mono", detail_fonts["format"])
 
         # Actions must be reachable without scrolling the pane: DOCUMENT_POSITION_FOLLOWING (4)
         # means the list comes after the actions.
@@ -967,6 +975,37 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("none", shape["blurPointerEvents"])
         page.locator("#track-search").click()
         self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
+
+    def test_mixed_typography_roles_are_rendered_without_font_picker(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        fonts = page.evaluate("""() => {
+          const family = (selector) => getComputedStyle(document.querySelector(selector)).fontFamily;
+          return {
+            title: family('.track-row .track-copy strong'),
+            artist: family('.track-row .track-copy small'),
+            source: family('.source-copy strong'),
+            heading: family('.library-heading h1'),
+            tab: family('.tab'),
+            button: family('.button'),
+            ordinal: family('.track-ordinal'),
+            posted: family('.track-posted'),
+            duration: family('.track-duration'),
+            count: family('.source-count'),
+            time: family('.time-label'),
+            attribution: family('.lyrics-attribution'),
+            summary: family('.library-heading .small-copy'),
+            picker: document.querySelector('[data-setting="font"]'),
+            dataFont: document.documentElement.dataset.font || null,
+          };
+        }""")
+        for name in ("title", "artist", "source", "heading", "tab", "button"):
+            self.assertIn("Archivo", fonts[name], f"{name} must use the human-facing type: {fonts}")
+        for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary"):
+            self.assertIn("IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}")
+        self.assertIsNone(fonts["picker"])
+        self.assertIsNone(fonts["dataFont"])
 
     def test_library_header_toolbar_aligns_and_long_titles_wrap_intentionally(self):
         page = self.page(1440, 900)

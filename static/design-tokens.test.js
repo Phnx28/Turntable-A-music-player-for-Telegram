@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const RAW = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+const HTML = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const APP = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 // Blank comments in place: deleting them shifts line numbers, so failures would cite the wrong
 // rule. Same length, same newlines, no comment content.
 const CSS = RAW.replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "));
@@ -125,9 +127,23 @@ test("--stamp marks only the currently playing track", () => {
     `--stamp has exactly one job. Found it in:\n${violations.join("\n")}`);
 });
 
+test("Turntable owns one mixed typographic system", () => {
+  assert.doesNotMatch(HTML, /data-font|data-setting="font"|data-value="(?:sans|serif|mono)"/);
+  assert.doesNotMatch(APP, /data-font|dataset\.font|tm-font|\[\["theme",\s*"font"\]/);
+  assert.doesNotMatch(CSS, /--font-serif|html\[data-font=/);
+  assert.match(CSS, /--font-data:\s*"IBM Plex Mono"/);
+  assert.match(CSS, /--font-display:\s*"Archivo",\s*var\(--font-ui\)/);
+});
+
+test("mixed typography assigns human-facing and data-facing roles", () => {
+  assert.match(CSS, /\.brand-line, \.source-copy strong, \.track-copy strong[\s\S]*?font-family:\s*var\(--font-ui\)/);
+  assert.match(CSS, /\.utility,[\s\S]*?\.source-copy small,[\s\S]*?\.source-count[\s\S]*?font-family:\s*var\(--font-data\)/);
+  assert.match(CSS, /\.tab, \.button, \.text-button[\s\S]*?font-family:\s*var\(--font-ui\)/);
+});
+
 test("no hex literal outside the token blocks", () => {
-  // The three token blocks end at the html[data-font] remaps; everything after is component CSS.
-  const firstComponentLine = LINES.findIndex((line) => /^html\[data-font="serif"\]/.test(line));
+  // The token blocks end before the first global component rule.
+  const firstComponentLine = LINES.findIndex((line) => /^\* \{ box-sizing: border-box; \}/.test(line));
   assert.notEqual(firstComponentLine, -1, "could not locate the end of the token blocks");
   const strays = [];
   LINES.slice(firstComponentLine).forEach((line, offset) => {

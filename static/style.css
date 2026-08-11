@@ -30,8 +30,7 @@
   --dur-2: 180ms;
   --dur-3: 280ms;
   --font-ui: "Archivo", Avenir, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: Iowan Old Style, Palatino Linotype, Georgia, serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  --font-data: "IBM Plex Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
   --font-display: "Archivo", var(--font-ui);
   --text-display: clamp(32px, 5vw, 44px);
   --text-title: 22px;
@@ -177,10 +176,6 @@ html { scroll-behavior: smooth; }
   src: url("fonts/plex-mono-500.woff2") format("woff2");
 }
 
-html[data-font="serif"] { --font-ui: var(--font-serif); }
-html[data-font="serif"] .library-heading h1 { --font-display: var(--font-serif); letter-spacing: -.02em; }
-html[data-font="mono"] { --font-ui: var(--font-mono); --font-display: var(--font-mono); }
-
 * { box-sizing: border-box; }
 
 html, body {
@@ -238,7 +233,7 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
 .eyebrow,
 .utility {
   margin: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-data);
   font-size: var(--text-micro);
   font-weight: 500;
   letter-spacing: .085em;
@@ -246,7 +241,21 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
   text-transform: uppercase;
 }
 .eyebrow { letter-spacing: .1em; }
-.eyebrow, .now-title h2, .library-heading h1, .modal-header h2 { font-family: var(--font-display); }
+.now-title h2, .library-heading h1, .modal-header h2 { font-family: var(--font-display); }
+
+/* One product-owned type system: Archivo carries human-facing language; Plex Mono carries data. */
+:where(.brand-line, .source-copy strong, .track-copy strong, .track-copy small, .track-source,
+  .player-copy strong, .player-copy small, .now-title h2, .now-title p, .library-heading h1,
+  .modal-header h2, .tab, .button, .text-button, .settings-nav button, label, input, select,
+  textarea, .empty-state h2, .global-result strong, .discover-copy strong) {
+  font-family: var(--font-ui);
+}
+:where(.utility, .source-copy small, .source-kind, .source-count, .track-ordinal, .track-posted, .track-duration,
+  .library-heading .small-copy, .time-label, .volume-pct, .lyrics-attribution, .details-pane dt,
+  .details-pane dd.detail-data, .result-provenance, .sync-strip, .dialog-status, .login-status, .restart-notice, .field-label,
+  .sort-control select, .queue-state, .cache-state, .discover-copy small) {
+  font-family: var(--font-data);
+}
 
 .muted { color: var(--graphite); }
 .small-copy { color: var(--graphite); font-size: 13px; }
@@ -302,7 +311,7 @@ textarea {
 }
 
 input { height: 42px; padding: 0 12px; }
-textarea { min-height: 150px; padding: 12px; resize: vertical; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+textarea { min-height: 150px; padding: 12px; resize: vertical; font-family: var(--font-ui); font-size: 12px; line-height: 1.6; }
 input::placeholder, textarea::placeholder { color: var(--graphite); opacity: .75; }
 
 .button {
@@ -441,9 +450,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-results-head strong { display: block; margin-top: 5px; font-size: 19px; letter-spacing: -.025em; }
 .global-search-signal { position: relative; display: flex; align-items: center; gap: 9px; min-height: 35px; overflow: hidden; color: var(--graphite); }
 .global-search-signal span { width: 7px; height: 7px; border-radius: 50%; background: var(--graphite); outline: 0 solid color-mix(in srgb, var(--graphite) 60%, transparent); animation: search-pulse 1.2s var(--ease-out) infinite; }
-.global-search-signal small { font-family: var(--font-mono); font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .055em; }
+.global-search-signal small { font-family: var(--font-data); font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .055em; }
 .global-result-group:empty { display: none; }
-.global-result-group h3 { margin: 14px 0 5px; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.global-result-group h3 { margin: 14px 0 5px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 .global-result {
   display: grid;
   width: 100%;
@@ -585,7 +594,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
 .sort-control { display: flex; height: 40px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
 .sort-control:has(select:focus-visible) { outline: 0; }
-.sort-control select { height: 38px; min-height: 38px; padding: 0 30px 0 10px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-mono); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
+.sort-control select { height: 38px; min-height: 38px; padding: 0 30px 0 10px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
 .sort-control select:focus-visible { outline: 0; box-shadow: none; }
 .sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
 
@@ -646,7 +655,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   height: var(--day-separator-height);
   align-items: center;
   color: var(--graphite);
-  font-family: var(--font-mono);
+  font-family: var(--font-data);
   font-size: var(--text-micro);
   letter-spacing: .08em;
 }
@@ -674,9 +683,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .track-copy small { margin-top: 1px; color: var(--content-secondary); font-size: var(--text-data); }
 .track-source, .track-posted, .track-duration { color: var(--content-secondary); }
 .track-source { overflow: hidden; font-size: var(--text-data); text-overflow: ellipsis; white-space: nowrap; }
-.track-duration { overflow: hidden; font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.track-ordinal { color: var(--content-tertiary); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
-.track-posted { font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
+.track-duration { overflow: hidden; font-family: var(--font-data); font-size: var(--text-data); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.track-ordinal { color: var(--content-tertiary); font-family: var(--font-data); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
+.track-posted { font-family: var(--font-data); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
 .track-ordinal { text-align: right; }
 /* The playing row's ordinal becomes the one stamped mark on screen. */
 .playing-mark { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--stamp); box-shadow: 0 0 0 3px color-mix(in srgb, var(--stamp) 20%, transparent); }
@@ -884,7 +893,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab.active::after { transform: scaleX(1); }
 
 .lyrics-pane { display: flex; flex-direction: column; min-height: 300px; padding-top: 18px; }
-.lyrics-attribution { order: 99; margin: 24px 0 0; padding-top: 14px; border-top: 1px solid var(--rule-soft); color: var(--graphite); font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.lyrics-attribution { order: 99; margin: 24px 0 0; padding-top: 14px; border-top: 1px solid var(--rule-soft); color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 /* min-width: 0 because a grid track defaults to min-width: auto, so it refuses to shrink
    below its longest word and pushes the whole pane wide. One stored sheet here has a 78
    character rule of hyphens, which overflowed the panel by 101px on mobile and 132px on a
@@ -914,7 +923,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   .details-pane dl { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
   .details-pane dl div { grid-column: 1 / -1; grid-template-columns: subgrid; }
 }
-.details-pane dt { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); text-transform: uppercase; }
+.details-pane dt { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); text-transform: uppercase; }
 .details-pane dd { margin: 0; overflow-wrap: anywhere; }
 .detail-actions { display: grid; gap: 8px; margin-bottom: 24px; }
 .detail-actions .button { width: 100%; justify-content: flex-start; }
@@ -956,7 +965,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-radius: var(--radius-art);
   background: var(--ink);
   color: var(--paper);
-  font-family: var(--font-mono);
+  font-family: var(--font-data);
   font-size: var(--text-data);
   font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -968,7 +977,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .progress-tooltip.is-visible { opacity: 1; }
 
 .time-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-data);
   font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--graphite);
@@ -1045,7 +1054,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .volume-control input::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--ink); opacity: 0.6; transition: opacity var(--dur-1) var(--ease-out); }
 .volume-control:hover input::-webkit-slider-thumb, .volume-control input:focus-visible::-webkit-slider-thumb { opacity: 1; }
 .volume-control:hover input::-moz-range-thumb, .volume-control input:focus-visible::-moz-range-thumb { opacity: 1; }
-.volume-pct { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; width: 3ch; text-align: right; }
+.volume-pct { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-data); font-variant-numeric: tabular-nums; width: 3ch; text-align: right; }
 
 .modal {
   width: min(92vw, 580px);
@@ -1078,7 +1087,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 .discover-list.is-revealing .discover-row:nth-child(n+7) { animation-delay: 132ms; }
 .discover-row { display: grid; min-height: 58px; grid-template-columns: 1fr auto; align-items: center; gap: 16px; border-bottom: 1px solid var(--rule-soft); }
 .discover-copy strong, .discover-copy small { display: block; }
-.discover-copy small { margin-top: 3px; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); text-transform: uppercase; }
+.discover-copy small { margin-top: 3px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); text-transform: uppercase; }
 
 .metadata-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; }
 :where(.metadata-form) label { display: grid; gap: 8px; }
@@ -1099,8 +1108,6 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 .segmented button { min-height: 40px; border: 0; border-right: 1px solid var(--rule); background: transparent; cursor: pointer; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out); }
 .segmented button:last-child { border-right: 0; }
 .segmented button.active { background: var(--ink); color: var(--paper); }
-.type-options button:nth-child(2) { font-family: var(--font-serif); }
-.type-options button:nth-child(3) { font-family: var(--font-mono); }
 .danger-zone { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--rule); }
 /* The Network pane's danger zone holds only a sign-out button that is hidden unless a password
    session exists, leaving a bare 21px rule floating under the pane. :has() collapses it when
@@ -1285,7 +1292,7 @@ img.source-avatar { object-fit: cover; }
 .source-copy strong, .source-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-copy strong { font-size: 13px; font-weight: 620; }
 .source-copy small { margin-top: 2px; color: var(--graphite); font-size: 11px; }
-.source-count { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
+.source-count { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
 /* Always rendered, never opacity: 0. The count used to live inside an invisible overlay that
    also painted over the title on hover -- two bugs from one piece of hidden content. */
 .source-menu { width: 30px; height: 30px; color: var(--graphite); }
@@ -1324,9 +1331,9 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .sidebar-collapsed .sync-all svg { width: 17px; height: 17px; }
 
 .playlist-actions { display: flex; gap: 8px; margin-top: 16px; }
-.playlist-actions .button { height: 36px; min-height: 36px; padding: 0 14px; font-size: 11px; letter-spacing: .055em; text-transform: uppercase; font-family: var(--font-mono); font-weight: 500; }
+.playlist-actions .button { height: 36px; min-height: 36px; padding: 0 14px; font-size: 11px; letter-spacing: .055em; text-transform: uppercase; font-family: var(--font-ui); font-weight: 500; }
 .playlist-actions .button.primary { padding-inline: 16px; }
-.sync-strip { position: relative; display: flex; min-height: 30px; align-items: center; padding: 0 30px; overflow: hidden; border-bottom: 1px solid var(--rule-soft); color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); transition: opacity var(--dur-3) var(--ease-out); }
+.sync-strip { position: relative; display: flex; min-height: 30px; align-items: center; padding: 0 30px; overflow: hidden; border-bottom: 1px solid var(--rule-soft); color: var(--graphite); font-family: var(--font-data); font-size: var(--text-data); transition: opacity var(--dur-3) var(--ease-out); }
 .sync-strip.is-complete { opacity: 0; }
 .sync-motion { position: absolute; bottom: 0; left: 0; width: 32%; height: 2px; background: var(--ink); animation: sync-pass 1.4s var(--ease-out) infinite; }
 @keyframes sync-pass { from { transform: translateX(-110%); } to { transform: translateX(420%); } }
@@ -1358,7 +1365,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
   background: color-mix(in srgb, var(--surface) 78%, transparent);
   color: var(--ink);
 }
-#repeat-badge { position: absolute; right: 5px; bottom: 4px; font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; font-weight: 800; }
+#repeat-badge { position: absolute; right: 5px; bottom: 4px; font-family: var(--font-data); font-size: var(--text-data); font-variant-numeric: tabular-nums; font-weight: 800; }
 
 /* Panel motion. The panel used to fade in with the generic surface-in and then vanish with
    no exit at all, because closePanel just set [hidden] -- so opening was soft and closing
@@ -1389,14 +1396,14 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .queue-row.played { opacity: .55; }
 .queue-row.current { background: color-mix(in srgb, var(--stamp) 30%, transparent); opacity: 1; }
 .queue-copy { min-width: 0; padding: 8px 10px; border: 0; background: transparent; cursor: inherit; text-align: left; }
-.queue-state { display: block; margin-bottom: 2px; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); font-variant-numeric: tabular-nums; letter-spacing: .06em; text-transform: uppercase; }
+.queue-state { display: block; margin-bottom: 2px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-variant-numeric: tabular-nums; letter-spacing: .06em; text-transform: uppercase; }
 .queue-row strong, .queue-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue-row strong { font-size: 12px; }
 .queue-row small { color: var(--graphite); font-size: var(--text-micro); }
 .queue-empty { display: grid; place-items: center; padding: 48px 20px; text-align: center; color: var(--graphite); font-size: 13px; }
 .queue-empty strong { color: var(--ink); font-size: 13px; }
 .queue-empty .button { min-height: 34px; margin-top: 8px; }
-.cache-state { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); font-variant-numeric: tabular-nums; text-transform: uppercase; }
+.cache-state { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-variant-numeric: tabular-nums; text-transform: uppercase; }
 .cache-state.ready { color: var(--ok); }
 
 /* Final optical pass: give the expanded record a little more air above it while keeping the
@@ -1441,7 +1448,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .discover-filters { display: flex; align-items: center; gap: 8px; }
 .discover-filters input, .discover-filters select { min-height: 34px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); font-size: 12px; }
 .discover-filters input { height: 34px; }
-.discover-group h3 { position: sticky; z-index: 1; top: -27px; margin: 0; padding: 14px 0 8px; background: var(--surface); color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
+.discover-group h3 { position: sticky; z-index: 1; top: -27px; margin: 0; padding: 14px 0 8px; background: var(--surface); color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .discover-row { grid-template-columns: 36px 1fr auto; padding: 5px 0; }
 .discover-row.pending { background: var(--surface); }
 .discover-row input { accent-color: var(--ink); }
@@ -1472,7 +1479,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 /* A 0-20 number and a three-option select do not need the full dialog width; a full-bleed input
    implies free text and makes the value harder to read against its label. */
 .setting-block.narrow input, .setting-block.narrow select { max-width: 200px; }
-.field-label { margin: 0 0 6px; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
+.field-label { margin: 0 0 6px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .account-summary { margin-bottom: 26px; }
 .account-name { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
 .danger-title { color: var(--danger); }
@@ -1593,7 +1600,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .method-heading { display: flex; min-height: 51px; align-items: center; gap: 12px; margin-bottom: 22px; }
 .method-heading h2 { margin: 0 0 4px; font-size: 18px; font-weight: 650; letter-spacing: -.025em; }
 .method-heading p { margin: 0; color: var(--graphite); font-size: 11px; }
-.method-mark { display: grid; min-width: 34px; height: 25px; place-items: center; padding: 1px 7px 0; border: 1px solid var(--rule); border-radius: var(--radius-pill); color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); letter-spacing: .05em; line-height: 1; text-indent: .05em; }
+.method-mark { display: grid; min-width: 34px; height: 25px; place-items: center; padding: 1px 7px 0; border: 1px solid var(--rule); border-radius: var(--radius-pill); color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .05em; line-height: 1; text-indent: .05em; }
 .qr-stage { position: relative; display: grid; min-height: 255px; place-items: center; overflow: hidden; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--ink); }
 .qr-stage::after { position: absolute; right: 16px; bottom: 14px; left: 16px; height: 1px; background: var(--paper); content: ""; opacity: 0; transform: scaleX(1); transform-origin: left; }
 .qr-stage[aria-busy="false"]::after { opacity: .65; animation: qr-progress 30s linear forwards; }
@@ -1626,7 +1633,7 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .phone-field { display: grid; height: 42px; grid-template-columns: auto 1fr; align-items: center; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--paper); transition: box-shadow var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out); }
 .phone-field:hover { border-color: var(--ink); }
 .phone-field:focus-within { border-color: var(--ink); box-shadow: var(--focus-ring); }
-.phone-field span { min-width: 48px; padding-left: 12px; border-right: 1px solid var(--rule); color: var(--graphite); font-family: var(--font-mono); font-size: 12px; }
+.phone-field span { min-width: 48px; padding-left: 12px; border-right: 1px solid var(--rule); color: var(--graphite); font-family: var(--font-data); font-size: 12px; }
 .phone-field input, .phone-field input:focus-visible { height: 40px; border: 0; background: transparent; outline: 0; box-shadow: none; }
 .field-help { margin: -2px 0 5px; color: var(--graphite); font-size: var(--text-micro); }
 
@@ -1641,12 +1648,12 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .combo-option.is-active { background: var(--ink); color: var(--paper); }
 .combo-flag { font-size: 15px; line-height: 1; }
 .combo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.combo-dial { color: var(--graphite); font-family: var(--font-mono); font-size: 11px; }
+.combo-dial { color: var(--graphite); font-family: var(--font-data); font-size: 11px; }
 .combo-option.is-active .combo-dial { color: color-mix(in srgb, var(--paper) 70%, transparent); }
 .combo-empty { padding: 12px 10px; color: var(--graphite); font-size: 11px; text-align: center; }
 @keyframes combo-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes combo-out { from { opacity: 1; } to { opacity: 0; } }
-.stage-kicker { margin: 0 0 5px; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
+.stage-kicker { margin: 0 0 5px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .login-stage .text-button { justify-self: start; margin-top: 2px; }
 .login-status { min-height: 36px; margin: 12px 0 0; }
 #qr-status { transition: opacity var(--dur-2) var(--ease-out); }

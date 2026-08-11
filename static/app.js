@@ -242,14 +242,12 @@ function applyPreferences() {
   // so an existing install lands on the single accent rather than whatever it last chose.
   localStorage.removeItem("tm-accent");
   delete document.documentElement.dataset.accent;
-  for (const [name, fallback] of [["theme", "system"], ["font", "sans"]]) {
-    const value = localStorage.getItem(`tm-${name}`) || fallback;
-    document.documentElement.dataset[name] = value;
-    document.querySelectorAll(`[data-setting="${name}"] [data-value]`).forEach((button) => {
-      const active = button.dataset.value === value;
-      button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
-    });
-  }
+  const theme = localStorage.getItem("tm-theme") || "system";
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll('[data-setting="theme"] [data-value]').forEach((button) => {
+    const active = button.dataset.value === theme;
+    button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active));
+  });
 
   $("app-shell").classList.toggle("sidebar-collapsed", localStorage.getItem("tm-sidebar") === "collapsed");
   document.documentElement.style.setProperty("--rail-width", `${Math.max(220, Math.min(420, Number(localStorage.getItem("tm-rail-width")) || 260))}px`);
@@ -971,7 +969,7 @@ function renderGlobalSearch(message = "") {
     ? `First ${found} results`
     : `${found} ${found === 1 ? "result" : "results"}`;
   $("global-source-results").innerHTML = state.globalSources.length
-    ? `<h3>Telegram sources</h3>${state.globalSources.map((source) => `<button class="global-result" type="button" data-global-source="${source.chatId}"><span class="result-art-wrap">${avatarMarkup(source)}</span><span class="track-copy"><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${source.trackCount ? ` · ${source.trackCount.toLocaleString()} known tracks` : ""}</small></span><span class="result-provenance">${source.selected ? "In your library" : "On Telegram"}</span><span class="track-duration utility"></span></button>`).join("")}`
+    ? `<h3>Telegram sources</h3>${state.globalSources.map((source) => `<button class="global-result" type="button" data-global-source="${source.chatId}"><span class="result-art-wrap">${avatarMarkup(source)}</span><span class="track-copy"><strong>${escapeHtml(source.title)}</strong><small><span class="source-kind">${escapeHtml(sourceKindLabel(source.kind))}</span>${source.trackCount ? ` · <span class="source-count">${source.trackCount.toLocaleString()} known tracks</span>` : ""}</small></span><span class="result-provenance">${source.selected ? "In your library" : "On Telegram"}</span><span class="track-duration utility"></span></button>`).join("")}`
     : "";
   $("global-track-results").innerHTML = state.globalTracks.length
     ? `<h3>Tracks</h3>${state.globalTracks.map((track) => `<button class="global-result" type="button" data-global-track="${escapeHtml(track.key)}"><span class="result-art-wrap"><img class="row-art" src="${mediaUrl(track)}?v=${encodeURIComponent(track.artworkVersion || "telegram")}" alt="" loading="lazy"></span><span class="track-copy"><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artist || "Unknown artist")} · ${escapeHtml(track.source.title)}</small></span><span class="result-provenance">${track.source.selected ? "In your library" : "On Telegram"}</span><span class="track-duration utility">${formatTime(track.durationMs / 1000)}</span></button>`).join("")}`
@@ -1065,6 +1063,7 @@ function detailRowsFor(track) {
   const now = Math.floor(Date.now() / 1000);
   const disc = Number(metadata.discNumber) || 0;
   const number = Number(metadata.trackNumber) || 0;
+  const dataKeys = new Set(["Year", "Duration", "Posted", "Track", "Disc", "Format", "File", "Size"]);
   return [
     ["Source", track.source?.title],
     ["Album", metadata.album],
@@ -1078,7 +1077,7 @@ function detailRowsFor(track) {
     ["Format", (track.file?.mimeType || "").replace(/^audio\//, "").toUpperCase()],
     ["File", track.file?.name],
     ["Size", track.file?.size ? `${(track.file.size / 1048576).toFixed(1)} MB` : ""],
-  ].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  ].filter(([, value]) => value).map(([key, value]) => `<div><dt>${key}</dt><dd class="${dataKeys.has(key) ? "detail-data" : ""}">${escapeHtml(value)}</dd></div>`).join("");
 }
 
 window.__renderDetailsForTest = (track) => { $("track-details").innerHTML = detailRowsFor(track); };
