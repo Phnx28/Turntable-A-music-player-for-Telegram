@@ -1973,23 +1973,27 @@ html[data-theme="dark"] {
   top: 0;
   right: 0;
   left: 0;
-  height: calc(var(--library-header-space) + 24px);
+  height: calc(var(--library-header-space) + 48px);
   pointer-events: none;
+  background: var(--paper);
   background: linear-gradient(
     to bottom,
     var(--glass-strong) 0%,
-    var(--glass-strong) 44%,
-    color-mix(in srgb, var(--glass-strong) 72%, transparent) 68%,
+    var(--glass-strong) 35%,
+    color-mix(in srgb, var(--glass-strong) 90%, transparent) 50%,
+    color-mix(in srgb, var(--glass-strong) 60%, transparent) 67%,
+    color-mix(in srgb, var(--glass-strong) 25%, transparent) 82%,
     transparent 100%
   );
   backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
   -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.03);
-  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 48%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 48%, transparent 100%);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 35%, rgb(0 0 0 / .90) 50%, rgb(0 0 0 / .60) 67%, rgb(0 0 0 / .25) 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) 0%, rgb(0 0 0) 35%, rgb(0 0 0 / .90) 50%, rgb(0 0 0 / .60) 67%, rgb(0 0 0 / .25) 82%, transparent 100%);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .library-header-blur {
+    background: var(--paper);
     background: linear-gradient(
       to bottom,
       color-mix(in srgb, var(--paper) 94%, transparent) 0%,

@@ -929,6 +929,27 @@ class LayoutTests(unittest.TestCase):
         self.assertLess(shape["titleHeight"], shape["lineHeight"] * 3.1, shape)
         self.assertLessEqual(abs(shape["playBottom"] - shape["filterBottom"]), 1, shape)
 
+    def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        shape = page.evaluate("""() => {
+          const library = document.getElementById('library');
+          const blur = document.querySelector('.library-header-blur');
+          const style = getComputedStyle(blur);
+          const space = parseFloat(getComputedStyle(library).getPropertyValue('--library-header-space'));
+          return {
+            height: parseFloat(style.height),
+            space,
+            filter: style.backdropFilter || style.webkitBackdropFilter,
+            mask: style.maskImage || style.webkitMaskImage,
+          };
+        }""")
+        self.assertGreaterEqual(shape["height"] - shape["space"], 48, shape)
+        self.assertIn("36px", shape["filter"], shape)
+        self.assertIn("50%", shape["mask"], shape)
+        self.assertIn("67%", shape["mask"], shape)
+        self.assertIn("82%", shape["mask"], shape)
+
     def test_ambient_artwork_is_one_noninteractive_surface(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
