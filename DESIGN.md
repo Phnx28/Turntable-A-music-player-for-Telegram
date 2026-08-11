@@ -132,7 +132,7 @@ Operate / music-library application.
 
 ### Signature effect
 
-Content physically scrolls beneath a 36px progressive glass layer whose falloff extends 48px beyond the reserved header space. Glass belongs where a surface overlays moving content, not on every component.
+Content physically scrolls beneath a 36px progressive glass layer with a strong header-specific tint and a falloff that extends 70px beyond the reserved header space, so the title and toolbar stay in the strongest frosted zone and the first sharp track emerges below the toolbar. Glass belongs where a surface overlays moving content, not on every component.
 
 ### Blur scale
 
@@ -266,6 +266,40 @@ The system uses quiet layered shadows over tonal layering. Most library content 
 - **Shape:** Dense `64px` rows with `48px` artwork and aligned mono metadata columns.
 - **State:** Ordinary rows stay flat; hover uses a surface shift; the current row uses a restrained Vinyl Red tint and a small playback mark.
 - **Overflow:** Track titles, artists, and source names truncate with ellipses while timestamps and counts remain aligned.
+
+## 5.1 Final component rules
+
+### Library header
+- Progressive **36px glass**, one physical plane, strong tint through the toolbar (`--header-glass-top` = 84% paper), mask anchored at 64/72/82/92%.
+- The source title takes a **full row on desktop**: one line, truncating with ellipsis past the viewport; wrapping returns at `<=860px`.
+- Play/Shuffle and the toolbar sit on a second row beneath the title at `>=861px`.
+- Search is a **low-chrome command surface**: 34px, translucent rest state, ink border on focus, `Search tracks` copy; `/` focuses it when no dialog is open.
+- Sort is a **menu trigger** (`.sort-trigger`) that reuses the shared context-menu popover; the hidden `#track-sort` select remains the state source and the track-head sorts re-sync the visible label.
+
+### Player dock
+- **Uniform 36px glass**, one glass body: `--glass-medium` background, `blur(36px)`, `16px` insets on the paper canvas, no progressive mask.
+- Progress row is part of the same material: transparent background, 32% glass border.
+- Fixed left identity/action zone at `>=1121px`: track capped at `min(440px, 50vw - 230px)`, actions in a fixed 134px column, so the action edge never moves with title length; the title truncates first.
+- **Transport physically centered** at `>=1121px` (absolute at 50%); 861–1120 keeps the in-flow three-column grid; `<=860px` keeps the two-row mobile player with the transport on its own row.
+- Transport spacing: 14px gaps, 8px play margins; shuffle/repeat stay quiet mode controls with no boxed cluster.
+
+### Now Playing
+- Expanded disc up to **188px** (56% / 30dvh cap) with an 18px band before the title; panel width unchanged; no art glow or gradient.
+- Active lyric line is typographically distinct (650 vs 520 weight, ink color); no glow, pulse, karaoke gradient, or red.
+- Queue suppresses redundant default labels: only Played/Playing render, upcoming rows carry no `Up next`/`queued` noise, cache badges appear only for real prefetch states; current-row wash is 10%.
+- Details actions are a compact wrapping row of 34px text buttons.
+
+### Source rail
+- Source sort is a **compact menu trigger** reusing the shared popover; drag reordering forces Custom order and re-syncs localStorage and the label.
+- Expanded global search stays a full field at 38px with a quiet rest state; collapsed mode unboxes the 46px target until hover/focus.
+- Repeated per-source ellipsis hides until row interaction; active rows and keyboard focus still reveal it.
+- Sync / Add / **Settings share one `.rail-utility-button` geometry** (18px icon column, 9px inset); Settings has a gear icon and stays available when the rail is collapsed.
+- The collapse chevron rotates with state and aria/title always match; the collapsed state restores from localStorage.
+
+### Settings
+- **20px secondary glass**: translucent raised modal, dim-only backdrop.
+- Stable two-column frame; content viewport is a fixed 300px that scrolls per-pane, so the dialog never resizes between tabs.
+- Theme segmented control capped at 380px; Network uses explicit vertical radio-like rows; no category-icon clutter.
 
 ## 6. Do's and Don'ts
 

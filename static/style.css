@@ -254,7 +254,7 @@ svg [stroke] { vector-effect: non-scaling-stroke; stroke-width: var(--icon-strok
   .library-heading .small-copy, .time-label, .volume-pct, .lyrics-attribution, .details-pane dt,
   .details-pane dd.detail-data, #global-results-count, #bulk-count, #cache-usage, #password-state-label,
   #qr-status, .result-provenance, .sync-strip, .dialog-status, .login-status, .restart-notice, .field-label,
-  .sort-control select, .queue-state, .cache-state, .discover-copy small) {
+  .sort-trigger, .queue-state, .cache-state, .discover-copy small) {
   font-family: var(--font-data);
 }
 
@@ -527,25 +527,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .source-mark { width: 7px; height: 7px; border: 1px solid var(--graphite); border-radius: 50%; }
 .source-link.active .source-mark { border-color: var(--ink); background: var(--ink); }
 
-.add-source {
-  display: flex;
-  min-height: 43px;
-  align-items: center;
-  gap: 9px;
-  margin-top: 16px;
-  padding: 0 9px;
-  border: 1px dashed var(--rule);
-  border-radius: var(--radius-control);
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-}
-.sync-all { display: inline-flex; align-items: center; gap: 6px; margin: 14px 9px 0; }
-.sync-all svg { width: 12px; height: 12px; }
-.add-source:hover { border-style: solid; border-color: var(--ink); }
-.rail-footer { display: flex; justify-content: space-between; padding: 18px 7px 0; }
-
 .text-button { padding: 0; border: 0; background: transparent; color: var(--graphite); cursor: pointer; font-size: 11px; transition: color var(--dur-1) var(--ease-out); }
 .text-button:hover { color: var(--ink); }
 .text-button.danger { color: var(--danger); }
@@ -596,15 +577,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   border-color: var(--ink);
   background: color-mix(in srgb, var(--surface) 78%, transparent);
 }
-.search-control:has(input:focus-visible), .sort-control:has(select:focus-visible) { border-color: var(--ink); } /* one ink, no double paper halo */
+.search-control:has(input:focus-visible) { border-color: var(--ink); } /* one ink, no double paper halo */
 .search-control svg { width: 16px; height: 16px; color: var(--graphite); }
 .search-control input { height: auto; padding: 0; border: 0; background: transparent; outline: 0; }
 .search-control input:focus-visible, .global-search-control input:focus-visible { box-shadow: none; }
-.sort-control { display: flex; height: 34px; align-items: center; gap: 0; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--surface); overflow: hidden; }
-.sort-control:has(select:focus-visible) { outline: 0; }
-.sort-control select { height: 32px; min-height: 32px; padding: 0 26px 0 9px; border: 0; background: transparent; color: var(--graphite); font-family: var(--font-data); font-size: 11px; letter-spacing: .055em; text-transform: uppercase; outline: 0; box-shadow: none; appearance: none; }
-.sort-control select:focus-visible { outline: 0; box-shadow: none; }
-.sort-control::after { content: "⌄"; margin-right: 9px; margin-left: -18px; color: var(--graphite); font-size: 12px; line-height: 1; pointer-events: none; }
 
 .sort-trigger {
   display: inline-flex;
@@ -1981,14 +1957,6 @@ html[data-theme="dark"] {
 .source-link:focus-visible { background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); }
 .source-link.active { background: color-mix(in srgb, var(--surface) 68%, var(--rail) 32%); }
 .source-link.active:hover { background: color-mix(in srgb, var(--surface-raised) 72%, var(--rail) 28%); }
-.add-source {
-  border: 0;
-  background: transparent;
-  color: color-mix(in srgb, var(--ink) 62%, var(--graphite));
-}
-.add-source:hover { border-color: transparent; background: color-mix(in srgb, var(--surface) 54%, var(--rail) 46%); color: var(--ink); }
-.sync-all { color: color-mix(in srgb, var(--ink) 62%, var(--graphite)); }
-.rail-footer { padding-top: 14px; }
 .rail-utilities {
   margin-top: 12px;
   padding-top: 8px;
