@@ -37,9 +37,9 @@
   --text-small: 13px;
   --text-micro: 11px;
   --text-data: 12px;
-  --row-height: 52px;
+  --row-height: 64px;
   --day-separator-height: 28px;
-  --art-row: 40px;
+  --art-row: 48px;
   --rail-width: 236px;
   --panel-width: 360px;
   --player-height: 84px;
@@ -424,8 +424,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-result {
   display: grid;
   width: 100%;
-  min-height: var(--row-height);
-  grid-template-columns: var(--art-row) minmax(0, 1fr) auto 64px;
+  min-height: 52px;
+  grid-template-columns: 40px minmax(0, 1fr) auto 64px;
   align-items: center;
   gap: 12px;
   padding: 7px 5px;
@@ -441,7 +441,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .global-result small { margin-top: 3px; color: var(--graphite); font-size: var(--text-small); }
 .global-result .track-copy strong { font-size: var(--text-body); }
 .global-result .track-copy small { font-size: var(--text-small); }
-.result-art-wrap { width: var(--art-row); height: var(--art-row); }
+.result-art-wrap { width: 40px; height: 40px; }
+.global-result .row-art { width: 40px; height: 40px; }
 .result-provenance { color: var(--graphite); font-size: var(--text-micro); white-space: nowrap; }
 .global-results .empty-copy { margin: 14px 0 6px; padding: 10px 12px; border: 1px dashed var(--rule); border-radius: var(--radius-control); background: color-mix(in srgb, var(--surface) 88%, var(--paper) 12%); color: var(--graphite); font-size: 12px; }
 @keyframes search-pulse { to { outline: 10px solid transparent; } }
@@ -632,12 +633,12 @@ body.resizing { cursor: col-resize; user-select: none; }
   height: var(--row-height);
   padding: 8px 7px;
   border: 0;
-  border-bottom: 1px solid var(--rule-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--rule-soft) 54%, transparent);
   background: transparent;
   cursor: pointer;
   text-align: left;
 }
-.track-row:hover { background: var(--surface); }
+.track-row:hover { background: color-mix(in srgb, var(--surface) 58%, transparent); }
 /* Background only, matching .source-link.active: no left bar anywhere. The stamp marks the
    track that is playing. */
 .track-row.current { background: color-mix(in srgb, var(--stamp) 30%, transparent); }
@@ -646,11 +647,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .row-art { width: var(--art-row); height: var(--art-row); flex: 0 0 auto; border: 1px solid var(--rule); border-radius: var(--radius-art); background: var(--surface); object-fit: cover; }
 .track-copy, .player-copy { min-width: 0; }
 .track-copy strong, .track-copy small, .player-copy strong, .player-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-copy strong { font-size: 14px; font-weight: 650; }
-.track-copy small { margin-top: 3px; color: var(--graphite); font-size: 12px; }
-.track-source { overflow: hidden; color: var(--graphite); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.track-duration { overflow: hidden; color: var(--graphite); font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.track-ordinal, .track-posted { color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
+.track-copy strong { font-size: var(--text-body); font-weight: 650; }
+.track-copy small { margin-top: 1px; color: var(--graphite); font-size: var(--text-data); }
+.track-source { overflow: hidden; color: color-mix(in srgb, var(--graphite) 88%, transparent); font-size: var(--text-data); text-overflow: ellipsis; white-space: nowrap; }
+.track-duration { overflow: hidden; color: var(--graphite); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.track-ordinal, .track-posted { color: color-mix(in srgb, var(--graphite) 88%, transparent); font-family: var(--font-mono); font-size: var(--text-data); font-variant-numeric: tabular-nums; }
 .track-ordinal { text-align: right; }
 /* The playing row's ordinal becomes the one stamped mark on screen. */
 .playing-mark { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--stamp); box-shadow: 0 0 0 3px color-mix(in srgb, var(--stamp) 20%, transparent); }
@@ -1130,6 +1131,10 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
   .track-head { display: none; }
   .track-row { grid-template-columns: 30px minmax(0, 1fr) 72px 44px; }
   .track-row { height: var(--row-height); padding: 7px 3px; column-gap: 8px; }
+  .track-main { gap: 10px; }
+  .track-row .mini-art-wrap,
+  .track-row .mini-art,
+  .track-row .art-placeholder.mini { width: 44px; height: 44px; }
   .track-row .track-duration, .track-row .track-row-actions { display: none; }
   /* Keep the mobile header in two deliberate bands. The old flex-wrap let the filter's
      100%-basis compete with the title column, collapsing the heading to a few pixels and

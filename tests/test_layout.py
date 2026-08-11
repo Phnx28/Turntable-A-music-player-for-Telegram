@@ -809,7 +809,7 @@ class LayoutTests(unittest.TestCase):
         self.assertFalse(any(label.startswith("Duration ") for label in labels),
                          f"desktop menu duplicated the row duration: {labels}")
 
-    def test_rows_are_numbered_dated_and_52px(self):
+    def test_rows_are_numbered_dated_and_64px(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
@@ -823,10 +823,10 @@ class LayoutTests(unittest.TestCase):
             art: Math.round(document.querySelector('.row-art').getBoundingClientRect().width),
           };
         }""")
-        self.assertEqual(52, shape["height"])
-        self.assertEqual("52px", shape["intrinsic"].split()[-1],
+        self.assertEqual(64, shape["height"])
+        self.assertEqual("64px", shape["intrinsic"].split()[-1],
                          "contain-intrinsic-size drifted from the row height, so off-screen rows reserve the wrong space")
-        self.assertEqual(40, shape["art"])
+        self.assertEqual(48, shape["art"])
         self.assertEqual("01", shape["ordinal"], "the ordinal is the real play position, zero-padded to the total")
         self.assertTrue(shape["posted"], "rows must show when the track was posted")
 
