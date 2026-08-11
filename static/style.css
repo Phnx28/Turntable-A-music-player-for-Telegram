@@ -739,9 +739,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .now-header:not(.is-compact) {
   display: grid;
-  height: 45%;
-  max-height: 45%;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  height: auto;
+  max-height: none;
+  grid-template-rows: auto auto auto auto;
 }
 /* replaced — art sized as square by .large-art-wrap block */
 .now-header:not(.is-compact) .large-art-wrap {
@@ -764,7 +764,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .now-header.is-compact .panel-header { display: contents; }
 .now-header.is-compact #close-now { grid-area: close; }
 .now-header.is-compact .large-art-wrap { width: 44px; height: 44px; margin: 0; grid-area: art; border-radius: 50%; }
-.now-header.is-compact .now-title { height: auto; grid-area: title; }
+.now-header.is-compact .now-title { height: auto; margin-bottom: 0; grid-area: title; }
 .now-header.is-compact .now-title h2 { font-size: 17px; -webkit-line-clamp: 1; }
 .now-header.is-compact .now-title p { margin: 2px 0 0; font-size: 12px; }
 .now-header.is-compact .now-tabs { margin-top: 8px; grid-area: tabs; }
@@ -791,7 +791,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .modal-header { align-items: flex-start; }
 .large-art-wrap {
   position: relative;
-  margin: 20px auto 26px;
+  margin: 24px auto 16px;
   aspect-ratio: 1;
   overflow: hidden;
   border-radius: 50%;
@@ -882,9 +882,9 @@ body.resizing { cursor: col-resize; user-select: none; }
   -webkit-line-clamp: 3;
 }
 
-.now-title { height: 104px; overflow: hidden; }
+.now-title { height: auto; overflow: hidden; margin-bottom: 20px; }
 .now-title h2 { display: -webkit-box; margin: 0; overflow: hidden; font-size: 26px; font-weight: 680; letter-spacing: -.03em; line-height: 1.1; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.now-title p { margin: 4px 0 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-title p { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-tabs { display: flex; border-bottom: 1px solid var(--rule); }
 /* The underline is a pseudo-element that scales from the centre rather than a border colour
    swap, so switching tabs reads as the indicator growing into place. */
@@ -1380,8 +1380,8 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 @keyframes panel-in { from { opacity: 0; transform: translateX(18px); } }
 @keyframes panel-out { to { opacity: 0; transform: translateX(18px); } }
 
-.lyrics-pane { min-height: 300px; padding-top: 8px; }
-.lyrics-lines { gap: 2px; padding: 4px 0 80px; font-family: var(--font-ui); }
+.lyrics-pane { min-height: 300px; padding-top: 14px; }
+.lyrics-lines { gap: 2px; padding: 4px 0 calc(20vh + 64px); font-family: var(--font-ui); }
 .lyrics-lines button, .lyric-line { width: 100%; min-width: 0; padding: 8px 0; border: 0; border-radius: var(--radius-art); background: transparent; color: color-mix(in srgb, var(--graphite) 82%, transparent); cursor: pointer; font-family: var(--font-ui); font-size: clamp(18px, 1.55vw, 23px); font-weight: 560; line-height: 1.42; overflow-wrap: anywhere; text-align: left; }
 .lyrics-lines button:hover { color: var(--ink); transform: translateX(2px); }
 .lyrics-lines button.active { color: var(--ink); transform: translateX(3px); }
@@ -1407,11 +1407,12 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .cache-state { color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); font-variant-numeric: tabular-nums; text-transform: uppercase; }
 .cache-state.ready { color: var(--ok); }
 
-/* Final optical pass: give the expanded record a little more air above it while keeping the
-   identity block close enough to read as one object. The empty lyrics state is its own rhythm;
-   synchronized sheets keep their generous scroll padding and are not affected by these rules. */
+/* Final optical pass: the expanded record gets air above it while the identity block stays
+   close enough to read as one object. The header is content-sized, so the title owns the
+   rhythm: no artist margin, one 20px band before the tabs. The empty lyrics state is its own
+   rhythm; synchronized sheets keep their generous scroll padding. */
 @media (min-width: 861px) {
-  .now-header:not(.is-compact) .now-title p { margin-bottom: 16px; }
+  .now-header:not(.is-compact) .now-title { margin-bottom: 20px; }
 }
 .lyrics-pane:has(#lyrics-empty:not([hidden])) { padding-top: 28px; }
 .lyrics-pane:has(#lyrics-empty:not([hidden])) #lyrics-lines { min-height: 0; gap: 0; padding: 0; }
@@ -1987,7 +1988,6 @@ html[data-theme="dark"] {
   .library-header { gap: 10px; padding-block: 12px 8px; }
   .library-heading h1 { max-width: none; }
   .now-panel { padding-inline: max(20px, calc((100vw - 580px) / 2)); }
-  .now-header:not(.is-compact) { height: 60%; max-height: 60%; }
 }
 @media (max-width: 620px) {
   .library { padding-inline: 13px; }
@@ -2162,19 +2162,16 @@ html[data-theme="dark"] {
 .label-disc { aspect-ratio: 1 / 1; }
 @media (min-width: 861px) {
   .now-header:not(.is-compact) .large-art-wrap {
-    width: min(58%, 132px);
-    max-width: min(32dvh, 132px);
+    width: min(52%, 154px);
+    max-width: min(34dvh, 154px);
     height: auto;
     aspect-ratio: 1 / 1;
-    margin: 28px auto 16px;
+    margin: 24px auto 16px;
     align-self: center;
     justify-self: center;
     border-radius: 50%;
     overflow: hidden;
   }
-}
-@media (min-width: 861px) and (max-height: 760px) {
-  .now-header:not(.is-compact) { height: 60%; max-height: 60%; }
 }
 .queue-header {
   position: sticky;

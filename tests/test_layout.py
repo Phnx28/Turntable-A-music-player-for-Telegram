@@ -155,6 +155,7 @@ class LayoutTests(unittest.TestCase):
     def open_now_panel(self, page):
         page.evaluate("""() => {
           document.getElementById('app-shell').hidden = false;
+          document.getElementById('app-shell').classList.add('panel-open');
           document.getElementById('lock-view').hidden = true;
           document.getElementById('telegram-view').hidden = true;
           document.getElementById('now-panel').hidden = false;
@@ -1323,6 +1324,64 @@ class LayoutTests(unittest.TestCase):
         self.assertGreaterEqual(shape["attributionTop"] - shape["addBottom"], 20, shape)
         self.assertEqual("0px", shape["linePaddingTop"], shape)
 
+    def test_lyrics_begin_soon_after_the_tabs(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.evaluate("""() => {
+          const pane = document.getElementById('lyrics-pane');
+          const lines = document.getElementById('lyrics-lines');
+          lines.replaceChildren();
+          const line = document.createElement('button');
+          line.className = 'lyric-line';
+          line.dataset.lyric = '0';
+          line.textContent = 'First line';
+          lines.append(line);
+          pane.querySelector('#lyrics-empty').hidden = true;
+        }""")
+        shape = page.evaluate("""() => {
+          const box = selector => document.querySelector(selector).getBoundingClientRect();
+          const pane = document.getElementById('lyrics-pane');
+          return {
+            panePaddingTop: parseFloat(getComputedStyle(pane).paddingTop),
+            tabsBottom: box('.now-tabs').bottom,
+            firstLineTop: box('.lyric-line').top,
+          };
+        }""")
+        self.assertGreaterEqual(shape["panePaddingTop"], 12, shape)
+        self.assertLessEqual(shape["panePaddingTop"], 20, shape)
+        self.assertGreaterEqual(shape["firstLineTop"] - shape["tabsBottom"], 12, shape)
+        self.assertLessEqual(shape["firstLineTop"] - shape["tabsBottom"], 40, shape)
+
+    def test_sync_to_lyrics_button_never_covers_a_lyric_line(self):
+        page = self.page(1440, 900)
+        self.open_now_panel(page)
+        page.evaluate("""() => {
+          const lines = document.getElementById('lyrics-lines');
+          lines.replaceChildren();
+          for (let i = 0; i < 60; i += 1) {
+            const line = document.createElement('button');
+            line.className = 'lyric-line';
+            line.dataset.lyric = String(i);
+            line.textContent = `Line ${i + 1}`;
+            lines.append(line);
+          }
+          document.getElementById('lyrics-empty').hidden = true;
+          document.getElementById('sync-lyrics').hidden = false;
+        }""")
+        page.wait_for_timeout(80)
+        page.evaluate("() => document.getElementById('now-content').scrollTo(0, 1e6)")
+        page.wait_for_timeout(150)
+        shape = page.evaluate("""() => {
+          const box = selector => document.querySelector(selector).getBoundingClientRect();
+          const last = [...document.querySelectorAll('.lyric-line')].at(-1).getBoundingClientRect();
+          const sync = box('#sync-lyrics');
+          const padding = parseFloat(getComputedStyle(document.getElementById('lyrics-lines')).paddingBottom);
+          return { lastBottom: last.bottom, lastTop: last.top, syncTop: sync.top, syncBottom: sync.bottom, padding };
+        }""")
+        self.assertGreater(shape["padding"], 200, shape)
+        self.assertLessEqual(shape["lastBottom"], shape["syncTop"] - 8, shape)
+        self.assertLessEqual(shape["lastTop"], shape["syncTop"], shape)
+
     def test_expanded_now_identity_block_has_artwork_clearance(self):
         for width, height in ((1440, 900), (1280, 720)):
             with self.subTest(viewport=(width, height)):
@@ -1331,15 +1390,46 @@ class LayoutTests(unittest.TestCase):
                 shape = page.evaluate("""() => {
                   const art = document.querySelector('.large-art-wrap').getBoundingClientRect();
                   const title = document.querySelector('.now-title').getBoundingClientRect();
+                  const panel = document.getElementById('now-panel').getBoundingClientRect();
                   return {
                     artWidth: art.width,
                     artHeight: art.height,
                     titleTop: title.top,
                     artBottom: art.bottom,
+                    panelLeft: panel.left,
+                    panelRight: panel.right,
                   };
                 }""")
                 self.assertAlmostEqual(shape["artWidth"], shape["artHeight"], delta=1, msg=shape)
                 self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 4, shape)
+                self.assertGreaterEqual(shape["artWidth"], 150, shape)
+                self.assertLessEqual(shape["artWidth"], 160, shape)
+
+    def test_expanded_now_header_is_content_sized_with_no_dead_band(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                self.open_now_panel(page)
+                geometry = page.evaluate("""() => {
+                  const header = document.querySelector('.now-header');
+                  const title = document.querySelector('.now-title').getBoundingClientRect();
+                  const tabs = document.querySelector('.now-tabs').getBoundingClientRect();
+                  const content = document.getElementById('now-content');
+                  const style = getComputedStyle(header);
+                  return {
+                    height: style.height,
+                    maxHeight: style.maxHeight,
+                    band: tabs.top - title.bottom,
+                    overflow: header.scrollHeight > header.clientHeight + 1,
+                    contentVisible: content.clientHeight > 100,
+                  };
+                }""")
+                self.assertNotIn("%", geometry["height"], geometry)
+                self.assertNotIn("%", geometry["maxHeight"], geometry)
+                self.assertLessEqual(geometry["band"], 28, geometry)
+                self.assertGreaterEqual(geometry["band"], 8, geometry)
+                self.assertFalse(geometry["overflow"], geometry)
+                self.assertTrue(geometry["contentVisible"], geometry)
 
     def test_non_classifying_eyebrows_are_removed(self):
         page = self.page(1440, 900)
@@ -1489,8 +1579,8 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
         self.assertEqual(0, page.locator(".day-separator").count(), "non-posted sorts must suppress rules")
 
-    def test_expanded_now_header_is_capped_and_keeps_its_contents_visible(self):
-        for width, height in ((1440, 900), (390, 844)):
+    def test_expanded_now_header_keeps_its_contents_visible(self):
+        for width, height in ((1440, 900), (1280, 720), (390, 844)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
                 self.open_now_panel(page)
@@ -1504,10 +1594,9 @@ class LayoutTests(unittest.TestCase):
                     return { selector, visible: box.width > 0 && box.height > 0,
                       contained: box.top >= header.top - 1 && box.bottom <= header.bottom + 1 };
                   });
-                  return { ratio: header.height / panel.height, overflow: header.scrollHeight > header.clientHeight + 1, boxes };
+                  return { ratio: header.height / panel.height, overflow: document.querySelector('.now-header').scrollHeight > document.querySelector('.now-header').clientHeight + 1, boxes };
                 }""")
-                expected_ratio = .60 if width <= 860 else .45
-                self.assertLessEqual(geometry["ratio"], expected_ratio + .002)
+                self.assertLess(geometry["ratio"], 0.6, geometry)
                 self.assertFalse(geometry["overflow"], f"expanded header overflowed at {width}x{height}")
                 self.assertTrue(all(item["visible"] and item["contained"] for item in geometry["boxes"]), geometry["boxes"])
 
