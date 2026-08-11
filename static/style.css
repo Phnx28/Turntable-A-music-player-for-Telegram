@@ -922,12 +922,14 @@ body.resizing { cursor: col-resize; user-select: none; }
   grid-row: 2;
   display: grid;
   grid-template-rows: auto 1fr;
-  padding: 0;
-  border-top: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(12px) saturate(1.02);
-  -webkit-backdrop-filter: blur(14px) saturate(1.05);
-  box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 -10px 24px color-mix(in srgb, var(--ink) 7%, transparent), inset 0 1px 0 color-mix(in srgb, var(--surface-raised) 80%, transparent);
+  margin: 0 20px 10px;
+  overflow: visible;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-panel);
+  background: var(--glass-medium);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.02);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.02);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--ink) 10%, transparent), inset 0 1px 0 var(--glass-highlight);
 }
 
 .progress-row {
@@ -1128,7 +1130,7 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 }
 
 @media (max-width: 860px) {
-  :root { --player-height: calc(76px + env(safe-area-inset-bottom)); }
+  :root { --player-height: calc(154px + env(safe-area-inset-bottom)); }
   .mobile-only { display: inline-grid; }
   .app-shell, .app-shell.panel-open { grid-template-columns: minmax(0, 1fr); }
   .source-rail {
@@ -1538,9 +1540,9 @@ dialog.modal[open]::backdrop { opacity: 1; }
 }
 
 @media (max-width: 480px) {
-  /* 26px progress rail + 46px identity row + 52px transport row: every control stays
-     inside the footer instead of the play button hanging below the viewport on short phones. */
-  :root { --player-height: calc(126px + env(safe-area-inset-bottom)); }
+  /* The 154px reserved shell row leaves a 144px dock after its 10px bottom margin: the 23px
+     progress rail, 46px identity row, and 52px transport row all stay inside the footer. */
+  :root { --player-height: calc(154px + env(safe-area-inset-bottom)); }
   .player-main {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: 46px 52px;

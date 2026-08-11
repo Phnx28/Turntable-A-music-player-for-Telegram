@@ -913,6 +913,46 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => window.__updateAmbientArtworkForTest(null)")
         page.wait_for_function("() => document.getElementById('ambient-art').hidden")
 
+    def test_player_floating_dock_stays_inside_viewport_and_keeps_controls_reachable(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("""() => {
+                  document.getElementById('app-shell').hidden = false;
+                  const content = document.getElementById('library-content');
+                  content.scrollTop = content.scrollHeight;
+                }""")
+                shape = page.evaluate("""() => {
+                  const player = document.getElementById('player');
+                  const content = document.getElementById('library-content');
+                  const transportBox = document.querySelector('.transport').getBoundingClientRect();
+                  const playBox = document.getElementById('play').getBoundingClientRect();
+                  const playerBox = player.getBoundingClientRect();
+                  const contentBox = content.getBoundingClientRect();
+                  const hit = (selector) => {
+                    const box = document.querySelector(selector).getBoundingClientRect();
+                    return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest(selector)?.id || '';
+                  };
+                  return {
+                    player: { left: playerBox.left, right: playerBox.right, top: playerBox.top, bottom: playerBox.bottom,
+                              radius: parseFloat(getComputedStyle(player).borderTopLeftRadius) },
+                    transport: { bottom: transportBox.bottom, playBottom: playBox.bottom },
+                    content: { bottom: contentBox.bottom, scrollable: content.scrollHeight > content.clientHeight,
+                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1 },
+                    playHit: hit('#play'), progressHit: hit('#progress'), viewport: { width: innerWidth, height: innerHeight },
+                  };
+                }""")
+                self.assertGreater(shape["player"]["left"], 0, shape)
+                self.assertLess(shape["player"]["right"], shape["viewport"]["width"], shape)
+                self.assertLessEqual(shape["player"]["bottom"], shape["viewport"]["height"] + 1, shape)
+                self.assertLessEqual(shape["transport"]["bottom"], shape["viewport"]["height"] + 1, shape)
+                self.assertLessEqual(shape["transport"]["playBottom"], shape["viewport"]["height"] + 1, shape)
+                self.assertGreater(shape["player"]["radius"], 0, shape)
+                self.assertLessEqual(shape["content"]["bottom"], shape["player"]["top"] + 1, shape)
+                self.assertTrue(shape["content"]["scrollable"] and shape["content"]["atEnd"], shape)
+                self.assertEqual("play", shape["playHit"], shape)
+                self.assertEqual("progress", shape["progressHit"], shape)
+
     def test_source_column_only_appears_across_sources(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
