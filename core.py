@@ -50,6 +50,11 @@ _TRACK_SORTS = {
     "title": "COALESCE(NULLIF(json_extract(o.payload,'$.title'),''), NULLIF(t.telegram_title,''), t.file_name) COLLATE NOCASE ASC",
     "artist": "COALESCE(NULLIF(json_extract(o.payload,'$.artist'),''), NULLIF(t.telegram_artist,''), 'Unknown artist') COLLATE NOCASE ASC",
     "duration": "t.duration_ms DESC",
+    "album": "COALESCE(NULLIF(json_extract(o.payload,'$.album'),''), NULLIF(t.telegram_album,''), '') COLLATE NOCASE ASC",
+    # Liked Songs sorts (Phase I): liked_at is *when the heart was pressed*, distinct
+    # from posted (when Telegram received the message). Re-liking updates it.
+    "liked": "t.liked_at DESC, t.sent_at DESC",
+    "liked_asc": "t.liked_at ASC, t.sent_at ASC",
 }
 
 # scrypt cost: ~16 MB and ~100 ms per attempt, which makes offline cracking of a
@@ -1273,24 +1278,51 @@ class Database:
         cursor_clause = ""
         cursor_params: list[Any] = []
         keyset = False
-        if cursor and sort == "posted" and not query and not liked and not chat_id and not include_unselected:
+        # Keyset pagination is available on the chronological paths: the posted
+        # library (sent_at, rowid) and the liked view (liked_at, sent_at, rowid).
+        cursor_capable = (
+            not query and not chat_id and not include_unselected
+            and ((sort == "posted" and not liked) or (sort == "liked" and liked))
+        )
+        if cursor and cursor_capable:
             try:
-                c_sent, c_rowid = cursor.split(":", 1)
-                c_sent_i, c_rowid_i = int(c_sent), int(c_rowid)
-                if before:
-                    # Backwards page: strictly *greater* than the cursor in DESC order.
-                    cursor_clause = " AND ((t.sent_at > ?) OR (t.sent_at = ? AND t.rowid > ?))"
+                if sort == "liked":
+                    c_liked, c_sent, c_rowid = cursor.split(":")
+                    c_liked_i, c_sent_i, c_rowid_i = int(c_liked), int(c_sent), int(c_rowid)
+                    if before:
+                        cursor_clause = (
+                            " AND (t.liked_at > ? OR (t.liked_at = ? AND "
+                            "(t.sent_at > ? OR (t.sent_at = ? AND t.rowid > ?))))"
+                        )
+                    else:
+                        cursor_clause = (
+                            " AND (t.liked_at < ? OR (t.liked_at = ? AND "
+                            "(t.sent_at < ? OR (t.sent_at = ? AND t.rowid < ?))))"
+                        )
+                    cursor_params = [c_liked_i, c_liked_i, c_sent_i, c_sent_i, c_rowid_i]
                 else:
-                    # For ORDER BY sent_at DESC, rowid DESC: next page is strictly less than cursor
-                    cursor_clause = " AND ((t.sent_at < ?) OR (t.sent_at = ? AND t.rowid < ?))"
-                cursor_params = [c_sent_i, c_sent_i, c_rowid_i]
+                    c_sent, c_rowid = cursor.split(":", 1)
+                    c_sent_i, c_rowid_i = int(c_sent), int(c_rowid)
+                    if before:
+                        # Backwards page: strictly *greater* than the cursor in DESC order.
+                        cursor_clause = " AND ((t.sent_at > ?) OR (t.sent_at = ? AND t.rowid > ?))"
+                    else:
+                        # For ORDER BY sent_at DESC, rowid DESC: next page is strictly less than cursor
+                        cursor_clause = " AND ((t.sent_at < ?) OR (t.sent_at = ? AND t.rowid < ?))"
+                    cursor_params = [c_sent_i, c_sent_i, c_rowid_i]
                 keyset = True
             except (ValueError, AttributeError):
                 cursor_clause = ""
         reader = self.reader
         # A backwards keyset walk reverses the whole ordering (cursor > key), then the
-        # page is flipped back below. Only posted sort is cursor-capable, so ASC is exact.
-        row_order = "t.sent_at ASC, t.rowid ASC" if (keyset and before) else f"{order}, t.rowid DESC"
+        # page is flipped back below. Only the chronological sorts are cursor-capable.
+        if keyset and before:
+            row_order = (
+                "t.liked_at ASC, t.sent_at ASC, t.rowid ASC" if sort == "liked"
+                else "t.sent_at ASC, t.rowid ASC"
+            )
+        else:
+            row_order = f"{order}, t.rowid DESC"
         rows = reader.execute(
             f"""
             SELECT t.rowid AS track_rowid, t.chat_id, t.message_id, t.file_name,
@@ -1392,9 +1424,17 @@ class Database:
         # cursor for the page *before* it, the last row for the page *after* it.
         next_cursor = None
         prev_cursor = None
-        if sort == "posted" and not query and not liked and not chat_id and not include_unselected and rows:
-            prev_cursor = f"{rows[0]['sent_at']}:{rows[0]['track_rowid']}"
-            next_cursor = f"{rows[-1]['sent_at']}:{rows[-1]['track_rowid']}"
+        if cursor_capable and rows:
+            if sort == "liked":
+                prev_cursor = (
+                    f"{rows[0]['liked_at']}:{rows[0]['sent_at']}:{rows[0]['track_rowid']}"
+                )
+                next_cursor = (
+                    f"{rows[-1]['liked_at']}:{rows[-1]['sent_at']}:{rows[-1]['track_rowid']}"
+                )
+            else:
+                prev_cursor = f"{rows[0]['sent_at']}:{rows[0]['track_rowid']}"
+                next_cursor = f"{rows[-1]['sent_at']}:{rows[-1]['track_rowid']}"
         return {
             "items": [self._track_summary(row) for row in rows],
             "offset": offset,
@@ -1603,10 +1643,11 @@ class Database:
 
     def set_liked(self, key: str, liked: bool) -> dict[str, Any]:
         chat_id, message_id = split_track_key(key)
+        liked_at = now_ts() if liked else None
         with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE tracks SET liked_at = ? WHERE chat_id = ? AND message_id = ?",
-                (now_ts() if liked else None, chat_id, message_id),
+                (liked_at, chat_id, message_id),
             )
             if not cursor.rowcount:
                 raise KeyError("Track not found")
@@ -1614,6 +1655,9 @@ class Database:
             self._invalidate_pos_cache()
         except AttributeError:
             pass
+        # liked_at is user state (Phase I6): the exact timestamp is preserved and
+        # synced as-is later; it is never derived from anything else.
+        return {"liked": bool(liked), "likedAt": liked_at}
         return self.get_track(chat_id, message_id)  # type: ignore[return-value]
 
     def liked_count(self) -> int:

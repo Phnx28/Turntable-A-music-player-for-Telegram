@@ -644,6 +644,7 @@ async function boot() {
   state.likedCount = stats.likedCount || 0;
   state.temporarySource = saved?.temporarySource || null;
   state.likedMode = Boolean(saved?.liked);
+  applyViewSort();
   if (!state.likedMode && saved?.source && (
     state.sources.some((source) => source.chatId === saved.source)
     || state.temporarySource?.chatId === saved.source
@@ -655,6 +656,41 @@ async function boot() {
   state.restored = true;
   if (status.startupError) showError(new AppError(status.startupError));
 }
+
+// Per-view sort state (Phase I3/I5): Liked Songs keeps its own sort, independent of
+// the library sort. Re-liking updates liked_at, so it returns to the top of
+// "Recently liked"; posted (Telegram message date) stays a distinct option.
+const LIKED_SORT_KEY = "tm-liked-sort";
+const LIBRARY_SORT_KEY = "tm-sort";
+
+function likedSortDefault() { return localStorage.getItem(LIKED_SORT_KEY) || "liked"; }
+function librarySortDefault() { return localStorage.getItem(LIBRARY_SORT_KEY) || "posted"; }
+
+function applyViewSort() {
+  state.sort = state.likedMode ? likedSortDefault() : librarySortDefault();
+  $("track-sort").value = state.sort;
+  syncTrackSortTrigger();
+}
+
+function persistViewSort() {
+  localStorage.setItem(state.likedMode ? LIKED_SORT_KEY : LIBRARY_SORT_KEY, state.sort);
+}
+
+const LIKED_SORT_OPTIONS = [
+  { value: "liked", description: "Recently liked · newest first" },
+  { value: "liked_asc", description: "Oldest liked · first" },
+  { value: "posted", description: "Recently added · newest first" },
+  { value: "title", description: "Title · A–Z" },
+  { value: "artist", description: "Artist · A–Z" },
+  { value: "album", description: "Album · A–Z" },
+];
+const LIBRARY_SORT_OPTIONS = [
+  { value: "posted", description: "Posted · newest first" },
+  { value: "title", description: "Title · A–Z" },
+  { value: "artist", description: "Artist · A–Z" },
+  { value: "album", description: "Album · A–Z" },
+  { value: "duration", description: "Duration · longest first" },
+];
 
 function sourceSort(items) {
   const mode = $("sidebar-sort").value || "custom";
@@ -829,7 +865,7 @@ function renderTracks(force = false) {
   for (const cell of document.querySelectorAll(".track-head [data-sort]")) {
     const active = cell.dataset.sort === state.sort;
     // Posted and Duration read newest/longest first; Title and Artist read A-Z.
-    if (active) cell.setAttribute("aria-sort", state.sort === "title" || state.sort === "artist" ? "ascending" : "descending");
+    if (active) cell.setAttribute("aria-sort", ["title", "artist", "album", "liked_asc"].includes(state.sort) ? "ascending" : "descending");
     else cell.removeAttribute("aria-sort");
   }
   $("track-sort").value = state.sort;
@@ -992,6 +1028,7 @@ async function selectSource(chatId) {
   // whole channel. Letting it finish in the background makes the return trip incremental.
   state.source = chatId; state.likedMode = false;
   $("track-search").value = "";
+  applyViewSort();
   libraryScroller().scrollTop = 0;
   closeGlobalSearch();
   renderSources();
@@ -1001,6 +1038,7 @@ async function selectSource(chatId) {
 
 async function selectLiked() {
   state.source = ""; state.likedMode = true; $("track-search").value = "";
+  applyViewSort();
   libraryScroller().scrollTop = 0; closeGlobalSearch(); renderSources(); schedulePersist();
   await loadLibrary();
 }
@@ -2036,14 +2074,17 @@ function openDiscoverSortMenu() {
 
 const TRACK_SORT_LABELS = {
   posted: "Posted",
+  liked: "Recently liked",
+  liked_asc: "Oldest liked",
   title: "Title",
   artist: "Artist",
+  album: "Album",
   duration: "Duration",
 };
 
 function syncTrackSortTrigger() {
   const value = $("track-sort").value || state.sort || "posted";
-  const label = TRACK_SORT_LABELS[value] || "Posted";
+  const label = TRACK_SORT_LABELS[value] || (state.likedMode ? "Recently liked" : "Posted");
   $("track-sort-label").textContent = label;
   $("track-sort-trigger").setAttribute("aria-label", `Sort tracks: ${label}`);
 }
@@ -2052,17 +2093,11 @@ function openTrackSortMenu() {
   const trigger = $("track-sort-trigger");
   const rect = trigger.getBoundingClientRect();
   const current = $("track-sort").value || state.sort || "posted";
-
-  const descriptions = {
-    posted: "Posted · newest first",
-    title: "Title · A–Z",
-    artist: "Artist · A–Z",
-    duration: "Duration · longest first",
-  };
+  const options = state.likedMode ? LIKED_SORT_OPTIONS : LIBRARY_SORT_OPTIONS;
 
   openMenu(
-    Object.keys(TRACK_SORT_LABELS).map((value) => ({
-      label: `${value === current ? "✓ " : ""}${descriptions[value]}`,
+    options.map(({ value, description }) => ({
+      label: `${value === current ? "✓ " : ""}${description}`,
       action: () => {
         $("track-sort").value = value;
         $("track-sort").dispatchEvent(new Event("change"));
@@ -2757,6 +2792,7 @@ $("track-list").addEventListener("keydown", (event) => {
 });
 $("track-sort").addEventListener("change", (event) => {
   state.sort = event.target.value;
+  persistViewSort();
   state.libraryCache.clear();
   loadLibrary(true).catch(showError);
 });

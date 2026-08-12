@@ -1446,3 +1446,88 @@ class RecordingIdentityTests(unittest.TestCase):
                 database.set_metadata_field(recording_id, "title", "x", source="spyware")
         finally:
             database.close()
+
+
+class LikedSortTests(unittest.TestCase):
+    """I1-I4: liked_at is durable, re-liking moves to the top, sorts are independent."""
+
+    def _database(self):
+        database = Database(Path(tempfile.mkdtemp()) / "library.sqlite3")
+        database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        database.upsert_tracks([
+            {"chatId": "1", "messageId": str(i), "fileName": f"song-{i}.mp3",
+             "mimeType": "audio/mpeg", "title": f"Track {i}", "artist": "Artist",
+             "sentAt": 1753000000 + i * 60}
+            for i in range(10)
+        ])
+        return database
+
+    def test_like_response_carries_liked_at_and_relike_refreshes_it(self):
+        database = self._database()
+        try:
+            with patch("core.now_ts", return_value=1000):
+                result = database.set_liked("1:3", True)
+            self.assertEqual({"liked": True, "likedAt": 1000}, result)
+            with patch("core.now_ts", return_value=2000):
+                database.set_liked("1:3", False)
+                reliked = database.set_liked("1:3", True)
+            self.assertEqual(2000, reliked["likedAt"],
+                             "re-liking must get a new timestamp (back to the top)")
+            self.assertTrue(database.get_track("1", "3")["liked"])
+        finally:
+            database.close()
+
+    def test_liked_sort_orders_by_when_the_heart_was_pressed(self):
+        database = self._database()
+        try:
+            # Like tracks out of posted order: 9 first, then 1.
+            with patch("core.now_ts", return_value=100):
+                database.set_liked("1:9", True)
+            with patch("core.now_ts", return_value=200):
+                database.set_liked("1:1", True)
+            page = database.list_tracks(liked=True, sort="liked")
+            self.assertEqual(["1:1", "1:9"], [item["key"] for item in page["items"]],
+                             "recently liked first, independent of the posted order")
+            old = database.list_tracks(liked=True, sort="liked_asc")
+            self.assertEqual(["1:9", "1:1"], [item["key"] for item in old["items"]])
+        finally:
+            database.close()
+
+    def test_library_sort_is_unaffected_by_liked_mode(self):
+        database = self._database()
+        try:
+            with patch("core.now_ts", return_value=100):
+                database.set_liked("1:5", True)
+            library = database.list_tracks(sort="posted")
+            self.assertEqual("1:9", library["items"][0]["key"],
+                             "All Music keeps its own chronological order")
+            liked = database.list_tracks(liked=True, sort="liked")
+            self.assertEqual("1:5", liked["items"][0]["key"])
+        finally:
+            database.close()
+
+    def test_liked_view_walks_with_keyset_cursors(self):
+        database = Database(Path(tempfile.mkdtemp()) / "library.sqlite3")
+        database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        database.upsert_tracks([
+            {"chatId": "1", "messageId": str(i), "fileName": f"song-{i}.mp3",
+             "mimeType": "audio/mpeg", "title": f"Track {i}", "artist": "Artist",
+             "sentAt": 1753000000 + i * 60}
+            for i in range(60)
+        ])
+        try:
+            for index in range(60):
+                with patch("core.now_ts", return_value=100 + index):
+                    database.set_liked(f"1:{index}", True)
+            first = database.list_tracks(liked=True, sort="liked", limit=25)
+            self.assertEqual(60, first["total"])
+            self.assertIsNotNone(first["nextCursor"])
+            second = database.list_tracks(liked=True, sort="liked", limit=25, cursor=first["nextCursor"])
+            self.assertEqual(25, len(second["items"]))
+            overlap = {item["key"] for item in first["items"]} & {item["key"] for item in second["items"]}
+            self.assertEqual(set(), overlap)
+            back = database.list_tracks(liked=True, sort="liked", limit=25, cursor=second["prevCursor"], before=True)
+            self.assertEqual([item["key"] for item in first["items"]],
+                             [item["key"] for item in back["items"]])
+        finally:
+            database.close()

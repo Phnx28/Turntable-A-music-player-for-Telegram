@@ -1864,13 +1864,15 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("menu", state["trigger"]["hasPopup"], state)
         self.assertEqual("Posted", state["trigger"]["label"], state)
 
-        # Click the trigger: the existing context menu opens with all four options.
+        # Click the trigger: the context menu opens with the library sort options
+        # (the album sort joined the set in Phase I).
         page.click("#track-sort-trigger")
         page.wait_for_selector("#context-menu:not([hidden])")
         items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
-        self.assertEqual(4, len(items), items)
+        self.assertEqual(5, len(items), items)
         self.assertTrue(any("Title · A–Z" in item for item in items), items)
         self.assertTrue(any("Posted · newest first" in item for item in items), items)
+        self.assertTrue(any("Album · A–Z" in item for item in items), items)
 
         # Choosing Title updates the hidden state source, the visible label and the request.
         page.click('#context-menu button:has-text("Title · A–Z")')
