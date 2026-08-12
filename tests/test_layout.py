@@ -1960,6 +1960,7 @@ class LayoutTests(unittest.TestCase):
           window.__renderDiscoveredForTest([
             { chatId: 'selected', title: '<Luna & Co>', username: null, kind: 'channel', selected: true, trackCount: 0 },
             ...channels,
+            { chatId: 'bot', title: 'Helper bot', username: null, kind: 'bot', selected: false, trackCount: 0 },
             { chatId: 'private', title: 'Private chat', username: null, kind: 'private', selected: false, trackCount: 0 },
             { chatId: 'saved', title: 'Saved messages', username: null, kind: 'saved', selected: false, trackCount: 0 },
           ]);
@@ -1970,6 +1971,7 @@ class LayoutTests(unittest.TestCase):
             [
                 ["Selected", "1"],
                 ["Channels", "1,000"],
+                ["Bots", "1"],
                 ["Private chats", "1"],
                 ["Saved messages", "1"],
             ],
