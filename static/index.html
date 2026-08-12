@@ -476,7 +476,7 @@
         <h2 id="settings-title">Settings</h2>
         <button class="icon-button" type="button" data-close="settings-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
-      <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="network">Network</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
+      <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="active" type="button" data-settings-tab="appearance">Appearance</button><button type="button" data-settings-tab="playback">Playback</button><button type="button" data-settings-tab="metadata">Metadata</button><button type="button" data-settings-tab="storage">Storage</button><button type="button" data-settings-tab="network">Network</button><button type="button" data-settings-tab="account">Account</button></nav><div class="settings-content">
       <section data-settings-pane="appearance">
       <fieldset class="choice-group first">
         <legend>Theme</legend>
@@ -498,6 +498,11 @@
           <input id="auto-artwork" type="checkbox">
         </div>
         <div class="form-actions"><button id="test-musicbrainz" class="button" type="button">Test connection</button><button id="fetch-covers" class="button" type="button">Fetch covers now</button><a class="guide-link" href="https://musicbrainz.org/doc/Development/XML_Web_Service/Version_2" target="_blank" rel="noreferrer">MusicBrainz API guide ↗</a></div>
+      </section>
+      <section data-settings-pane="storage" hidden>
+        <div id="storage-list" class="storage-list">
+          <p class="small-copy">Checking storage…</p>
+        </div>
       </section>
       <section data-settings-pane="network" hidden>
         <fieldset class="choice-group first">

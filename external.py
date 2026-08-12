@@ -21,7 +21,6 @@ from core import (
 
 ENRICH_MIN_SCORE = 97   # MusicBrainz match score; below this a human decides in the dialog
 ENRICH_BATCH = 50       # covers per run; a fresh crate spreads politely over days
-ENRICH_GAP = 1.1        # seconds between MusicBrainz calls (the limit is 1/s)
 
 
 class ExternalServices:
@@ -61,7 +60,7 @@ class ExternalServices:
         metadata = track["metadata"]
         fingerprint = lyrics_fingerprint(metadata, track["durationMs"])
         cache_key = f"metadata:{track['key']}:{hashlib.sha256(fingerprint.encode()).hexdigest()}"
-        if not refresh and (cached := self.database.cache_get(cache_key)) is not None:
+        if not refresh and (cached := await asyncio.to_thread(self.database.cache_get, cache_key)) is not None:
             return cached
         title = str(metadata.get("title") or "").strip()
         artist = str(metadata.get("artist") or "").strip()
@@ -76,7 +75,7 @@ class ExternalServices:
         candidates = [self._candidate(recording) for recording in payload.get("recordings", [])]
         candidates = [candidate for candidate in candidates if candidate]
         ranked = rank_metadata_candidates(candidates, metadata, track["durationMs"])[:5]
-        self.database.cache_set(cache_key, ranked, 24 * 60 * 60)
+        await asyncio.to_thread(self.database.cache_set, cache_key, ranked, 24 * 60 * 60)
         return ranked
 
     async def _musicbrainz_get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
@@ -194,8 +193,8 @@ class ExternalServices:
                     # candidate's metadata and leave the artwork unset. Anything else
                     # (429/5xx, unexpected 4xx) is transient or surprising: surface it.
                     raise
-        return self.database.save_metadata_patch(
-            track["chatId"], track["messageId"], values, []
+        return await asyncio.to_thread(
+            self.database.save_metadata_patch, track["chatId"], track["messageId"], values, []
         )
 
     async def enrich_covers(self, manual: bool = False) -> dict[str, Any]:
@@ -209,7 +208,7 @@ class ExternalServices:
         NOT write one, so the next run retries. Manual runs ignore the autoArtwork switch
         but still respect the contact requirement.
         """
-        settings = self.database.get_settings()
+        settings = await asyncio.to_thread(self.database.get_settings)
         if not manual and not settings.get("autoArtwork", True):
             return {"added": 0, "missed": 0, "skipped": "disabled"}
         if not self.musicbrainz_contact:
@@ -217,7 +216,7 @@ class ExternalServices:
         quality = str(settings.get("coverQuality") or "1200")
         added = 0
         missed = 0
-        for track in self.database.tracks_needing_artwork(limit=ENRICH_BATCH):
+        for track in await asyncio.to_thread(self.database.tracks_needing_artwork, limit=ENRICH_BATCH):
             try:
                 candidates = await self.metadata_candidates(track)
                 top = candidates[0] if candidates else None
@@ -238,10 +237,12 @@ class ExternalServices:
                             await asyncio.sleep(self._retry_after_seconds(error.response))
                             raise
                 if not art_url:
-                    self.database.mark_artwork_miss(track["key"])
+                    await asyncio.to_thread(self.database.mark_artwork_miss, track["key"])
                     missed += 1
                     continue
-                self.database.save_metadata_patch(track["chatId"], track["messageId"], {"artworkPath": art_url}, [])
+                await asyncio.to_thread(
+                    self.database.save_metadata_patch, track["chatId"], track["messageId"], {"artworkPath": art_url}, []
+                )
                 added += 1
             except asyncio.CancelledError:
                 raise
@@ -249,7 +250,9 @@ class ExternalServices:
                 # Network blip or MusicBrainz hiccup: stop the run, retry next time, and
                 # do not poison the miss markers with a transient failure.
                 break
-            await asyncio.sleep(ENRICH_GAP)
+            # No per-track sleep: the MusicBrainz request layer already enforces the
+            # 1/s gap, so one layer owns the rate policy (Phase N1). A transient
+            # 429/503 from CAA sleeps out Retry-After and stops the run itself.
         return {"added": added, "missed": missed}
 
     async def candidate_cover(self, track: dict[str, Any], candidate_id: str) -> tuple[bytes, str]:
@@ -375,7 +378,7 @@ class ExternalServices:
     async def lyrics(self, track: dict[str, Any], refresh: bool = False) -> dict[str, Any]:
         metadata = track["metadata"]
         fingerprint = lyrics_fingerprint(metadata, track["durationMs"])
-        current = self.database.get_lyrics(track["chatId"], track["messageId"])
+        current = await asyncio.to_thread(self.database.get_lyrics, track["chatId"], track["messageId"])
         if current and current["kind"] == "manual" and not refresh:
             return current
         if current and not refresh and current["queryFingerprint"] == fingerprint:
@@ -384,8 +387,8 @@ class ExternalServices:
         title = str(metadata.get("title") or "").strip()
         artist = str(metadata.get("artist") or "").strip()
         if not title or not artist or normalize_text(artist) == "unknown artist":
-            return self.database.save_lyrics(
-                track["chatId"],
+            return await asyncio.to_thread(
+                self.database.save_lyrics, track["chatId"],
                 track["messageId"],
                 kind="missing",
                 plain_text="",
@@ -415,8 +418,8 @@ class ExternalServices:
         synced = payload.get("syncedLyrics") or ""
         plain = plain_lyrics(payload.get("plainLyrics") or "")
         lines = parse_lrc(synced, track["durationMs"]) if synced else []
-        return self.database.save_lyrics(
-            track["chatId"],
+        return await asyncio.to_thread(
+            self.database.save_lyrics, track["chatId"],
             track["messageId"],
             kind=kind,
             plain_text=plain,

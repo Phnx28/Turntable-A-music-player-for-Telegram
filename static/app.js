@@ -1,7 +1,7 @@
 import { adjacentIndex, bufferedPercent, explicitQueue, formatTime, lyricIndex, normalizePlayerState, normalizeTrackPage, queueView, resolveWindowEdge, restoreWindow, shouldCompactHeader, snapshotWindow, toggleShuffleQueue, trackScrollTop, virtualTrackWindow, windowFromResult } from "./player-core.js";
 import { AppError, errorCopy, formatDayRule, formatPostedDate, formatSyncedAt, ordinal, sourceKindLabel } from "./format.js";
 import { beginLikeOperation, likedState, representationsFor, resolveLikeResponse, rollbackLikeOperation } from "./like-state.js";
-import { knownTotalParam, mergePageInto, pageCacheKey, shouldFetchPage } from "./library-pages.js";
+import { cursorSuffixFor, knownTotalParam, mergePageInto, pageCacheKey, recordPageCursors, shouldFetchPage } from "./library-pages.js";
 
 const $ = (id) => document.getElementById(id);
 const libraryScroller = () => $("library-content") || $("library");
@@ -962,11 +962,10 @@ async function loadPage(offset, force = false, token = libraryRequest) {
   // supplied its cursor tokens, deep pages stop paying OFFSET scans. Other views
   // (filters, search, per-source, liked) keep offset paging.
   const query = $("track-search").value.trim();
-  let cursorSuffix = "";
-  if (!state.likedMode && !state.source && !query && state.sort === "posted") {
-    const token = state.pageCursors.get(offset);
-    if (token) cursorSuffix = `&cursor=${encodeURIComponent(token.cursor)}${token.before ? "&before=true" : ""}`;
-  }
+  const cursorSuffix = cursorSuffixFor(
+    offset, { likedMode: state.likedMode, source: state.source, query, sort: state.sort },
+    state.pageCursors,
+  );
   try {
     const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}${knownTotalParam(offset, state.totalTracks)}${cursorSuffix}`, { signal: requestController.signal });
     if (token !== libraryRequest) return;
@@ -977,8 +976,7 @@ async function loadPage(offset, force = false, token = libraryRequest) {
     state.dayBreaks = page.dayBreaks;
     // Chain the cursors: the next page is fetched with this page's last row, the
     // previous page with its first row (walked backwards).
-    if (page.nextCursor) state.pageCursors.set(offset + 100, { cursor: page.nextCursor });
-    if (page.prevCursor) state.pageCursors.set(offset - 100, { cursor: page.prevCursor, before: true });
+    recordPageCursors(state.pageCursors, offset, page);
     mergePageInto(state.tracks, page, (track) => cacheSet(state.summaryCache, track.key, track, 500));
     state.loadedPages.add(page.offset);
     renderTracks(true);
@@ -2495,6 +2493,49 @@ $("sync-disconnect").addEventListener("click", async () => {
     await renderSyncStatus();
   } catch (error) { showError(error); }
 });
+
+const STORAGE_CATEGORIES = [
+  { key: "audioCache", label: "Audio cache" },
+  { key: "artwork", label: "Artwork" },
+  { key: "thumbnails", label: "Telegram thumbnails" },
+  { key: "taggedDownloads", label: "Tagged downloads" },
+  { key: "avatars", label: "Avatars" },
+  { key: "database", label: "Database" },
+];
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let index = -1;
+  let scaled = value;
+  while (scaled >= 1024 && index < units.length - 1) { scaled /= 1024; index += 1; }
+  return `${scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+}
+
+async function renderStorage() {
+  const list = $("storage-list");
+  try {
+    const { categories } = await api("/api/storage", { quiet: true });
+    list.innerHTML = STORAGE_CATEGORIES.map(({ key, label }) => {
+      const entry = (categories && categories[key]) || { bytes: 0, files: 0 };
+      const clearable = key !== "database";
+      return `<div class="storage-row">
+        <span><strong>${label}</strong><small>${formatBytes(entry.bytes)} · ${entry.files} ${entry.files === 1 ? "file" : "files"}</small></span>
+        ${clearable ? `<button class="button" type="button" data-clear-storage="${key}">Clear</button>` : ""}
+      </div>`;
+    }).join("");
+    list.querySelectorAll("[data-clear-storage]").forEach((button) => button.addEventListener("click", async () => {
+      const key = button.dataset.clearStorage;
+      button.disabled = true; button.setAttribute("aria-busy", "true");
+      try {
+        await api(`/api/storage/${encodeURIComponent(key)}`, { method: "DELETE" });
+        toast(`${(STORAGE_CATEGORIES.find((item) => item.key === key) || {}).label || "Storage"} cleared`);
+        await renderStorage();
+      } catch (error) { showError(error); button.disabled = false; button.removeAttribute("aria-busy"); }
+    }));
+  } catch { list.innerHTML = '<p class="small-copy">Storage is unavailable right now.</p>'; }
+}
 
 async function openSettings() {
   $("settings-dialog").showModal();

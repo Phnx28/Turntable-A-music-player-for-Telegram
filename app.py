@@ -704,7 +704,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"error": {"code": "rate_limited", "message": "Too many attempts. Wait a minute and try again.", "retryable": True}},
                 status_code=429,
             )
-        if not verify_password(body.password, encoded):
+        if not await asyncio.to_thread(verify_password, body.password, encoded):
             _record_login_failure(client)
             LOGGER.warning("Failed sign-in attempt from %s", client)
             return JSONResponse(
@@ -727,12 +727,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def auth_set_password(request: Request, body: PasswordBody) -> Response:
         store = database(request)
         existing = store.get_password_hash()
-        if existing and not verify_password(body.current, existing):
+        if existing and not await asyncio.to_thread(verify_password, body.current, existing):
             return JSONResponse(
                 {"error": {"code": "unauthorized", "message": "That current password is incorrect", "retryable": False}},
                 status_code=401,
             )
-        store.set_password(body.password)
+        await asyncio.to_thread(store.set_password, body.password)
         # set_password revokes every session, including this one; re-issue so the
         # caller who just set the password is not immediately locked out.
         response = JSONResponse({"ok": True, "passwordEnabled": True})
@@ -745,7 +745,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         existing = store.get_password_hash()
         if not existing:
             return JSONResponse({"ok": True, "passwordEnabled": False})
-        if not verify_password(body.current, existing):
+        if not await asyncio.to_thread(verify_password, body.current, existing):
             return JSONResponse(
                 {"error": {"code": "unauthorized", "message": "That password is incorrect", "retryable": False}},
                 status_code=401,
@@ -804,10 +804,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/sources/bulk-select")
     async def source_bulk_select(request: Request, body: BulkSourcesBody) -> dict[str, bool]:
-        database(request).set_sources_selected(body.chatIds, body.selected)
-        if not body.selected:
-            for chat_id in body.chatIds:
-                await telegram(request).set_source_selected(chat_id, False)
+        # One DB transaction and one watched-source refresh for the whole batch (M6).
+        await telegram(request).set_sources_selected_bulk(body.chatIds, body.selected)
         return {"ok": True}
 
     @application.get("/api/sources/discover")
@@ -962,8 +960,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def source_avatar(request: Request, chat_id: str) -> Response:
         content = await telegram(request).avatar(chat_id)
         if not content:
-            return Response(status_code=404, headers={"Cache-Control": "private, max-age=86400"})
-        return Response(content, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+            # Missing-avatar markers are TTL'd server-side; the browser may cache the
+            # 404 only briefly.
+            return Response(status_code=404, headers={"Cache-Control": "private, max-age=300"})
+        # max-age=3600: the avatar revalidates hourly, so a changed photo is never
+        # pinned by the browser for a whole day (M5).
+        return Response(content, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
     @application.get("/api/tracks")
     def tracks(
@@ -1262,6 +1264,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.delete("/api/cache")
     async def cache_clear(request: Request) -> dict[str, int]:
         return await telegram(request).clear_media_cache()
+
+    @application.delete("/api/storage/{category}")
+    async def storage_clear(request: Request, category: str) -> dict[str, int]:
+        # Per-category clear (Phase Q). The audio cache goes through the safe
+        # clear_all; every other category is re-fetchable cache, so removing the
+        # files is enough. The database is never cleared here.
+        service = telegram(request)
+        directories = {
+            "artwork": external(request).art_directory,
+            "thumbnails": service.thumbnail_directory,
+            "avatars": service.avatar_directory,
+            "taggedDownloads": service.media.download_directory,
+        }
+        if category == "audioCache":
+            return await service.clear_media_cache()
+        directory = directories.get(category)
+        if directory is None:
+            raise HTTPException(422, "Unknown storage category")
+
+        def clear_directory() -> dict[str, int]:
+            removed = 0
+            for candidate in directory.iterdir():
+                try:
+                    if candidate.is_file():
+                        removed += candidate.stat().st_size
+                        candidate.unlink()
+                except OSError:
+                    candidate.unlink(missing_ok=True)
+            return {"removedBytes": removed}
+
+        return await asyncio.to_thread(clear_directory)
 
     return application
 

@@ -31,6 +31,15 @@ def _unlink_many(paths: list[Path]) -> None:
     """Batch-unlink for off-loop cleanup (used by the thumbnail/avatar caches)."""
     for path in paths:
         path.unlink(missing_ok=True)
+
+
+def _entity_title(entity: Any) -> str:
+    """A display title for any Telegram entity (channel, group, bot or user)."""
+    title = getattr(entity, "title", None) or getattr(entity, "first_name", None)
+    if not title:
+        last = getattr(entity, "last_name", None)
+        title = f"{getattr(entity, 'first_name', '')} {last}".strip() if last else ""
+    return title or "Untitled chat"
 from media import MediaCache
 
 LOGGER = logging.getLogger(__name__)
@@ -153,6 +162,8 @@ class TelegramService:
         # ponytail: caps concurrent scans to avoid FloodWait; bump if profiling shows idle headroom.
         self.sync_semaphore = asyncio.Semaphore(3)
         self.global_search_lock = asyncio.Lock()
+        self._search_generation = 0
+        self._contacts_cache: tuple[float, list[dict[str, Any]]] | None = None
         self.avatar_directory = data_directory / "avatars"
         self.thumbnail_directory = data_directory / "thumbnails"
         self.avatar_directory.mkdir(parents=True, exist_ok=True)
@@ -510,7 +521,13 @@ class TelegramService:
         if len(cleaned) < 3:
             raise ValueError("Enter at least three characters to search Telegram")
         limit = max(1, min(int(limit), 50))
+        # Latest-generation behaviour (M4): a new query bumps the generation before
+        # waiting on the lock, so a stale search queued behind a newer one gives up
+        # instead of running an expensive scan whose results nobody wants.
+        generation = self._search_generation = self._search_generation + 1
         async with self.global_search_lock:
+            if generation != self._search_generation:
+                return {"items": [], "total": 0, "cancelled": True}
             client = self.require_client()
             known = {
                 source["chatId"]: source
@@ -595,10 +612,35 @@ class TelegramService:
         await self.sync_source(job.chat_id, full=first_visit, job=job, temporary=True)
 
     async def add_source(self, chat_id: str) -> dict[str, Any]:
-        source = next(
-            (item for item in await self.discover_sources() if item["chatId"] == chat_id),
-            None,
-        )
+        # A specific id is a strong signal the user knows where they are pointing:
+        # look the entity up directly (M1) instead of walking every dialog; full
+        # discovery stays the fallback for ids that do not resolve directly.
+        client = self.require_client()
+        source = None
+        try:
+            entity = await asyncio.wait_for(client.get_entity(int(chat_id)), timeout=30)
+            kind = self.classify_entity(entity)
+            if kind:
+                source = {
+                    "chatId": str(entity.id),
+                    "kind": kind,
+                    "title": _entity_title(entity),
+                    "username": getattr(entity, "username", None),
+                    "selected": False,
+                    "lastPostAt": None,
+                    "trackCount": 0,
+                    "avatarUrl": f"/api/sources/{entity.id}/avatar",
+                }
+        except (KeyError, ValueError, TypeError, asyncio.TimeoutError):
+            source = None
+        except Exception:
+            # Telethon raises a family of RPC errors for invalid ids; fall back.
+            source = None
+        if source is None:
+            source = next(
+                (item for item in await self.discover_sources() if item["chatId"] == chat_id),
+                None,
+            )
         if not source:
             raise KeyError("Eligible Telegram chat not found")
         source["selected"] = True
@@ -607,6 +649,20 @@ class TelegramService:
         self.discovery_cache = None
         job = self.start_sync(chat_id, full=True)
         return {"source": self.database.get_source(chat_id) or source, "job": job}
+
+    async def set_sources_selected_bulk(self, chat_ids: list[str], selected: bool) -> None:
+        """One DB transaction and one watched-source refresh for a bulk change (M6).
+
+        The per-source path used to refresh watched ids and invalidate discovery
+        once per chat; a 1000-source unselect is one coherent operation here.
+        """
+        self.database.set_sources_selected(chat_ids, selected)
+        self._refresh_watched_ids()
+        self.discovery_cache = None
+        for chat_id in chat_ids:
+            if not selected:
+                self.jobs.cancel("sync", chat_id)
+                self.jobs.cancel("preview", chat_id)
 
     async def set_source_selected(self, chat_id: str, selected: bool) -> dict[str, Any]:
         source = self.database.get_source(chat_id)
@@ -747,7 +803,12 @@ class TelegramService:
                     ranking[str(user_id)] = peer.rating
         return ranking
 
-    async def contacts(self) -> list[dict[str, Any]]:
+    CONTACTS_CACHE_SECONDS = 60
+
+    async def contacts(self, *, fresh: bool = False) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if not fresh and self._contacts_cache and now - self._contacts_cache[0] < self.CONTACTS_CACHE_SECONDS:
+            return list(self._contacts_cache[1])
         result = await self.require_client()(functions.contacts.GetContactsRequest(hash=0))
         ranking = await self._forward_ranking()
         contacts = []
@@ -765,13 +826,21 @@ class TelegramService:
                 # ranking stays an ordering hint and never widens who can receive a track.
                 "forwardRank": ranking.get(user_id),
             })
-        return sorted(contacts, key=lambda item: item["name"].casefold())
+        contacts.sort(key=lambda item: item["name"].casefold())
+        self._contacts_cache = (time.monotonic(), list(contacts))
+        return contacts
 
     async def forward_track(self, track: dict[str, Any], recipient_id: str | None = None) -> dict[str, Any]:
         client = self.require_client()
         destination: Any = "me"
         if recipient_id is not None:
-            allowed = {item["id"] for item in await self.contacts()}
+            # The picker fetched contacts moments ago; validate against the cache and
+            # only refetch when the target is missing or the cache went stale (M2).
+            contacts = await self.contacts()
+            allowed = {item["id"] for item in contacts}
+            if recipient_id not in allowed:
+                contacts = await self.contacts(fresh=True)
+                allowed = {item["id"] for item in contacts}
             if recipient_id not in allowed:
                 raise ValueError("Choose a Telegram contact from the list")
             destination = int(recipient_id)
@@ -872,16 +941,32 @@ class TelegramService:
         await asyncio.to_thread(missing.unlink, missing_ok=True)
         return data
 
+    # A successful avatar is revalidated after this long: the entity is fetched,
+    # its photo version compared, and only a changed photo triggers a download (M5).
+    # Missing-avatar markers keep the longer TTL so absent photos are not hammered.
+    AVATAR_REVALIDATE_SECONDS = 60 * 60
+    AVATAR_MISSING_SECONDS = 24 * 60 * 60
+
     async def avatar(self, chat_id: str) -> bytes | None:
         client = self.require_client()
         digest = hashlib.sha256(chat_id.encode()).hexdigest()
-        destination = self.avatar_directory / f"{digest}.jpg"
-        missing = self.avatar_directory / f"{digest}.missing"
+        now = time.time()
+        # Serve the cached photo while it is fresh; otherwise re-fetch the entity to
+        # learn its current photo version. Versioned filenames mean a changed avatar
+        # lands as soon as it is revalidated, and stale versions age out naturally.
+        entity = None
+        for candidate in self.avatar_directory.glob(f"{digest}-*.jpg"):
+            if now - candidate.stat().st_mtime < self.AVATAR_REVALIDATE_SECONDS:
+                return await asyncio.to_thread(candidate.read_bytes)
+        entity = await client.get_entity(int(chat_id))
+        photo = getattr(entity, "photo", None)
+        photo_version = str(getattr(photo, "photo_id", "") or "")
+        destination = self.avatar_directory / f"{digest}-{photo_version}.jpg"
         if destination.is_file():
             return await asyncio.to_thread(destination.read_bytes)
-        if missing.is_file() and time.time() - missing.stat().st_mtime < 24 * 60 * 60:
+        missing = self.avatar_directory / f"{digest}-{photo_version}.missing"
+        if missing.is_file() and now - missing.stat().st_mtime < self.AVATAR_MISSING_SECONDS:
             return None
-        entity = await client.get_entity(int(chat_id))
         result = await client.download_profile_photo(entity, file=bytes, download_big=False)
         if not result:
             await asyncio.to_thread(missing.touch)
@@ -890,6 +975,14 @@ class TelegramService:
         await asyncio.to_thread(destination.write_bytes, data)
         os.chmod(destination, 0o600)
         await asyncio.to_thread(missing.unlink, missing_ok=True)
+        # Drop every other cached version (and the pre-versioning legacy file), so a
+        # changed avatar does not accumulate stale copies.
+        stale = [
+            candidate for candidate in self.avatar_directory.glob(f"{digest}*")
+            if candidate != destination and not candidate.name.endswith(".missing")
+        ]
+        if stale:
+            await asyncio.to_thread(_unlink_many, stale)
         return data
 
     def start_source_counts(self, sources: list[dict[str, Any]]) -> dict[str, Any]:
@@ -898,21 +991,34 @@ class TelegramService:
         job = BackgroundJob(secrets.token_urlsafe(12), "source-counts")
         return self.jobs.start(job, self._run_source_counts(job, sources), error_mapper=self._friendly_sync_error)
 
+    SOURCE_COUNT_CONCURRENCY = 3
+
     async def _run_source_counts(self, job: BackgroundJob, sources: list[dict[str, Any]]) -> None:
         job.result = {}
         client = self.require_client()
-        for source in sources:
-            chat_id = source["chatId"]
+        gate = asyncio.Semaphore(self.SOURCE_COUNT_CONCURRENCY)
+
+        async def count_one(chat_id: str) -> tuple[str, int]:
             cached = self.database.cache_get(f"source-count:{chat_id}")
             if cached is None:
-                entity = await client.get_entity(int(chat_id))
-                result = await client.get_messages(
-                    entity, limit=0, filter=InputMessagesFilterMusic()
-                )
-                cached = int(getattr(result, "total", 0))
-                self.database.cache_set(f"source-count:{chat_id}", cached, 600)
-            job.result[chat_id] = int(cached)
+                async with gate:
+                    if (cached := self.database.cache_get(f"source-count:{chat_id}")) is None:
+                        entity = await client.get_entity(int(chat_id))
+                        result = await client.get_messages(
+                            entity, limit=0, filter=InputMessagesFilterMusic()
+                        )
+                        cached = int(getattr(result, "total", 0))
+                        self.database.cache_set(f"source-count:{chat_id}", cached, 600)
+            return chat_id, int(cached)
+
+        for chat_id, count in await asyncio.gather(
+            *(count_one(source["chatId"]) for source in sources), return_exceptions=True
+        ):
             job.processed += 1
+            if isinstance(count, Exception):
+                LOGGER.warning("Source count failed for %s: %s", chat_id, count)
+                continue
+            job.result[chat_id] = count
 
     def maybe_enrich(self) -> None:
         """Start the auto cover-art job if the setting is on and a worker is wired.

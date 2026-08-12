@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { knownTotalParam, mergePageInto, pageCacheKey, shouldFetchPage } from "./library-pages.js";
+import { cursorSuffixFor, knownTotalParam, mergePageInto, pageCacheKey, recordPageCursors, shouldFetchPage } from "./library-pages.js";
 
 test("pageCacheKey encodes every filter that changes which rows come back", () => {
   const key = pageCacheKey(100, { likedMode: false, source: "1", query: "needle", temporary: false, sort: "title" });
@@ -49,4 +49,24 @@ test("mergePageInto slots pages into the sparse Library array", () => {
   mergePageInto(target, { offset: 0, total: 500, items: [{ key: "c" }] }, (track) => seen.push(track.key));
   assert.deepEqual(seen, ["c"]);
   assert.equal(target[0].key, "c");
+});
+
+test("cursorSuffixFor only applies to the posted no-filter path", () => {
+  const cursors = new Map([[100, { cursor: "5:20" }]]);
+  assert.equal(cursorSuffixFor(100, { likedMode: false, source: "", query: "", sort: "posted" }, cursors),
+    "&cursor=5%3A20");
+  assert.equal(cursorSuffixFor(100, { likedMode: false, source: "", query: "", sort: "posted" }, new Map()), "");
+  assert.equal(cursorSuffixFor(100, { likedMode: true, source: "", query: "", sort: "posted" }, cursors), "");
+  assert.equal(cursorSuffixFor(100, { likedMode: false, source: "1", query: "", sort: "posted" }, cursors), "");
+  assert.equal(cursorSuffixFor(100, { likedMode: false, source: "", query: "needle", sort: "posted" }, cursors), "");
+  assert.equal(cursorSuffixFor(100, { likedMode: false, source: "", query: "", sort: "title" }, cursors), "");
+});
+
+test("recordPageCursors chains forward and backward tokens", () => {
+  const cursors = new Map();
+  recordPageCursors(cursors, 100, { nextCursor: "9:30", prevCursor: "1:2" });
+  assert.deepEqual(cursors.get(200), { cursor: "9:30" });
+  assert.deepEqual(cursors.get(0), { cursor: "1:2", before: true });
+  recordPageCursors(cursors, 100, {});
+  assert.deepEqual(cursors.get(200), { cursor: "9:30" }, "absent tokens must not overwrite the chain");
 });

@@ -37,3 +37,21 @@ export function mergePageInto(target, page, onTrack = () => {}) {
   });
   return merged;
 }
+
+// Keyset pagination (Phase C2): once a neighbouring page supplies its cursor tokens, deep
+// pages stop paying OFFSET scans. Only the default chronological path is cursor-capable;
+// filters, search, per-source and liked views keep offset paging (the server omits tokens
+// there, so the fallback is automatic).
+export function cursorSuffixFor(offset, { likedMode, source, query, sort }, pageCursors) {
+  if (likedMode || source || query || sort !== "posted") return "";
+  const token = pageCursors.get(offset);
+  if (!token) return "";
+  return `&cursor=${encodeURIComponent(token.cursor)}${token.before ? "&before=true" : ""}`;
+}
+
+export function recordPageCursors(pageCursors, offset, page) {
+  // The next page is fetched with this page's last row, the previous page with its
+  // first row (walked backwards).
+  if (page.nextCursor) pageCursors.set(offset + 100, { cursor: page.nextCursor });
+  if (page.prevCursor) pageCursors.set(offset - 100, { cursor: page.prevCursor, before: true });
+}
