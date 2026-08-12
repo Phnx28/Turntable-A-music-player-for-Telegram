@@ -1689,7 +1689,37 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 }
 .discover-row { grid-template-columns: 36px 1fr auto; padding: 5px 0; }
 .discover-row.pending { background: var(--surface); }
-.discover-row input { accent-color: var(--ink); }
+.discover-row input[type="checkbox"] {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  place-content: center;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--graphite);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--paper);
+  cursor: pointer;
+}
+.discover-row input[type="checkbox"]::before {
+  width: 9px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 0 0 2px 2px;
+  content: "";
+  transform: rotate(-45deg) scale(0);
+  transition: transform var(--dur-1) var(--ease-out);
+}
+.discover-row input[type="checkbox"]:checked {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+.discover-row input[type="checkbox"]:checked::before { transform: rotate(-45deg) scale(1); }
+.discover-row input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .45; }
 
 /* The dialog is a fixed size so the nav never moves as you switch tabs; only the pane scrolls.
    Every pane previously had to live inside the height of the shortest one, which left Network

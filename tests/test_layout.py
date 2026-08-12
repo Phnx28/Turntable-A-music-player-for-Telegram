@@ -1981,6 +1981,73 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("<Luna & Co>", escaped_title.text_content())
         self.assertEqual(0, escaped_title.evaluate("element => element.childElementCount"))
 
+    def test_source_picker_checkbox_controls_are_native_labels_with_intentional_state(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.documentElement.dataset.theme = 'light'; }")
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'selected', title: '<Luna & Co>', username: null, kind: 'channel', selected: true, pending: false, trackCount: 0 },
+          { chatId: 'pending', title: 'Queue <now>', username: null, kind: 'bot', selected: false, pending: true, trackCount: 0 },
+        ])""")
+        controls = page.locator("#discover-list .discover-row")
+        self.assertEqual(2, controls.count())
+        state = page.evaluate("""() => [...document.querySelectorAll('#discover-list .discover-row')].map((row) => {
+          const input = row.querySelector('input[type="checkbox"]');
+          const style = getComputedStyle(input);
+          const checkmark = getComputedStyle(input, '::before');
+          const root = getComputedStyle(document.documentElement);
+          return {
+            isLabel: row.tagName === 'LABEL',
+            containsInput: input.parentElement === row,
+            rowBusy: row.getAttribute('aria-busy'),
+            disabled: input.disabled,
+            label: input.getAttribute('aria-label'),
+            appearance: style.appearance,
+            width: style.width,
+            height: style.height,
+            background: style.backgroundColor,
+            borderColor: style.borderTopColor,
+            checkmarkVisible: input.checked && checkmark.content !== 'none' && checkmark.transform !== 'none',
+            ink: root.getPropertyValue('--ink').trim(),
+            graphite: root.getPropertyValue('--graphite').trim(),
+          };
+        })""")
+        self.assertEqual(
+            [
+                {
+                    "isLabel": True,
+                    "containsInput": True,
+                    "rowBusy": None,
+                    "disabled": False,
+                    "label": "Remove <Luna & Co> from library",
+                    "appearance": "none",
+                    "width": "18px",
+                    "height": "18px",
+                    "background": "rgb(20, 17, 15)",
+                    "borderColor": "rgb(20, 17, 15)",
+                    "checkmarkVisible": True,
+                    "ink": "#14110f",
+                    "graphite": "#6b655d",
+                },
+                {
+                    "isLabel": True,
+                    "containsInput": True,
+                    "rowBusy": "true",
+                    "disabled": True,
+                    "label": "Add Queue <now> to library",
+                    "appearance": "none",
+                    "width": "18px",
+                    "height": "18px",
+                    "background": "rgba(0, 0, 0, 0)",
+                    "borderColor": "rgb(107, 101, 93)",
+                    "checkmarkVisible": False,
+                    "ink": "#14110f",
+                    "graphite": "#6b655d",
+                },
+            ],
+            state,
+        )
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
