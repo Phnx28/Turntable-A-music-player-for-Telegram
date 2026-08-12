@@ -1197,7 +1197,9 @@ html[data-theme="dark"] .modal::backdrop { background: rgb(4 3 3 / .45); }
 .discover-list.is-revealing .discover-row:nth-child(6) { animation-delay: 110ms; }
 .discover-list.is-revealing .discover-row:nth-child(n+7) { animation-delay: 132ms; }
 .discover-row { display: grid; min-height: 58px; grid-template-columns: 1fr auto; align-items: center; gap: 16px; border-bottom: 1px solid var(--rule-soft); }
-.discover-copy strong, .discover-copy small { display: block; }
+.discover-copy { min-width: 0; }
+.discover-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
+.discover-copy small { display: block; }
 .discover-copy small { margin-top: 3px; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); text-transform: uppercase; }
 
 .metadata-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; }

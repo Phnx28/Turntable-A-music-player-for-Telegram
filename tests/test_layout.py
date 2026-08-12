@@ -2064,6 +2064,24 @@ class LayoutTests(unittest.TestCase):
             state,
         )
 
+    def test_source_picker_mixed_direction_titles_keep_metadata_ltr_without_overflow(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'mixed', title: 'وحید VahidOnline 🎧', username: null, kind: 'channel', selected: false, pending: false, trackCount: 12 },
+        ])""")
+        row = page.locator("#discover-list .discover-row")
+        title = row.locator("strong[dir='auto']")
+        metadata = row.locator("small[dir='ltr']")
+        self.assertEqual("وحید VahidOnline 🎧", title.text_content())
+        self.assertEqual("Channel · 12 music files", metadata.text_content())
+        self.assertEqual(0, row.evaluate("element => element.scrollWidth - element.clientWidth"))
+        self.assertEqual(0, row.locator(".discover-copy").evaluate("element => element.scrollWidth - element.clientWidth"))
+        self.assertEqual("hidden", title.evaluate("element => getComputedStyle(element).overflow"))
+        self.assertEqual("ellipsis", title.evaluate("element => getComputedStyle(element).textOverflow"))
+        self.assertEqual("nowrap", title.evaluate("element => getComputedStyle(element).whiteSpace"))
+        self.assertEqual("plaintext", title.evaluate("element => getComputedStyle(element).unicodeBidi"))
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")

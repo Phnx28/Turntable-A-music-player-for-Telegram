@@ -1533,7 +1533,7 @@ function renderDiscovered() {
       // ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
       const action = item.selected ? "Remove" : "Add";
       const direction = item.selected ? "from" : "to";
-      return `<label class="discover-row ${item.pending ? "pending" : ""}"${item.pending ? ' aria-busy="true"' : ""}><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""}${item.pending ? " disabled" : ""} aria-label="${action} ${escapeAttr(item.title)} ${direction} library"></label>`;
+      return `<label class="discover-row ${item.pending ? "pending" : ""}"${item.pending ? ' aria-busy="true"' : ""}><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong dir="auto">${escapeHtml(item.title)}</strong><small dir="ltr">${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""}${item.pending ? " disabled" : ""} aria-label="${action} ${escapeAttr(item.title)} ${direction} library"></label>`;
     }).join("")}</section>`;
   }).join("") || `<p id="discover-empty" class="small-copy">${escapeHtml(emptyCopy)}</p>`;
 }
