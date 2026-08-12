@@ -1945,6 +1945,40 @@ class LayoutTests(unittest.TestCase):
             visible_titles(),
         )
 
+    def test_source_picker_catalogue_headings_show_visible_groups_counts_and_safe_titles(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => {
+          const channels = Array.from({ length: 1000 }, (_, index) => ({
+            chatId: `channel-${index}`,
+            title: `Channel ${index + 1}`,
+            username: null,
+            kind: 'channel',
+            selected: false,
+            trackCount: 0,
+          }));
+          window.__renderDiscoveredForTest([
+            { chatId: 'selected', title: '<Luna & Co>', username: null, kind: 'channel', selected: true, trackCount: 0 },
+            ...channels,
+            { chatId: 'private', title: 'Private chat', username: null, kind: 'private', selected: false, trackCount: 0 },
+            { chatId: 'saved', title: 'Saved messages', username: null, kind: 'saved', selected: false, trackCount: 0 },
+          ]);
+        }""")
+
+        headings = page.locator("#discover-list .discover-group h3")
+        self.assertEqual(
+            [
+                ["Selected", "1"],
+                ["Channels", "1,000"],
+                ["Private chats", "1"],
+                ["Saved messages", "1"],
+            ],
+            headings.evaluate_all("headings => headings.map((heading) => [...heading.querySelectorAll('span')].map((span) => span.textContent))"),
+        )
+        escaped_title = page.locator("#discover-list .discover-row strong").first
+        self.assertEqual("<Luna & Co>", escaped_title.text_content())
+        self.assertEqual(0, escaped_title.evaluate("element => element.childElementCount"))
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
