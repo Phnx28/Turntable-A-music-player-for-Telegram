@@ -315,6 +315,7 @@ class ExternalServices:
         temporary = self.art_directory / f".{digest}.tmp"
         total = 0
         mime_type = ""
+        buffer = bytearray()
         try:
             async with self.http.stream(
                 "GET", url, headers={"User-Agent": self.user_agent}
@@ -323,20 +324,22 @@ class ExternalServices:
                 mime_type = response.headers.get("content-type", "").split(";", 1)[0]
                 if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
                     raise ValueError("Cover Art Archive returned an unsupported image")
-                with temporary.open("wb") as output:
-                    async for chunk in response.aiter_bytes():
-                        total += len(chunk)
-                        maximum = 25 if quality == "original" else 12 if quality == "1200" else 5
-                        if total > maximum * 1024 * 1024:
-                            raise ValueError(f"Artwork exceeds the {maximum} MB limit")
-                        output.write(chunk)
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    maximum = 25 if quality == "original" else 12 if quality == "1200" else 5
+                    if total > maximum * 1024 * 1024:
+                        raise ValueError(f"Artwork exceeds the {maximum} MB limit")
+                    buffer.extend(chunk)
+            # Artwork is bounded at 25 MB, so buffering it and writing once keeps the
+            # event loop free of per-chunk disk I/O.
+            await asyncio.to_thread(temporary.write_bytes, bytes(buffer))
             extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime_type]
             destination = self.art_directory / f"{digest}{extension}"
             temporary.replace(destination)
             return destination.name
         finally:
             if temporary.exists():
-                temporary.unlink()
+                await asyncio.to_thread(temporary.unlink, missing_ok=True)
 
     async def lyrics(self, track: dict[str, Any], refresh: bool = False) -> dict[str, Any]:
         metadata = track["metadata"]

@@ -32,6 +32,7 @@ from core import (
     verify_password,
 )
 from external import ExternalServices
+from storage import storage_summary
 from telegram_service import TelegramService
 
 
@@ -1045,9 +1046,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             telegram(request).cache_status, [value for value in keys.split(",") if value]
         )
 
+    @application.get("/api/storage")
+    async def storage_get(request: Request) -> dict[str, Any]:
+        service = telegram(request)
+        paths = [
+            ("audioCache", service.media.media_directory),
+            ("taggedDownloads", service.media.download_directory),
+            ("artwork", external(request).art_directory),
+            ("thumbnails", service.thumbnail_directory),
+            ("avatars", service.avatar_directory),
+            ("database", settings.data_directory / "library.sqlite3"),
+        ]
+        return await asyncio.to_thread(storage_summary, paths)
+
     @application.delete("/api/cache")
     async def cache_clear(request: Request) -> dict[str, int]:
-        return telegram(request).clear_media_cache()
+        return await telegram(request).clear_media_cache()
 
     return application
 

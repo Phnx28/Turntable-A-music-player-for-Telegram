@@ -25,6 +25,12 @@ from telethon.tl.types import contacts as contacts_types
 
 from core import Database, is_audio_file, media_identity, normalize_text, track_key
 from jobs import BackgroundJob, JobRunner
+
+
+def _unlink_many(paths: list[Path]) -> None:
+    """Batch-unlink for off-loop cleanup (used by the thumbnail/avatar caches)."""
+    for path in paths:
+        path.unlink(missing_ok=True)
 from media import MediaCache
 
 LOGGER = logging.getLogger(__name__)
@@ -432,7 +438,7 @@ class TelegramService:
             finally:
                 self.client = None
         self.database.clear_account()
-        self.clear_media_cache()
+        await self.clear_media_cache()
         self.database.clear_sources()
 
     def account_status(self) -> dict[str, Any]:
@@ -839,15 +845,16 @@ class TelegramService:
         destination = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.jpg"
         missing = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.missing"
         if destination.is_file():
-            return destination.read_bytes()
+            return await asyncio.to_thread(destination.read_bytes)
         if missing.is_file() and time.time() - missing.stat().st_mtime < 24 * 60 * 60:
             return None
-        for stale in self.thumbnail_directory.glob(f"{key_digest}-{quality_tag}-*"):
-            if stale not in {destination, missing}:
-                stale.unlink(missing_ok=True)
+        stale = [candidate for candidate in self.thumbnail_directory.glob(f"{key_digest}-{quality_tag}-*")
+                 if candidate not in {destination, missing}]
+        if stale:
+            await asyncio.to_thread(_unlink_many, stale)
         message, document = await self.media.get_message_document(chat_id, message_id)
         if not getattr(document, "thumbs", None):
-            missing.touch()
+            await asyncio.to_thread(missing.touch)
             return None
         if quality == "high":
             sizes = [(t.type, t.w * t.h if hasattr(t, "w") and t.w else 0, t) for t in document.thumbs]
@@ -860,9 +867,9 @@ class TelegramService:
             missing.touch()
             return None
         data = bytes(result)
-        destination.write_bytes(data)
+        await asyncio.to_thread(destination.write_bytes, data)
         os.chmod(destination, 0o600)
-        missing.unlink(missing_ok=True)
+        await asyncio.to_thread(missing.unlink, missing_ok=True)
         return data
 
     async def avatar(self, chat_id: str) -> bytes | None:
@@ -871,18 +878,18 @@ class TelegramService:
         destination = self.avatar_directory / f"{digest}.jpg"
         missing = self.avatar_directory / f"{digest}.missing"
         if destination.is_file():
-            return destination.read_bytes()
+            return await asyncio.to_thread(destination.read_bytes)
         if missing.is_file() and time.time() - missing.stat().st_mtime < 24 * 60 * 60:
             return None
         entity = await client.get_entity(int(chat_id))
         result = await client.download_profile_photo(entity, file=bytes, download_big=False)
         if not result:
-            missing.touch()
+            await asyncio.to_thread(missing.touch)
             return None
         data = bytes(result)
-        destination.write_bytes(data)
+        await asyncio.to_thread(destination.write_bytes, data)
         os.chmod(destination, 0o600)
-        missing.unlink(missing_ok=True)
+        await asyncio.to_thread(missing.unlink, missing_ok=True)
         return data
 
     def start_source_counts(self, sources: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1003,10 +1010,17 @@ class TelegramService:
             "states": states,
         }
 
-    def clear_media_cache(self) -> dict[str, int]:
+    async def clear_media_cache(self) -> dict[str, int]:
         # Cancelling the prefetch is a job-lifecycle concern, so it stays here; the file and
-        # database deletion belongs to the media cache.
-        self.jobs.cancel("prefetch")
+        # database deletion belongs to the media cache (clear_all).
+        job = self.jobs.cancel("prefetch")
+        if job and job.task:
+            # A prefetch may be mid-download inside cache_media; wait for it to actually
+            # stop before the cache deletes the files its writer holds open.
+            try:
+                await job.task
+            except asyncio.CancelledError:
+                pass
         self.prefetch_keys.clear()
         self.prefetch_order.clear()
-        return self.media.clear_cache()
+        return await self.media.clear_all()

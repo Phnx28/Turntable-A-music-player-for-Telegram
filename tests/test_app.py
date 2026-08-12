@@ -62,6 +62,49 @@ class HealthTests(AppTestCase):
         # start() is stubbed, so the service never links.
         self.assertFalse(body["telegram"])
 
+
+class StorageTests(AppTestCase):
+    """B7: the storage endpoint measures every generated-data category."""
+
+    def test_storage_reports_each_category(self) -> None:
+        service = self.app.state.telegram
+        # Seed one file per category with a known size.
+        (service.media.media_directory / "a.audio").write_bytes(b"x" * 1000)
+        (service.media.download_directory / "b.mp3").write_bytes(b"x" * 2000)
+        (self.app.state.external.art_directory / "c.jpg").write_bytes(b"x" * 3000)
+        (service.thumbnail_directory / "d.jpg").write_bytes(b"x" * 4000)
+        (service.avatar_directory / "e.jpg").write_bytes(b"x" * 5000)
+        (self.app.state.settings.data_directory / "library.sqlite3").write_bytes(b"x" * 6000)
+
+        response = self.client.get("/api/storage")
+        self.assertEqual(response.status_code, 200)
+        categories = response.json()["categories"]
+        self.assertEqual(
+            {
+                "audioCache": {"bytes": 1000, "files": 1},
+                "taggedDownloads": {"bytes": 2000, "files": 1},
+                "artwork": {"bytes": 3000, "files": 1},
+                "thumbnails": {"bytes": 4000, "files": 1},
+                "avatars": {"bytes": 5000, "files": 1},
+                "database": {"bytes": 6000, "files": 1},
+            },
+            categories,
+        )
+
+    def test_storage_reports_missing_categories_as_zero(self) -> None:
+        response = self.client.get("/api/storage")
+        self.assertEqual(response.status_code, 200)
+        categories = response.json()["categories"]
+        self.assertEqual(
+            ["audioCache", "taggedDownloads", "artwork", "thumbnails", "avatars", "database"],
+            list(categories),
+        )
+        # The five generated-data directories are empty until used; the database file
+        # always exists (the Database constructor creates it).
+        for name in ("audioCache", "taggedDownloads", "artwork", "thumbnails", "avatars"):
+            self.assertEqual({"bytes": 0, "files": 0}, categories[name], name)
+        self.assertEqual(1, categories["database"]["files"])
+
     def test_security_headers_are_present(self) -> None:
         response = self.client.get("/healthz")
         self.assertIn("default-src 'self'", response.headers["content-security-policy"])

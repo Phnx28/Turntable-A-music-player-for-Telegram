@@ -625,7 +625,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.exists())
             abandoned = media.media_directory / "abandoned.part"
             abandoned.write_bytes(b"partial")
-            removed = media.clear_cache()
+            removed = await media.clear_all()
             self.assertGreaterEqual(removed["removedBytes"], total + len(b"partial"))
             self.assertEqual([], list(media.media_directory.iterdir()))
             service.database.close()

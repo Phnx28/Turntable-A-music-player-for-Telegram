@@ -21,6 +21,7 @@ import logging
 import math
 import os
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -51,7 +52,7 @@ class MediaSource:
     body; everything about *where* the bytes live stays behind this interface.
     """
 
-    __slots__ = ("_media", "_track", "size", "_file", "_document")
+    __slots__ = ("_media", "_track", "size", "_file", "_document", "_digest")
 
     def __init__(
         self,
@@ -61,12 +62,16 @@ class MediaSource:
         size: int,
         file: Path | None = None,
         document: Any = None,
+        digest: str = "",
     ):
         self._media = media
         self._track = track
         self.size = int(size or 0)
         self._file = file
         self._document = document
+        # The media digest this source reads from, so the cache can refuse to truncate a
+        # .part file while a response is mid-stream over it (see cache_media realignment).
+        self._digest = digest
 
     async def iter_range(self, byte_range: ByteRange) -> AsyncIterator[bytes]:
         if self._file is not None:
@@ -75,8 +80,14 @@ class MediaSource:
             except OSError:
                 covered = False  # evicted between construction and open; stream from Telegram
             if covered:
-                for chunk in self._media._file_chunks(self._file, byte_range):
-                    yield chunk
+                # Register as an active reader of this key: a concurrent cache_media resume
+                # must not truncate bytes this response still depends on.
+                self._media._register_reader(self._digest)
+                try:
+                    for chunk in self._media._file_chunks(self._file, byte_range):
+                        yield chunk
+                finally:
+                    self._media._unregister_reader(self._digest)
                 return
         document = self._document
         if document is None:
@@ -109,13 +120,71 @@ class MediaCache:
         # Tracks the prefetch job is fetching; eviction never touches them. The service owns
         # the set; this module shares it by reference so the protection cannot drift.
         self.protected_keys = protected_keys if protected_keys is not None else set()
-        self.cache_lock = asyncio.Lock()
+        # Per-digest locks serialise only same-track cache writes, so different tracks can
+        # download concurrently up to the transfer semaphore. The tiny guard lock protects
+        # the create/remove of keyed locks.
+        self._key_locks: dict[str, asyncio.Lock] = {}
+        self._key_lock_users: dict[str, int] = {}
+        self._key_locks_guard = asyncio.Lock()
         # ponytail: one global transfer gate is enough for one owner; split by DC only if
         # profiling proves it.
         self.media_semaphore = asyncio.Semaphore(4)
+        # Active _cache_current tasks per track key, so a repeated request never spawns a
+        # second download of the same track.
+        self.active_cache_tasks: dict[str, asyncio.Task[Any]] = {}
+        # Readers currently streaming from a .part file, keyed by media digest; while a key
+        # has readers, cache_media defers realignment truncation (see cache_media).
+        self._active_readers: dict[str, int] = {}
+        # Raised while clear_all() is deleting files; new cache work waits for it to drop.
+        self._clearing = False
+        # Aggregate cache size in bytes (.audio + .part); None until first measured. Kept
+        # current by finalize/delete/evict/clear so eviction can skip the full scan when
+        # the cache is under budget.
+        self._cache_bytes: int | None = None
         self.document_cache: dict[str, tuple[float, str, Any, Any]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self.clean_partial_cache()
+
+    @asynccontextmanager
+    async def key_lock(self, key: str) -> AsyncIterator[None]:
+        """Per-key mutual exclusion for cache file mutation.
+
+        The lock object is created on demand under the guard and removed again once no
+        task owns or waits for it, so the dict cannot grow without bound.
+        """
+        async with self._key_locks_guard:
+            if key not in self._key_locks:
+                self._key_locks[key] = asyncio.Lock()
+            self._key_lock_users[key] = self._key_lock_users.get(key, 0) + 1
+            lock = self._key_locks[key]
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self._key_locks_guard:
+                self._key_lock_users[key] -= 1
+                if self._key_lock_users[key] <= 0:
+                    del self._key_locks[key]
+                    del self._key_lock_users[key]
+
+    def _register_reader(self, digest: str) -> None:
+        if not digest:
+            return
+        # Both helpers run without awaits between read and write, so the single-threaded
+        # event loop makes the refcount atomic; no lock is needed.
+        self._active_readers[digest] = self._active_readers.get(digest, 0) + 1
+
+    def _unregister_reader(self, digest: str) -> None:
+        if not digest:
+            return
+        count = self._active_readers.get(digest, 0) - 1
+        if count <= 0:
+            self._active_readers.pop(digest, None)
+        else:
+            self._active_readers[digest] = count
+
+    def _has_readers(self, digest: str) -> bool:
+        return bool(self._active_readers.get(digest))
 
     def require_client(self) -> Any:
         client = self.client_provider()
@@ -225,19 +294,29 @@ class MediaCache:
                 remaining -= len(chunk)
                 yield chunk
 
+    def _track_digest(self, track: dict[str, Any]) -> str:
+        """The deterministic per-track media digest (empty when the track has no document)."""
+        document_id = track.get("documentId")
+        if not document_id:
+            return ""
+        return media_digest(
+            track["key"], media_identity(document_id, int(track["file"]["size"] or 0))
+        )
+
     async def media_source(self, track: dict[str, Any]) -> MediaSource:
         """Triage a Track's media: complete cache, growing .part, or Telegram.
 
         One document fetch at most on a cold miss -- the double probe the route used to do is
         gone; the fetched document is held by the MediaSource for the stream itself.
         """
+        digest = self._track_digest(track)
         if cached := self.cached_media(track):
-            return MediaSource(self, track, size=cached.stat().st_size, file=cached)
+            return MediaSource(self, track, size=cached.stat().st_size, file=cached, digest=digest)
         if partial := self.partial_media(track):
             # The total size comes from the database, not Telegram, so a partial download
             # never costs a round trip just to answer the range/416 math.
             return MediaSource(
-                self, track, size=int(track["file"]["size"] or 0), file=partial
+                self, track, size=int(track["file"]["size"] or 0), file=partial, digest=digest
             )
         _, document = await self.get_message_document(track["chatId"], track["messageId"])
         return MediaSource(
@@ -245,6 +324,7 @@ class MediaCache:
             track,
             size=int(document.size or track["file"]["size"] or 0),
             document=document,
+            digest=digest,
         )
 
     def _cache_path(self, name: str) -> Path | None:
@@ -260,9 +340,11 @@ class MediaCache:
         entry = self.database.get_media_cache(track["key"], fingerprint)
         if not entry or not (candidate := self._cache_path(entry["path"])) or not candidate.is_file():
             return None
-        if candidate.stat().st_size != int(track["file"]["size"]):
+        size = candidate.stat().st_size
+        if size != int(track["file"]["size"]):
             self.database.delete_media_cache([track["key"]])
             candidate.unlink(missing_ok=True)
+            self._note_cache_bytes(-size)
             return None
         return candidate
 
@@ -290,7 +372,12 @@ class MediaCache:
     async def cache_media(self, track: dict[str, Any]) -> Path:
         if cached := self.cached_media(track):
             return cached
-        async with self.cache_lock:
+        # The per-track lock is what serialises same-track writers; different tracks never
+        # contend here, so full downloads run concurrently up to the transfer semaphore.
+        async with self.key_lock(self._track_digest(track)):
+            # A cache clear is deleting files right now: wait it out instead of racing it.
+            while self._clearing:
+                await asyncio.sleep(0.05)
             if cached := self.cached_media(track):
                 return cached
             _, document = await self.get_message_document(track["chatId"], track["messageId"])
@@ -308,6 +395,7 @@ class MediaCache:
                     if stale := self._cache_path(stale_entry["path"]):
                         stale.unlink(missing_ok=True)
                 self.database.save_media_cache(track["key"], fingerprint, destination.name, expected_size)
+                self._note_cache_bytes(expected_size - (int(stale_entry["size"]) if stale_entry else 0))
                 return destination
             destination.unlink(missing_ok=True)
             offset = temporary.stat().st_size if temporary.is_file() else 0
@@ -315,9 +403,16 @@ class MediaCache:
                 temporary.unlink(missing_ok=True)
                 offset = 0
             elif offset < expected_size and offset % MEDIA_CHUNK_SIZE:
-                offset -= offset % MEDIA_CHUNK_SIZE
-                with temporary.open("r+b") as output:
-                    output.truncate(offset)
+                if self._has_readers(self._track_digest(track)):
+                    # A response is mid-stream over this .part file; truncating now would
+                    # end it short of its advertised Content-Length. Append at the current
+                    # (misaligned) offset instead; the next resume realigns the file and at
+                    # most re-downloads the sub-chunk tail.
+                    pass
+                else:
+                    offset -= offset % MEDIA_CHUNK_SIZE
+                    with temporary.open("r+b") as output:
+                        output.truncate(offset)
             if offset < expected_size:
                 with temporary.open("ab") as output:
                     os.chmod(temporary, 0o600)
@@ -333,14 +428,41 @@ class MediaCache:
             self.database.save_media_cache(
                 track["key"], fingerprint, destination.name, destination.stat().st_size
             )
+            # The aggregate counter replaces any previous entry for this key (its size may
+            # have been counted before) with the freshly completed file.
+            self._note_cache_bytes(expected_size - (int(stale_entry["size"]) if stale_entry else 0))
             await self._evict_cache()
             return destination
 
+    def _note_cache_bytes(self, delta: int) -> None:
+        """Keep the aggregate cache-size counter in step with a completed/replaced entry."""
+        if self._cache_bytes is not None:
+            self._cache_bytes = max(0, self._cache_bytes + delta)
+
     def start_cache_current(self, key: str) -> dict[str, Any]:
-        """Background-cache the playing track without touching the prefetch job."""
-        if key:
-            self._spawn(self._cache_current(key))
+        """Background-cache the playing track without touching the prefetch job.
+
+        A key with an in-flight task is left to that task: no second download is started,
+        and both callers observe the same completion via the cache.
+        """
+        if not key:
+            return {"ok": True}
+        if existing := self.active_cache_tasks.get(key):
+            if not existing.done():
+                return {"ok": True}
+        task = asyncio.create_task(self._cache_current(key))
+        self.active_cache_tasks[key] = task
+        # Drop only when the finished task is still the map's entry: a replacement task for
+        # the same key must not be popped by its predecessor's callback.
+        task.add_done_callback(self._drop_cache_task(key, task))
         return {"ok": True}
+
+    def _drop_cache_task(self, key: str, task: asyncio.Task[Any]) -> Any:
+        def _drop(done: asyncio.Task[Any]) -> None:
+            if self.active_cache_tasks.get(key) is done:
+                self.active_cache_tasks.pop(key, None)
+
+        return _drop
 
     async def _cache_current(self, key: str) -> None:
         try:
@@ -427,7 +549,24 @@ class MediaCache:
     async def _evict_cache(self, maximum: int = 5 * 1024 * 1024 * 1024) -> None:
         await asyncio.to_thread(self._evict_cache_sync, maximum)
 
+    def _scan_cache_bytes_sync(self) -> int:
+        """Authoritative cache size: DB entries plus on-disk .part files."""
+        total = sum(int(entry["size"]) for entry in self.database.media_cache_entries())
+        for candidate in self.media_directory.glob("*.part"):
+            try:
+                total += candidate.stat().st_size
+            except OSError:
+                candidate.unlink(missing_ok=True)
+        return total
+
     def _evict_cache_sync(self, maximum: int = 5 * 1024 * 1024 * 1024) -> None:
+        if self._cache_bytes is None:
+            self._cache_bytes = self._scan_cache_bytes_sync()
+        if self._cache_bytes <= maximum:
+            return
+        # Over budget: reconcile from the authoritative sources (also repairs any drift in
+        # the aggregate counter) and evict, exactly as before -- oldest dead downloads
+        # first; never interrupting a download that is actively writing.
         entries = self.database.media_cache_entries()
         total = sum(int(entry["size"]) for entry in entries)
         now = time.time()
@@ -440,8 +579,6 @@ class MediaCache:
                 continue
             total += details.st_size
             partials.append((details.st_mtime, details.st_size, candidate))
-        # Oldest dead downloads first; the completion order of cache entries is less relevant
-        # than never interrupting a download that is actively writing.
         partials.sort()
         remove: list[str] = []
         for entry in entries:
@@ -462,8 +599,29 @@ class MediaCache:
             candidate.unlink(missing_ok=True)
         if remove:
             self.database.delete_media_cache(remove)
+        self._cache_bytes = total
 
-    def clear_cache(self) -> dict[str, int]:
+    async def clear_all(self) -> dict[str, int]:
+        """Safely delete every cached file, .part download, and their database rows.
+
+        The gate flag stops new transfers, active cache tasks are cancelled and awaited so
+        no writer is mid-append when its files are deleted, and the guard then blocks new
+        key-lock creation while the synchronous deletion runs. Callers that cancelled a
+        prefetch job must await its task *before* this (see TelegramService.clear_media_cache).
+        """
+        self._clearing = True
+        try:
+            active = [task for task in self._background_tasks if not task.done()]
+            for task in active:
+                task.cancel()
+            if active:
+                await asyncio.gather(*active, return_exceptions=True)
+            async with self._key_locks_guard:
+                return await asyncio.to_thread(self._clear_cache_sync)
+        finally:
+            self._clearing = False
+
+    def _clear_cache_sync(self) -> dict[str, int]:
         """Delete every cached file and .part download, and their database rows."""
         paths = self.database.delete_media_cache()
         removed = 0
@@ -479,4 +637,5 @@ class MediaCache:
                 removed += size
             except OSError:
                 candidate.unlink(missing_ok=True)
+        self._cache_bytes = 0
         return {"removedBytes": removed}
