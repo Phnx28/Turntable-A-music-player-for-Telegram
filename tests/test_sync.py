@@ -280,3 +280,106 @@ def _liked_at(database):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdentitySyncTests(unittest.IsolatedAsyncioTestCase):
+    """L1-L3: recording identities and track mappings travel between devices."""
+
+    async def test_resolved_identity_and_mapping_arrive_on_a_new_device(self):
+        device_a = _database()
+        device_b = _database()
+        provider = FakeProvider()
+        engine_a = _engine(device_a, provider, device_id="device-a")
+        engine_b = _engine(device_b, provider, device_id="device-b")
+        try:
+            # Device A resolved the track: identity + mapping journal and push.
+            recording_id = device_a.get_or_create_recording(
+                musicbrainz_recording_id="mbid-l1",
+                canonical={"title": "Paranoid Android", "artist": "Radiohead"},
+                release_group_mbid="rg-1",
+            )
+            device_a.link_track_recording("1:2", recording_id)
+            self.assertEqual(2, device_a.outbox_count())
+            await engine_a.sync_once()
+            self.assertEqual(0, device_a.outbox_count())
+            # Device B pulls: the track is linked without ever fingerprinting.
+            await engine_b.sync_once()
+            recording = device_b.get_track_recording("1:2")
+            self.assertIsNotNone(recording)
+            self.assertEqual("mbid-l1", recording["musicbrainz_recording_id"])
+            self.assertEqual("rg-1", recording["release_group_mbid"])
+            self.assertEqual("Paranoid Android", recording["canonical_title"])
+            self.assertEqual(0, device_b.outbox_count(),
+                             "a merged identity must not be echoed back")
+            # And the identity display shows on the new device.
+            track = device_b.get_track("1", "2")
+            self.assertEqual("Paranoid Android", track["metadata"]["title"])
+        finally:
+            device_a.close()
+            device_b.close()
+
+    async def test_existing_local_identity_is_never_replaced(self):
+        database = _database()
+        provider = FakeProvider()
+        engine = _engine(database, provider)
+        try:
+            # The local device already resolved this track to its own recording.
+            local_id = database.get_or_create_recording(
+                musicbrainz_recording_id="mbid-local",
+                canonical={"title": "Local title", "artist": "Local artist"},
+            )
+            database.link_track_recording("1:2", local_id)
+            # A remote mapping for a different MBID arrives later.
+            engine._apply_remote({
+                "namespace": "account-1", "entityType": "track_recording",
+                "entityId": "1:2", "operation": "upsert",
+                "payload": {
+                    "musicbrainzRecordingId": "mbid-remote",
+                    "canonicalTitle": "Remote title", "canonicalArtist": "Remote artist",
+                },
+                "updatedAt": 900, "deviceId": "device-b",
+            })
+            recording = database.get_track_recording("1:2")
+            self.assertEqual("mbid-local", recording["musicbrainz_recording_id"],
+                             "the local fingerprint-verified identity wins")
+            # Only the test's own setup entries are journaled; the remote mapping
+            # must not be applied or echoed.
+            self.assertEqual(2, database.outbox_count())
+        finally:
+            database.close()
+
+    async def test_mapping_for_a_missing_track_is_ignored(self):
+        database = _database()
+        engine = _engine(database, None)
+        try:
+            engine._apply_remote({
+                "namespace": "account-1", "entityType": "track_recording",
+                "entityId": "1:999", "operation": "upsert",
+                "payload": {"musicbrainzRecordingId": "mbid-x"},
+                "updatedAt": 900, "deviceId": "device-b",
+            })
+            # No crash, no recording row created for a phantom mapping.
+            self.assertIsNone(database.get_track_recording("1:999"))
+        finally:
+            database.close()
+
+    async def test_release_group_propagates_when_locally_missing(self):
+        database = _database()
+        engine = _engine(database, None)
+        try:
+            recording_id = database.get_or_create_recording(
+                musicbrainz_recording_id="mbid-rg", canonical={"title": "T", "artist": "A"}
+            )
+            engine._apply_remote({
+                "namespace": "account-1", "entityType": "recording",
+                "entityId": "mbid-rg", "operation": "upsert",
+                "payload": {"musicbrainzRecordingId": "mbid-rg", "releaseGroupMbid": "rg-7"},
+                "updatedAt": 900, "deviceId": "device-b",
+            })
+            recording = database.get_track_recording_by_id(recording_id)
+            self.assertEqual("rg-7", recording["release_group_mbid"])
+            # Only the test's own initial creation is journaled; the merged release
+            # group must not be echoed back.
+            self.assertEqual(1, database.outbox_count())
+        finally:
+            database.close()

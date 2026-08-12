@@ -137,6 +137,8 @@ class SyncEngine:
             self._merge_metadata(entity_id, operation, payload, updated_at)
         elif entity_type == "recording":
             self._merge_recording(entity_id, payload, updated_at)
+        elif entity_type == "track_recording":
+            self._merge_track_recording(entity_id, payload, updated_at)
         else:
             LOGGER.debug("Ignoring unknown remote entity type %r", entity_type)
 
@@ -205,7 +207,7 @@ class SyncEngine:
         mbid = str(payload.get("musicbrainzRecordingId") or entity_id or "")
         if not mbid:
             return
-        self.database.get_or_create_recording(
+        recording_id = self.database.get_or_create_recording(
             musicbrainz_recording_id=mbid,
             canonical={
                 "title": payload.get("canonicalTitle"),
@@ -214,6 +216,38 @@ class SyncEngine:
             release_group_mbid=payload.get("releaseGroupMbid") or "",
             journal=False,
         )
+        # A synced release group fills the local gap only; an existing local choice
+        # (the user's own resolution) is never overwritten.
+        release_group = payload.get("releaseGroupMbid") or ""
+        if release_group:
+            existing = self.database.get_track_recording_by_id(recording_id)
+            if existing and not existing.get("release_group_mbid"):
+                self.database.set_recording_release_group(recording_id, release_group)
+
+    def _merge_track_recording(self, track_key: str, payload: dict[str, Any], updated_at: int) -> None:
+        """Attach a synced fingerprint-verified mapping without re-fingerprinting (L2).
+
+        The mapping is self-sufficient: it carries the MBID and the canonical
+        values, so it can create/update the recording row and link the local
+        track even when the recording entity arrived in a different order.
+        Conservative by construction: identity is only ever attached through
+        this synced mapping -- never because a title/artist text matched.
+        """
+        mbid = str(payload.get("musicbrainzRecordingId") or "")
+        if not mbid:
+            return
+        if self.database.get_track_recording(track_key) is not None:
+            return  # the track already has a local (possibly newer) identity
+        recording_id = self.database.get_or_create_recording(
+            musicbrainz_recording_id=mbid,
+            canonical={
+                "title": payload.get("canonicalTitle"),
+                "artist": payload.get("canonicalArtist"),
+            },
+            release_group_mbid=payload.get("releaseGroupMbid") or "",
+            journal=False,
+        )
+        self.database.link_track_recording(track_key, recording_id, journal=False)
 
     async def _push(self, report: dict[str, Any]) -> None:
         pending = self.database.outbox_pending(limit=50)

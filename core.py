@@ -1213,6 +1213,8 @@ class Database:
                 SELECT t.*, s.title AS source_title, s.kind AS source_kind,
                        s.selected AS source_selected,
                        o.payload AS override_payload,
+                       rec.canonical_title AS rec_canonical_title,
+                       rec.canonical_artist AS rec_canonical_artist,
                        recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
@@ -1258,8 +1260,10 @@ class Database:
         fingerprint = artwork or media_identity(value.get("document_id", ""), value.get("file_size", 0))
         return {
             "key": track_key(chat_id, message_id),
-            "title": override.get("title") or recording_fields.get("title") or value["telegram_title"] or value["file_name"],
-            "artist": override.get("artist") or recording_fields.get("artist") or value["telegram_artist"] or "Unknown artist",
+            "title": override.get("title") or recording_fields.get("title")
+                     or value.get("rec_canonical_title") or value["telegram_title"] or value["file_name"],
+            "artist": override.get("artist") or recording_fields.get("artist")
+                      or value.get("rec_canonical_artist") or value["telegram_artist"] or "Unknown artist",
             "durationMs": int(value["duration_ms"] or 0),
             "sentAt": int(value["sent_at"] or 0),
             "artworkVersion": hashlib.sha256(fingerprint.encode()).hexdigest()[:12],
@@ -1377,6 +1381,8 @@ class Database:
                    t.sent_at, t.document_id, t.liked_at, s.title AS source_title,
                    s.kind AS source_kind, s.selected AS source_selected,
                    o.payload AS override_payload,
+                   rec.canonical_title AS rec_canonical_title,
+                   rec.canonical_artist AS rec_canonical_artist,
                    recording_fields.recording_fields_payload
             FROM tracks t
             JOIN sources s ON s.chat_id = t.chat_id
@@ -1619,6 +1625,8 @@ class Database:
                        t.liked_at,
                        s.title AS source_title, s.kind AS source_kind,
                        s.selected AS source_selected, o.payload AS override_payload,
+                       rec.canonical_title AS rec_canonical_title,
+                       rec.canonical_artist AS rec_canonical_artist,
                        recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
@@ -1635,7 +1643,11 @@ class Database:
     # One JSON object per recording: {field: value} from metadata_fields, layered
     # between the raw Telegram fields and the user's overrides so fingerprint-
     # resolved identity shows in the UI without ever masking a user correction.
+    # The recordings row itself layers beneath it: the canonical title/artist are
+    # what the sync carries (Phase L1), so a pulled identity displays on a fresh
+    # device even before any provenance fields exist there.
     _RECORDING_FIELDS_JOIN = """
+        LEFT JOIN recordings rec ON rec.id = t.recording_id
         LEFT JOIN (
             SELECT recording_id,
                    json_group_object(field_name, json(value_json)) AS recording_fields_payload
@@ -1658,8 +1670,16 @@ class Database:
             "discNumber": value["telegram_disc_number"],
         }
         overrides = json.loads(value.get("override_payload") or "{}")
+        # Only present canonical values are layered: None must never overwrite the
+        # Telegram fields for a track without a recording.
+        canonical_fields = {
+            key: candidate for key, candidate in (
+                ("title", value.get("rec_canonical_title")),
+                ("artist", value.get("rec_canonical_artist")),
+            ) if candidate
+        }
         recording_fields = json.loads(value.get("recording_fields_payload") or "{}")
-        metadata = {**source_metadata, **recording_fields, **overrides}
+        metadata = {**source_metadata, **canonical_fields, **recording_fields, **overrides}
         chat_id = str(value["chat_id"])
         message_id = str(value["message_id"])
         return {
@@ -1806,6 +1826,8 @@ class Database:
                 SELECT t.*, s.title AS source_title, s.kind AS source_kind,
                        s.selected AS source_selected,
                        o.payload AS override_payload,
+                       rec.canonical_title AS rec_canonical_title,
+                       rec.canonical_artist AS rec_canonical_artist,
                        recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
@@ -1913,13 +1935,37 @@ class Database:
                 )
             return recording_id
 
-    def link_track_recording(self, track_key: str, recording_id: int) -> None:
+    def link_track_recording(self, track_key: str, recording_id: int, journal: bool = True) -> None:
         chat_id, message_id = split_track_key(track_key)
         with self.transaction() as connection:
             connection.execute(
                 "UPDATE tracks SET recording_id = ? WHERE chat_id = ? AND message_id = ?",
                 (recording_id, chat_id, message_id),
             )
+            if journal:
+                # The mapping is fingerprint-verified user knowledge that syncs
+                # (Phase L2): a new device can attach it without re-fingerprinting.
+                row = connection.execute(
+                    """
+                    SELECT musicbrainz_recording_id, canonical_title, canonical_artist,
+                           release_group_mbid
+                    FROM recordings WHERE id = ?
+                    """,
+                    (recording_id,),
+                ).fetchone()
+                if row and row["musicbrainz_recording_id"]:
+                    self.outbox_record(
+                        connection,
+                        "track_recording",
+                        track_key,
+                        "upsert",
+                        {
+                            "musicbrainzRecordingId": row["musicbrainz_recording_id"],
+                            "canonicalTitle": row["canonical_title"],
+                            "canonicalArtist": row["canonical_artist"],
+                            "releaseGroupMbid": row["release_group_mbid"],
+                        },
+                    )
 
     def get_track_recording(self, track_key: str) -> dict[str, Any] | None:
         chat_id, message_id = split_track_key(track_key)
@@ -1931,6 +1977,13 @@ class Database:
                 WHERE t.chat_id = ? AND t.message_id = ?
                 """,
                 (chat_id, message_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_track_recording_by_id(self, recording_id: int) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM recordings WHERE id = ?", (recording_id,)
             ).fetchone()
         return dict(row) if row else None
 
@@ -1973,6 +2026,8 @@ class Database:
                        s.title AS source_title, s.kind AS source_kind,
                        s.selected AS source_selected,
                        o.payload AS override_payload,
+                       rec.canonical_title AS rec_canonical_title,
+                       rec.canonical_artist AS rec_canonical_artist,
                        recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
