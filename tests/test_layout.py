@@ -1988,9 +1988,10 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("""() => window.__renderDiscoveredForTest([
           { chatId: 'selected', title: '<Luna & Co>', username: null, kind: 'channel', selected: true, pending: false, trackCount: 0 },
           { chatId: 'pending', title: 'Queue <now>', username: null, kind: 'bot', selected: false, pending: true, trackCount: 0 },
+          { chatId: 'quoted', title: 'Say "yes" & <now>', username: null, kind: 'private', selected: false, pending: false, trackCount: 0 },
         ])""")
         controls = page.locator("#discover-list .discover-row")
-        self.assertEqual(2, controls.count())
+        self.assertEqual(3, controls.count())
         state = page.evaluate("""() => [...document.querySelectorAll('#discover-list .discover-row')].map((row) => {
           const input = row.querySelector('input[type="checkbox"]');
           const style = getComputedStyle(input);
@@ -2035,6 +2036,21 @@ class LayoutTests(unittest.TestCase):
                     "rowBusy": "true",
                     "disabled": True,
                     "label": "Add Queue <now> to library",
+                    "appearance": "none",
+                    "width": "18px",
+                    "height": "18px",
+                    "background": "rgba(0, 0, 0, 0)",
+                    "borderColor": "rgb(107, 101, 93)",
+                    "checkmarkVisible": False,
+                    "ink": "#14110f",
+                    "graphite": "#6b655d",
+                },
+                {
+                    "isLabel": True,
+                    "containsInput": True,
+                    "rowBusy": None,
+                    "disabled": False,
+                    "label": "Add Say \"yes\" & <now> to library",
                     "appearance": "none",
                     "width": "18px",
                     "height": "18px",
