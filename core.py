@@ -757,6 +757,18 @@ class Database:
                 """
             )
             self.connection.commit()
+        if version < 15:
+            # The release-group candidates for a resolved track, held until the
+            # release/artwork step settles, so an artwork retry (or a crash between
+            # identity link and artwork fetch) never loses the candidates.
+            self.connection.executescript(
+                """
+                ALTER TABLE track_enrichment ADD COLUMN release_groups_json TEXT;
+
+                PRAGMA user_version = 15;
+                """
+            )
+            self.connection.commit()
 
     def ping(self) -> bool:
         """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
@@ -1801,6 +1813,13 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def set_recording_release_group(self, recording_id: int, release_group_mbid: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE recordings SET release_group_mbid = ?, updated_at = ? WHERE id = ?",
+                (release_group_mbid or None, now_ts(), recording_id),
+            )
+
     # ------------------------------------------------------------------
     # Enrichment state (Phase E2): durable per-track status so bulk jobs
     # resume and a crash cannot leave a track "processing" forever.
@@ -1824,21 +1843,24 @@ class Database:
         fingerprint_version: int | None = None,
         resolver_version: int | None = None,
         next_retry_at: int | None = None,
+        release_groups_json: str | None = None,
     ) -> None:
         with self.transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO track_enrichment (
                     track_key, status, last_attempt_at, next_retry_at, failure_code,
-                    fingerprint_version, resolver_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    fingerprint_version, resolver_version, release_groups_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(track_key) DO UPDATE SET
                     status = excluded.status,
                     last_attempt_at = excluded.last_attempt_at,
                     next_retry_at = excluded.next_retry_at,
                     failure_code = excluded.failure_code,
                     fingerprint_version = excluded.fingerprint_version,
-                    resolver_version = excluded.resolver_version
+                    resolver_version = excluded.resolver_version,
+                    release_groups_json = COALESCE(excluded.release_groups_json,
+                                                   track_enrichment.release_groups_json)
                 """,
                 (
                     track_key,
@@ -1848,6 +1870,7 @@ class Database:
                     failure_code,
                     fingerprint_version,
                     resolver_version,
+                    release_groups_json,
                 ),
             )
 

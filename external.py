@@ -281,6 +281,37 @@ class ExternalServices:
         base = url.removesuffix("-500")
         return base if quality == "original" else f"{base}-{quality}"
 
+    def release_group_cover_url(self, release_group_id: str, quality: str = "1200") -> str:
+        """The Cover Art Archive URL for a release group's front art.
+
+        Phase G3: when the exact release is unknown but the release group is
+        resolved, the release-group front art is the canonical cover. Sized by
+        the configured quality (G5): 500/1200 thumbnails, originals only when
+        explicitly configured.
+        """
+        if quality not in {"500", "1200", "original"}:
+            raise ValueError("Cover quality must be 500, 1200, or original")
+        size = "" if quality == "original" else f"-{quality}"
+        return f"https://coverartarchive.org/release-group/{release_group_id}/front{size}.jpg"
+
+    async def fetch_release_group_cover(
+        self, release_group_id: str, quality: str = "1200"
+    ) -> str | None:
+        """Downloaded artwork file name for *release_group_id*.
+
+        Returns None on a definitive miss (404/410 or an unusable image) so the
+        caller can record a long-lived miss marker; transient failures (429/5xx,
+        transport) raise and are retried later without poisoning the miss state.
+        """
+        try:
+            return await self._download_cover(
+                self.release_group_cover_url(release_group_id, quality), quality
+            )
+        except (httpx.HTTPStatusError, ValueError) as error:
+            if isinstance(error, httpx.HTTPStatusError) and not self._is_permanent_cover_miss(error.response):
+                raise
+            return None
+
     @staticmethod
     def _is_permanent_cover_miss(response: httpx.Response) -> bool:
         """True when a CAA error means this track has no usable cover, now or ever.

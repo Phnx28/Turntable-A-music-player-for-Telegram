@@ -11,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from dataclasses import asdict
 from typing import Any
 
 import httpx
 
-from resolver import AcoustIDRecording
+from resolver import AcoustIDRecording, ReleaseGroup
 
 ACOUSTID_ENDPOINT = "https://api.acoustid.org/v2/lookup"
 ACOUSTID_MIN_INTERVAL_SECONDS = 0.4  # ~2.5 req/s; the free tier allows 3/s per key
@@ -63,7 +64,7 @@ class AcoustIDClient:
         # re-asked of the API on every enrichment pass.
         self.database.cache_set(
             cache_key,
-            [entry.__dict__ for entry in recordings],
+            [asdict(entry) for entry in recordings],
             ACOUSTID_CACHE_SECONDS,
         )
         return recordings
@@ -115,10 +116,16 @@ class AcoustIDClient:
                         artist=artist,
                         duration_ms=AcoustIDClient._milliseconds(raw.get("duration")),
                         sources=int(result.get("sources") or 0),
-                        release_group_titles=[
-                            str(group.get("title") or "")
+                        release_groups=[
+                            ReleaseGroup(
+                                id=str(group.get("id") or ""),
+                                title=str(group.get("title") or ""),
+                                primary_type=str(group.get("type") or ""),
+                                secondary_types=[
+                                    str(value) for value in group.get("secondarytypes") or []
+                                ],
+                            )
                             for group in raw.get("releasegroups") or []
-                            if group.get("title")
                         ],
                     )
                 )

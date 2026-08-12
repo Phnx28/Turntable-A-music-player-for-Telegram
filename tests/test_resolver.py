@@ -9,9 +9,11 @@ import unittest
 
 from resolver import (
     AcoustIDRecording,
+    ReleaseGroup,
     ResolutionKind,
     decide,
     distinct_recordings,
+    resolve_release_group,
     version_qualifiers,
 )
 
@@ -217,3 +219,50 @@ class QualifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseGroupTests(unittest.TestCase):
+    """G2: release-group resolution never picks the first MusicBrainz result."""
+
+    def group(self, id, title, primary_type="Album", secondary=None):
+        return ReleaseGroup(id=id, title=title, primary_type=primary_type,
+                            secondary_types=secondary or [])
+
+    def test_album_tag_match_wins(self):
+        groups = [
+            self.group("rg-1", "OK Computer", "Album"),
+            self.group("rg-2", "The Best of Radiohead", "Compilation"),
+        ]
+        chosen = resolve_release_group(groups, album_tag="OK Computer")
+        self.assertIsNotNone(chosen)
+        self.assertEqual("rg-1", chosen.id)
+
+    def test_compilation_is_avoided_when_an_album_exists(self):
+        groups = [
+            self.group("rg-1", "Some Album", "Album"),
+            self.group("rg-2", "Some Album", "Compilation"),
+        ]
+        chosen = resolve_release_group(groups, album_tag="Some Album")
+        self.assertEqual("rg-1", chosen.id)
+
+    def test_no_evidence_returns_none(self):
+        self.assertIsNone(resolve_release_group(
+            [self.group("rg-1", "Mystery Record", "Other")], album_tag="")
+        )
+        self.assertIsNone(resolve_release_group([]))
+
+    def test_single_prefers_a_single_over_a_compilation(self):
+        groups = [
+            self.group("rg-1", "Now That's What I Call Music", "Compilation"),
+            self.group("rg-2", "Paranoid Android", "Single"),
+        ]
+        chosen = resolve_release_group(groups, album_tag="")
+        self.assertEqual("rg-2", chosen.id)
+
+    def test_substring_album_match_counts_but_exact_wins(self):
+        groups = [
+            self.group("rg-1", "OK Computer Collector's Edition", "Album"),
+            self.group("rg-2", "OK Computer", "Album"),
+        ]
+        chosen = resolve_release_group(groups, album_tag="OK Computer")
+        self.assertEqual("rg-2", chosen.id)

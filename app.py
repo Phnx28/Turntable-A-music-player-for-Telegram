@@ -316,6 +316,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 api_key=acoustid_key,
                 user_agent=external.user_agent,
             ),
+            cover_fetcher=external.fetch_release_group_cover,
         )
         application.state.startup_error = None
 

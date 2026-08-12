@@ -67,6 +67,16 @@ def version_qualifiers(title: str | None) -> set[str]:
 
 
 @dataclass(frozen=True)
+class ReleaseGroup:
+    """One release group a recording appears on, as returned by AcoustID."""
+
+    id: str
+    title: str
+    primary_type: str = ""
+    secondary_types: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class AcoustIDRecording:
     """One recording candidate returned by an AcoustID lookup."""
 
@@ -75,7 +85,7 @@ class AcoustIDRecording:
     artist: str = ""
     duration_ms: int | None = None
     sources: int = 0
-    release_group_titles: list[str] = field(default_factory=list)
+    release_groups: list[ReleaseGroup] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -304,3 +314,85 @@ def distinct_recordings(candidates: Iterable[AcoustIDRecording]) -> list[AcoustI
             continue
         seen[candidate.mbid] = candidate
     return [seen[key] for key in sorted(seen, key=lambda key: seen[key].sources, reverse=True)]
+
+
+# ---------------------------------------------------------------------------
+# Release-group resolution (Phase G2): once the recording identity is known,
+# pick the release group the Telegram context points at. Pure scoring -- the
+# result is stored as release_group_mbid and drives the artwork selection.
+# ---------------------------------------------------------------------------
+
+# A track-numbered album context prefers an Album; a bare single prefers a
+# Single/EP. Compilations are avoided whenever a primary album exists, because
+# "various artists" albums carry the wrong album-artist context for display.
+_RELEASE_TYPE_RANK = {
+    "album": 3,
+    "ep": 2,
+    "single": 2,
+    "compilation": 0,
+    "live": 1,
+    "soundtrack": 1,
+    "broadcast": 1,
+    "other": 1,
+}
+
+
+def resolve_release_group(
+    release_groups: Iterable[ReleaseGroup],
+    *,
+    album_tag: str | None = None,
+    year: int | None = None,
+    track_number: int | None = None,
+) -> ReleaseGroup | None:
+    """The release group the Telegram context most plausibly belongs to.
+
+    Evidence, in order: the album tag matching the release-group title; the
+    release type (an Album when the track is part of one, a Single when not).
+    No release groups, or no plausible one, returns None -- the recording stays
+    resolved without a release group, and artwork falls back to the existing
+    policy rather than to "the first release MusicBrainz returned".
+
+    *year* and *track_number* are accepted for callers that can supply them
+    (a future MusicBrainz-backed resolver scores release dates and track
+    counts); AcoustID's response carries neither, so they do not affect the
+    score here.
+    """
+    candidates = [group for group in release_groups if group and group.id and group.title]
+    if not candidates:
+        return None
+    album = normalize_name(album_tag or "")
+
+    def base_rank(group: ReleaseGroup) -> float:
+        return _RELEASE_TYPE_RANK.get(
+            normalize_name(group.primary_type).lower().replace(" ", "") or "other", 1
+        )
+
+    def score(group: ReleaseGroup) -> float:
+        total = base_rank(group)
+        if album:
+            title = normalize_name(group.title)
+            if album == title:
+                total += 10.0
+            elif album in title or title in album:
+                total += 5.0
+        return total
+
+    if album:
+        tagged = [group for group in candidates if _tag_matches(album, group.title)]
+        if not tagged:
+            # The album tag is strong evidence of what the track is *not*: no group
+            # agrees, so picking one would be a guess.
+            return None
+        return max(tagged, key=score)
+    best = max(candidates, key=score)
+    if base_rank(best) < 2:
+        # No tag and no type evidence (an Other/compilation with nothing to prefer):
+        # guessing would be "first release returned by MusicBrainz", which the plan
+        # forbids.
+        return None
+    return best
+
+
+def _tag_matches(album: str, group_title: str) -> bool:
+    title = normalize_name(group_title)
+    return album == title or album in title or title in album

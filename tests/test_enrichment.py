@@ -13,7 +13,7 @@ import httpx
 from acoustid import AcoustIDClient, AcoustIDError
 from enrichment import EnrichmentService, _temporary
 from fingerprints import FingerprintError, FingerprintService
-from resolver import AcoustIDRecording
+from resolver import AcoustIDRecording, ReleaseGroup
 
 from core import Database
 
@@ -86,7 +86,7 @@ class AcoustIDClientTests(unittest.IsolatedAsyncioTestCase):
                         "title": "Paranoid Android",
                         "duration": 383,
                         "artists": [{"name": "Radiohead"}],
-                        "releasegroups": [{"title": "OK Computer"}],
+                        "releasegroups": [{"title": "OK Computer", "type": "Album"}],
                     }],
                 }],
             })
@@ -97,7 +97,8 @@ class AcoustIDClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("mbid-1", recordings[0].mbid)
         self.assertEqual("Radiohead", recordings[0].artist)
         self.assertEqual(383_000, recordings[0].duration_ms)
-        self.assertEqual(["OK Computer"], recordings[0].release_group_titles)
+        self.assertEqual("OK Computer", recordings[0].release_groups[0].title)
+        self.assertEqual("Album", recordings[0].release_groups[0].primary_type)
         await client.http.aclose()
 
     async def test_transient_failures_raise_and_are_not_cached(self):
@@ -152,7 +153,7 @@ class EnrichmentPipelineTests(unittest.IsolatedAsyncioTestCase):
         }])
         self.track = self.database.get_track("1", "2")
 
-    def _service(self, candidate=None, acoustid_key="test-key"):
+    def _service(self, candidate=None, acoustid_key="test-key", cover_result="cover.jpg"):
         media = SimpleNamespace(
             fingerprint_source=AsyncMock(return_value=Path("/tmp/song.mp3"))
         )
@@ -165,13 +166,19 @@ class EnrichmentPipelineTests(unittest.IsolatedAsyncioTestCase):
             configured=lambda: bool(acoustid_key),
             lookup=AsyncMock(return_value=candidate or []),
         )
-        return EnrichmentService(self.database, media, fingerprints, acoustid)
+        return EnrichmentService(
+            self.database, media, fingerprints, acoustid,
+            cover_fetcher=AsyncMock(return_value=cover_result),
+        )
 
     async def test_auto_apply_persists_identity_and_resolves(self):
-        candidate = AcoustIDRecording("mbid-a", "Paranoid Android", "Radiohead", 383_000, sources=5)
+        candidate = AcoustIDRecording(
+            "mbid-a", "Paranoid Android", "Radiohead", 383_000, sources=5,
+            release_groups=[ReleaseGroup("rg-1", "OK Computer", "Album")],
+        )
         service = self._service([candidate])
         result = await service.enrich_track(self.track, trigger="playback")
-        self.assertEqual("auto_apply", result.decision)
+        self.assertEqual("resolved", result.decision)
         self.assertIsNotNone(result.recording_id)
         recording = self.database.get_track_recording("1:2")
         self.assertEqual("mbid-a", recording["musicbrainz_recording_id"])
@@ -179,6 +186,12 @@ class EnrichmentPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Paranoid Android", field["value"])
         self.assertEqual("fingerprint_resolver", field["source"])
         self.assertEqual("resolved", self.database.get_enrichment_state("1:2")["status"])
+        # The release-group cover landed as a provenance field and the state settled.
+        recording = self.database.get_track_recording("1:2")
+        self.assertEqual("rg-1", recording["release_group_mbid"])
+        artwork = self.database.metadata_field(result.recording_id, "artworkPath")
+        self.assertEqual("cover.jpg", artwork["value"])
+        self.assertEqual(False, artwork["locked"])
 
     async def test_terminal_state_skips_work(self):
         self.database.set_enrichment_state("1:2", "no_match")
@@ -247,3 +260,81 @@ class EnrichmentPipelineTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArtworkStateTests(unittest.IsolatedAsyncioTestCase):
+    """G3/G4: release-group artwork honours permanent vs transient failures."""
+
+    def setUp(self):
+        self.database = _database()
+        self.addCleanup(self.database.close)
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([{
+            "chatId": "1", "messageId": "2", "fileName": "song.mp3", "mimeType": "audio/mpeg",
+            "title": "Paranoid Android", "artist": "Radiohead", "documentId": "9",
+        }])
+        self.track = self.database.get_track("1", "2")
+        self.candidate = AcoustIDRecording(
+            "mbid-a", "Paranoid Android", "Radiohead", 383_000, sources=5,
+            release_groups=[ReleaseGroup("rg-1", "OK Computer", "Album")],
+        )
+
+    def _service(self, cover_result="cover.jpg"):
+        media = SimpleNamespace(fingerprint_source=AsyncMock(return_value=Path("/tmp/song.mp3")))
+        fingerprints = SimpleNamespace(
+            fingerprint_track=AsyncMock(
+                return_value=SimpleNamespace(fingerprint="AQADtEm", duration=383.0)
+            )
+        )
+        acoustid = SimpleNamespace(configured=lambda: True, lookup=AsyncMock(return_value=[self.candidate]))
+        return EnrichmentService(
+            self.database, media, fingerprints, acoustid,
+            cover_fetcher=AsyncMock(return_value=cover_result),
+        )
+
+    async def test_definitive_miss_marks_and_settles(self):
+        service = self._service(cover_result=None)
+        result = await service.enrich_track(self.track, trigger="playback")
+        self.assertEqual("resolved", result.decision)
+        state = self.database.get_enrichment_state("1:2")
+        self.assertEqual("resolved", state["status"])
+        self.assertEqual("artwork-missing", state["failure_code"])
+        self.assertIsNotNone(self.database.get_track_recording("1:2"))
+        # The miss marker excludes the track from the text-search cover job.
+        self.assertEqual([], self.database.tracks_needing_artwork(limit=10))
+
+    async def test_transient_artwork_failure_retries_without_poisoning(self):
+        async def flaky(rgid, quality):
+            if not hasattr(flaky, "attempts"):
+                flaky.attempts = 0
+            flaky.attempts += 1
+            if flaky.attempts == 1:
+                raise RuntimeError("transient 503")
+            return "cover.jpg"
+
+        service = self._service(cover_result=None)
+        service.cover_fetcher = flaky
+        result = await service.enrich_track(self.track, trigger="playback")
+        self.assertEqual("temporary_failure", result.decision)
+        # The identity is already linked, so the retry re-enters at the artwork step.
+        recording = self.database.get_track_recording("1:2")
+        self.assertIsNotNone(recording)
+        self.assertEqual("rg-1", recording["release_group_mbid"])
+        self.assertIsNone(self.database.metadata_field(recording["id"], "artworkPath"))
+        # Let the backoff expire (the state re-entry still holds the release groups).
+        self.database.set_enrichment_state("1:2", "temporary_failure")
+        retry = await service.enrich_track(self.track, trigger="playback")
+        self.assertEqual("resolved", retry.decision)
+        artwork = self.database.metadata_field(recording["id"], "artworkPath")
+        self.assertEqual("cover.jpg", artwork["value"])
+
+    async def test_existing_user_artwork_is_never_overwritten(self):
+        # A user-chosen cover (metadata_overrides) outranks the automatic one in
+        # display: the automatic value may exist in provenance but is hidden.
+        self.database.save_metadata_patch("1", "2", {"artworkPath": "user-choice.jpg"}, [])
+        service = self._service()
+        result = await service.enrich_track(self.track, trigger="playback")
+        self.assertEqual("resolved", result.decision)
+        displayed = self.database.get_track("1", "2")
+        self.assertEqual("user-choice.jpg", displayed["metadata"]["artworkPath"])
+        self.assertEqual("user-choice.jpg", displayed["overrides"]["artworkPath"])

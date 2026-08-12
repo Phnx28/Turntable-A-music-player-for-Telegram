@@ -13,13 +13,20 @@ retryable temporary failure rather than a permanent miss.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from acoustid import AcoustIDClient, AcoustIDError
 from fingerprints import FingerprintError, FingerprintService
-from resolver import ResolutionDecision, ResolutionKind, decide
+from resolver import (
+    ReleaseGroup,
+    ResolutionDecision,
+    ResolutionKind,
+    decide,
+    resolve_release_group,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -56,11 +63,15 @@ class EnrichmentService:
         media: Any,
         fingerprints: FingerprintService,
         acoustid: AcoustIDClient,
+        cover_fetcher: Callable[[str, str], Any] | None = None,
     ):
         self.database = database
         self.media = media
         self.fingerprints = fingerprints
         self.acoustid = acoustid
+        # cover_fetcher(release_group_id, quality) -> artwork file name, or None on a
+        # definitive miss; transient failures raise (see external.fetch_release_group_cover).
+        self.cover_fetcher = cover_fetcher
         # Playback-triggered runs in flight, keyed by track key, so rapid play events
         # never start a second fingerprint for the same track.
         self._in_flight: set[str] = set()
@@ -85,6 +96,7 @@ class EnrichmentService:
                 track,
                 trigger=trigger,
                 replace_existing=replace_existing,
+                cover_fetcher=self.cover_fetcher,
             )
         finally:
             self._in_flight.discard(key)
@@ -114,7 +126,8 @@ async def _enrich_track(
     track: dict[str, Any],
     *,
     trigger: Literal["playback", "bulk", "manual"],
-    replace_existing: bool = False,
+    replace_existing: bool,
+    cover_fetcher: Callable[[str, str], Any] | None,
 ) -> EnrichmentResult:
     """Resolve *track* to a recording identity and persist it.
 
@@ -138,6 +151,12 @@ async def _enrich_track(
             key, "no_match", failure_code="acoustid-unconfigured", resolver_version=RESOLVER_VERSION
         )
         return EnrichmentResult("no_match", reason="AcoustID is not configured")
+
+    # A linked recording means the identity half already settled (e.g. the artwork
+    # step failed transiently last run); re-enter straight at release/artwork.
+    recording = database.get_track_recording(key)
+    if recording is not None:
+        return await _release_and_artwork(database, track, recording, cover_fetcher)
 
     database.set_enrichment_state(
         key, "fingerprinting", resolver_version=RESOLVER_VERSION
@@ -166,7 +185,32 @@ async def _enrich_track(
             audio_duration_s=fingerprint.duration,
             candidates=candidates,
         )
-        return _apply(database, track, decision, replace_existing=replace_existing)
+        if decision.kind in {ResolutionKind.AMBIGUOUS, ResolutionKind.NO_MATCH}:
+            database.set_enrichment_state(
+                key, str(decision.kind.value), resolver_version=RESOLVER_VERSION
+            )
+            return EnrichmentResult(str(decision.kind.value), reason=decision.reason)
+        assert decision.recording is not None
+        recording_id = _apply_identity(database, track, decision, replace_existing=replace_existing)
+        database.set_enrichment_state(
+            key,
+            "fingerprinting",
+            resolver_version=RESOLVER_VERSION,
+            release_groups_json=json.dumps(
+                [
+                    {
+                        "id": group.id,
+                        "title": group.title,
+                        "primary_type": group.primary_type,
+                        "secondary_types": group.secondary_types,
+                    }
+                    for group in decision.recording.release_groups
+                ],
+                ensure_ascii=False,
+            ),
+        )
+        recording = database.get_track_recording(key)
+        return await _release_and_artwork(database, track, recording, cover_fetcher)
     except asyncio.CancelledError:
         # The state stays "fingerprinting"; startup recovery flips it to retryable.
         raise
@@ -175,21 +219,16 @@ async def _enrich_track(
         return _temporary(database, key, "pipeline failure")
 
 
-def _apply(
+def _apply_identity(
     database: Any,
     track: dict[str, Any],
     decision: ResolutionDecision,
     *,
     replace_existing: bool,
-) -> EnrichmentResult:
+) -> int:
+    """Link the recording identity and write provenance fields (no state change)."""
     recording = decision.recording
-    if decision.kind in {ResolutionKind.AMBIGUOUS, ResolutionKind.NO_MATCH}:
-        database.set_enrichment_state(
-            track["key"], str(decision.kind.value), resolver_version=RESOLVER_VERSION
-        )
-        return EnrichmentResult(str(decision.kind.value), reason=decision.reason)
     assert recording is not None
-
     recording_id = database.get_or_create_recording(
         musicbrainz_recording_id=recording.mbid,
         acoustid="",  # the lookup returns recordings, not the fingerprint's AcoustID
@@ -203,9 +242,9 @@ def _apply(
     )
     database.link_track_recording(track["key"], recording_id)
     # Provenance rows (title/artist come from the recording; album/year/numbers
-    # arrive with the release resolver in Phase G). set_metadata_field itself
-    # refuses to overwrite locked or higher-precedence values, and the display
-    # layering keeps user overrides on top of these automatic values.
+    # arrive with the release/artwork step). set_metadata_field itself refuses
+    # to overwrite locked or higher-precedence values, and the display layering
+    # keeps user overrides on top of these automatic values.
     current = track["metadata"]
     for field, value in (("title", recording.title), ("artist", recording.artist)):
         if not str(value or "").strip():
@@ -224,12 +263,99 @@ def _apply(
             source=_ENRICHMENT_SOURCE,
             confidence=0.98 if decision.kind == ResolutionKind.AUTO_APPLY else 0.8,
         )
+    return recording_id
+
+
+async def _release_and_artwork(
+    database: Any,
+    track: dict[str, Any],
+    recording: dict[str, Any] | None,
+    cover_fetcher: Callable[[str, str], Any] | None,
+) -> EnrichmentResult:
+    """Resolve the release group and fetch its cover for a resolved recording.
+
+    Settles the enrichment state: resolved (artwork in place or definitively
+    missing), or temporary_failure (artwork step hit a transient error and the
+    next run re-enters here, skipping the fingerprint).
+    """
+    key = track["key"]
+    recording_id = int(recording["id"])
+    release_group_id = recording.get("release_group_mbid") or ""
+    if not release_group_id:
+        state = database.get_enrichment_state(key)
+        groups = _release_groups_from_state(state)
+        chosen = resolve_release_group(
+            groups,
+            album_tag=track["metadata"].get("album"),
+            year=_int_or_none(track["metadata"].get("year")),
+            track_number=_int_or_none(track["metadata"].get("trackNumber")),
+        )
+        if chosen is None:
+            # No plausible release group: the recording stays resolved, and artwork
+            # falls back to the existing text-search policy (G3 fallback order).
+            database.set_enrichment_state(
+                key, "resolved", failure_code="no-release-group",
+                resolver_version=RESOLVER_VERSION,
+            )
+            return EnrichmentResult("resolved", recording_id=recording_id,
+                                    reason="resolved without a release group")
+        release_group_id = chosen.id
+        database.set_recording_release_group(recording_id, release_group_id)
+    if cover_fetcher is None:
+        database.set_enrichment_state(
+            key, "resolved", resolver_version=RESOLVER_VERSION,
+        )
+        return EnrichmentResult("resolved", recording_id=recording_id)
+    quality = str(database.get_settings().get("coverQuality") or "1200")
+    try:
+        artwork = await cover_fetcher(release_group_id, quality)
+    except Exception as error:
+        LOGGER.warning("Release-group cover failed transiently for %s: %s", key, error)
+        return _temporary(database, key, "artwork retry")
+    if artwork is None:
+        # Definitive miss (404/410): long-lived marker, artwork settled.
+        database.mark_artwork_miss(key)
+        database.set_enrichment_state(
+            key, "resolved", failure_code="artwork-missing",
+            resolver_version=RESOLVER_VERSION,
+        )
+        return EnrichmentResult("resolved", recording_id=recording_id,
+                                reason="release group has no cover art")
+    database.set_metadata_field(
+        recording_id, "artworkPath", artwork, source=_ENRICHMENT_SOURCE,
+        confidence=0.95,
+    )
+    database.clear_artwork_miss(key)
     database.set_enrichment_state(
-        track["key"], "resolved", resolver_version=RESOLVER_VERSION
+        key, "resolved", resolver_version=RESOLVER_VERSION,
     )
-    return EnrichmentResult(
-        str(decision.kind.value), recording_id=recording_id, reason=decision.reason
-    )
+    return EnrichmentResult("resolved", recording_id=recording_id,
+                            reason="identity, release group and cover resolved")
+
+
+def _release_groups_from_state(state: dict[str, Any] | None) -> list[ReleaseGroup]:
+    if not state or not state.get("release_groups_json"):
+        return []
+    try:
+        raw = json.loads(state["release_groups_json"])
+    except (TypeError, ValueError):
+        return []
+    return [
+        ReleaseGroup(
+            id=str(item.get("id") or ""),
+            title=str(item.get("title") or ""),
+            primary_type=str(item.get("primary_type") or ""),
+            secondary_types=list(item.get("secondary_types") or []),
+        )
+        for item in raw
+    ]
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value) if value not in (None, "", 0) else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _has_value(value: Any) -> bool:
