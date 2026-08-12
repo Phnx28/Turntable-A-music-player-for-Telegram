@@ -1883,6 +1883,32 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Posted'")
         self.assertEqual("posted", page.evaluate("() => document.getElementById('track-sort').value"))
 
+    def test_discover_sort_menu_trigger_updates_hidden_select_and_closes_menu(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+
+        state = page.evaluate("""() => {
+          const select = document.getElementById('discover-sort');
+          const trigger = document.getElementById('discover-sort-trigger');
+          return {
+            selectTabIndex: select.tabIndex,
+            triggerHasPopup: trigger?.getAttribute('aria-haspopup'),
+          };
+        }""")
+        self.assertEqual(-1, state["selectTabIndex"], state)
+        self.assertEqual("menu", state["triggerHasPopup"], state)
+
+        page.click("#discover-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.click('#context-menu button:has-text("Name · A–Z")')
+        page.wait_for_function("() => document.getElementById('discover-sort-label').textContent === 'Name'")
+
+        self.assertEqual("name", page.evaluate("() => document.getElementById('discover-sort').value"))
+        self.assertEqual("Name", page.text_content("#discover-sort-label"))
+        page.wait_for_selector("#context-menu", state="hidden")
+        self.assertTrue(page.is_hidden("#context-menu"))
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")

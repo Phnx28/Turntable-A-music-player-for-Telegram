@@ -360,7 +360,31 @@
         <button class="icon-button" type="button" data-close="source-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
       </header>
       <p class="small-copy">Each selected chat becomes a playlist. Groups are intentionally left out.</p>
-      <div class="discover-tools"><label>Sort <select id="discover-sort"><option value="recent">Latest post</option><option value="count">Music files</option><option value="name">Name</option></select></label><div class="discover-filters"><input id="discover-search" type="search" placeholder="Filter by name"><select id="discover-kind-filter"><option value="">All types</option><option value="channel">Channel</option><option value="bot">Bot</option><option value="private">Private chat</option><option value="saved">Saved Messages</option></select></div><span id="discover-progress" class="small-copy"></span></div>
+      <div class="discover-tools">
+        <label class="discover-search-control">
+          <svg aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="discover-search" type="search" placeholder="Search sources"
+            aria-label="Search sources" autocomplete="off">
+        </label>
+        <select id="discover-kind-filter" class="discover-kind-select" aria-label="Filter source type">
+          <option value="">All types</option>
+          <option value="channel">Channel</option>
+          <option value="bot">Bot</option>
+          <option value="private">Private chat</option>
+          <option value="saved">Saved Messages</option>
+        </select>
+        <select id="discover-sort" class="sr-only" tabindex="-1" aria-hidden="true">
+          <option value="recent">Latest post</option>
+          <option value="count">Music files</option>
+          <option value="name">Name</option>
+        </select>
+        <button id="discover-sort-trigger" class="sort-trigger" type="button"
+          aria-haspopup="menu" aria-label="Sort sources: Latest post" title="Sort sources">
+          <span id="discover-sort-label">Latest</span>
+          <span class="sort-caret" aria-hidden="true">⌄</span>
+        </button>
+        <span id="discover-progress" class="discover-progress" role="status" aria-live="polite"></span>
+      </div>
       <div id="discover-list" class="discover-list"></div>
     </dialog>
 

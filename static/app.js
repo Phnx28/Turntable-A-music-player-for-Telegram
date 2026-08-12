@@ -1813,7 +1813,10 @@ function setNowHeaderCompact(header, compact) {
 }
 
 function openMenu(actions, x, y) {
-  const menu = $("context-menu"); menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
+  const menu = $("context-menu");
+  const menuHost = document.querySelector("dialog[open]") || document.body;
+  if (menu.parentElement !== menuHost) menuHost.append(menu);
+  menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
   // Re-opening while the previous menu is still fading would inherit the exit state.
   clearTimeout(menuCloseTimer); menu.classList.remove("is-leaving");
   menu.hidden = false; menu._actions = actions;
@@ -1890,6 +1893,29 @@ function sourceMenu(chatId, x, y) {
     { label: "Full rescan", action: () => syncSource(chatId, true) },
     { label: "Remove from library", danger: true, action: () => unselectSources([chatId]) },
   ], x, y);
+}
+
+const DISCOVER_SORT_LABELS = { recent: "Latest", count: "Music files", name: "Name" };
+const DISCOVER_SORT_MENU_LABELS = { recent: "Latest post", count: "Most music files", name: "Name · A–Z" };
+
+function syncDiscoverSortTrigger() {
+  const value = $("discover-sort").value || "recent";
+  const label = DISCOVER_SORT_LABELS[value] || DISCOVER_SORT_LABELS.recent;
+  $("discover-sort-label").textContent = label;
+  $("discover-sort-trigger").setAttribute("aria-label", `Sort sources: ${DISCOVER_SORT_MENU_LABELS[value] || DISCOVER_SORT_MENU_LABELS.recent}`);
+}
+
+function openDiscoverSortMenu() {
+  const trigger = $("discover-sort-trigger");
+  const rect = trigger.getBoundingClientRect();
+  const current = $("discover-sort").value || "recent";
+  openMenu(Object.keys(DISCOVER_SORT_LABELS).map((value) => ({
+    label: `${value === current ? "✓ " : ""}${DISCOVER_SORT_MENU_LABELS[value]}`,
+    action: () => {
+      $("discover-sort").value = value;
+      $("discover-sort").dispatchEvent(new Event("change"));
+    },
+  })), Math.max(8, rect.right - 205), rect.bottom + 6);
 }
 
 const TRACK_SORT_LABELS = {
@@ -2642,7 +2668,8 @@ $("sync-source").addEventListener("click", () => state.source ? syncSource(state
 $("keep-source").addEventListener("click", () => keepTemporarySource().catch(showError));
 $("add-source").addEventListener("click", openSources); document.querySelector('[data-action="add-source"]').addEventListener("click", openSources);
 $("sync-all-sources").addEventListener("click", () => syncAllSources().catch(showError));
-$("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", renderDiscovered);
+$("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", () => { syncDiscoverSortTrigger(); renderDiscovered(); }); syncDiscoverSortTrigger();
+$("discover-sort-trigger").addEventListener("click", openDiscoverSortMenu);
 $("sidebar-sort").value = localStorage.getItem("tm-source-sort") || "custom"; $("sidebar-sort").addEventListener("change", () => { localStorage.setItem("tm-source-sort", $("sidebar-sort").value); renderSources(); }); syncSidebarSortTrigger();
 $("sidebar-sort-trigger").addEventListener("click", openSidebarSortMenu);
 $("bulk-sources").addEventListener("click", () => { state.bulk = true; $("bulk-bar").hidden = false; renderSources(); }); $("bulk-cancel").addEventListener("click", () => { state.bulk = false; state.selectedSources.clear(); $("bulk-bar").hidden = true; renderSources(); }); $("bulk-unselect").addEventListener("click", () => unselectSources([...state.selectedSources]));

@@ -1633,11 +1633,31 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .contact-row strong, .contact-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-row small { color: var(--graphite); font-size: 11px; }
 
-.discover-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
-.discover-tools label { display: flex; align-items: center; gap: 8px; font-size: 11px; }
-.discover-filters { display: flex; align-items: center; gap: 8px; }
-.discover-filters input, .discover-filters select { min-height: 34px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); font-size: 12px; }
-.discover-filters input { height: 34px; }
+.discover-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 10px;
+}
+.discover-search-control {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+}
+.discover-search-control:has(input:focus-visible) { border-color: var(--ink); }
+.discover-search-control svg { width: 16px; height: 16px; color: var(--graphite); }
+.discover-search-control input { width: 100%; min-width: 0; height: auto; padding: 0; border: 0; background: transparent; color: var(--ink); outline: 0; font-size: 13px; }
+.discover-search-control input:focus-visible { box-shadow: none; }
+.discover-kind-select { height: 34px; min-height: 34px; max-width: 150px; padding: 0 28px 0 9px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--field); color: var(--ink); font-size: 12px; }
+.discover-tools > .sort-trigger { justify-self: end; }
+.discover-progress { grid-column: 1 / -1; min-height: 14px; justify-self: end; color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); line-height: 1.2; font-variant-numeric: tabular-nums; }
 .discover-group h3 { position: sticky; z-index: 1; top: -27px; margin: 0; padding: 14px 0 8px; background: var(--surface); color: var(--graphite); font-family: var(--font-ui); font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; }
 .discover-row { grid-template-columns: 36px 1fr auto; padding: 5px 0; }
 .discover-row.pending { background: var(--surface); }
@@ -1704,7 +1724,7 @@ body.resizing .app-shell, body.resizing .app-shell.panel-open { transition: none
 .danger-row .button { flex: 0 0 auto; }
 .setting-block label strong, .setting-block label span { display: block; }
 .setting-block label span { margin-top: 4px; color: var(--graphite); font-size: var(--text-data); font-weight: 400; }
-.setting-block input, .setting-block select, .inline-choice select, .discover-tools select { min-height: 40px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); }
+.setting-block input, .setting-block select, .inline-choice select { min-height: 40px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); }
 .inline-choice { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; }
 .inline-choice select { min-height: 38px; }
 .guide-link { display: inline-block; margin: -10px 0 24px; color: var(--graphite); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
@@ -1777,7 +1797,11 @@ dialog.modal[open]::backdrop { opacity: 1; }
   .playlist-actions { margin-top: 11px; }
   .playlist-actions .button { height: 44px; min-height: 44px; }
   .sync-strip { padding-inline: 18px; }
-  .discover-tools { align-items: flex-start; flex-direction: column; }
+  .discover-tools { grid-template-columns: minmax(0, 1fr) auto; }
+  .discover-search-control { grid-column: 1 / -1; }
+  .discover-kind-select { grid-column: 1; justify-self: start; }
+  .discover-tools > .sort-trigger { grid-column: 2; }
+  .discover-progress { grid-column: 1 / -1; }
   .track-placeholder { height: var(--row-height); }
 }
 
@@ -2469,12 +2493,10 @@ input,
 textarea,
 .phone-field,
 .login-stage select,
-.discover-filters input,
-.discover-filters select,
 .setting-block input,
 .setting-block select,
 .inline-choice select,
-.discover-tools select { background: var(--field); }
+.discover-kind-select { background: var(--field); }
 
 /* The rail chips and the search wrappers are labels too; keep their inputs
    readable when the global label quieting (rule 3) shrinks the font. */
