@@ -189,7 +189,10 @@ class ExternalServices:
                     self._cover_url(candidate["coverUrl"], cover_quality), cover_quality
                 )
             except httpx.HTTPStatusError as error:
-                if error.response.status_code != 404:
+                if error.response.status_code not in {404, 410}:
+                    # 404 (never had a cover) and 410 (removed) are definitive: apply the
+                    # candidate's metadata and leave the artwork unset. Anything else
+                    # (429/5xx, unexpected 4xx) is transient or surprising: surface it.
                     raise
         return self.database.save_metadata_patch(
             track["chatId"], track["messageId"], values, []
@@ -200,10 +203,11 @@ class ExternalServices:
 
         Walks the oldest tracks that still lack artwork and have never been touched by a
         human, and applies Cover Art Archive art when the MusicBrainz match is
-        unambiguous (score >= ENRICH_MIN_SCORE). A definitive no-match writes a miss
-        marker so a big crate is not re-queried forever; network errors do NOT write one,
-        so the next run retries. Manual runs ignore the autoArtwork switch but still
-        respect the contact requirement.
+        unambiguous (score >= ENRICH_MIN_SCORE). A definitive no-match (404/410, an
+        unusable image, or another client error) writes a miss marker so a big crate is
+        not re-queried forever; transient failures (408/425/429, 5xx, network errors) do
+        NOT write one, so the next run retries. Manual runs ignore the autoArtwork switch
+        but still respect the contact requirement.
         """
         settings = self.database.get_settings()
         if not manual and not settings.get("autoArtwork", True):
@@ -221,9 +225,18 @@ class ExternalServices:
                 if top and int(top.get("score") or 0) >= ENRICH_MIN_SCORE and top.get("coverUrl"):
                     try:
                         art_url = await self._download_cover(self._cover_url(top["coverUrl"], quality), quality)
-                    except (httpx.HTTPStatusError, ValueError):
-                        # 404/410 from CAA, or an oversized/unsupported image: definitive miss.
+                    except ValueError:
+                        # Oversized/unsupported image: definitive miss.
                         art_url = ""
+                    except httpx.HTTPStatusError as error:
+                        if self._is_permanent_cover_miss(error.response):
+                            # 404/410 (no such cover) or another client error: definitive miss.
+                            art_url = ""
+                        else:
+                            # 408/425/429 or 5xx: transient. Wait out Retry-After (if any),
+                            # then stop the run so the next run retries without a miss marker.
+                            await asyncio.sleep(self._retry_after_seconds(error.response))
+                            raise
                 if not art_url:
                     self.database.mark_artwork_miss(track["key"])
                     missed += 1
@@ -267,6 +280,29 @@ class ExternalServices:
             raise ValueError("Cover quality must be 500, 1200, or original")
         base = url.removesuffix("-500")
         return base if quality == "original" else f"{base}-{quality}"
+
+    @staticmethod
+    def _is_permanent_cover_miss(response: httpx.Response) -> bool:
+        """True when a CAA error means this track has no usable cover, now or ever.
+
+        404 (not found) and 410 (gone) are definitive. The remaining 4xx codes, apart
+        from the explicitly retryable 408/425/429, are client errors: the URL we build
+        from MusicBrainz IDs is wrong and retrying it will not help, so they count as
+        misses too. 5xx and transport failures are transient and never count.
+        """
+        status = response.status_code
+        return status in {404, 410} or (400 <= status < 500 and status not in {408, 425, 429})
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response, cap: float = 60.0) -> float:
+        """A bounded Retry-After delay in seconds; 0 when absent or in HTTP-date form."""
+        header = response.headers.get("retry-after")
+        if not header:
+            return 0.0
+        try:
+            return min(max(float(header), 0.0), cap)
+        except ValueError:
+            return 0.0
 
     async def _download_cover(self, url: str, quality: str = "1200") -> str:
         if not url.startswith("https://coverartarchive.org/"):

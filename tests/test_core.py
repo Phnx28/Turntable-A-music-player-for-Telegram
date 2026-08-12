@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +12,7 @@ from telethon.tl import functions
 from telethon.tl.types import User
 from telethon.tl.types import contacts as contacts_types
 
-from core import Database, RangeNotSatisfiable, now_ts, parse_lrc, parse_range_header, weighted_shuffle_tracks
+from core import Database, RangeNotSatisfiable, media_digest, media_identity, now_ts, parse_lrc, parse_range_header, weighted_shuffle_tracks
 from media import MEDIA_CHUNK_SIZE
 from telegram_service import QR_QUIET_MODULES, LoginFlow, TelegramService, render_qr_svg
 
@@ -219,6 +220,25 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual([], database.list_tracks(**kwargs)["dayBreaks"])
             database.close()
 
+    def test_mark_unavailable_refreshes_cached_source_track_counts(self):
+        # mark_unavailable used to skip the _track_counts invalidation, so a deleted Telegram
+        # message left list_sources reporting a stale count until the next full sync.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(5)
+            ])
+            self.assertEqual(5, database.list_sources()[0]["trackCount"])
+            database.mark_unavailable("1", ["2"])
+            self.assertEqual(4, database.list_sources()[0]["trackCount"])
+            # An update that changes no rows must not waste a cache rebuild.
+            database.mark_unavailable("1", ["999"])
+            self.assertEqual(4, database.list_sources()[0]["trackCount"])
+            database.close()
+
     def test_track_position_matches_each_allowlisted_track_sort(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
@@ -387,6 +407,52 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             await service.sync_source("56", full=True, temporary=True)
             self.assertEqual(40, int(service.database.get_source("56")["lastMessageId"] or 0))
             self.assertEqual(4, service.database.list_tracks(chat_id="56")["total"])
+            service.database.close()
+
+    async def test_completed_full_sync_marks_unseen_tracks_unavailable(self):
+        # A finished full scan flips tracks whose messages vanished from Telegram: the
+        # source holds 40/30/20/10/5, the scan only re-sees 40/30/20/10, so 5 must drop out.
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.upsert_source({"chatId": "57", "kind": "channel", "title": "Done"})
+            service.database.upsert_tracks([
+                {"chatId": "57", "messageId": str(message_id), "fileName": f"{message_id}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {message_id}", "artist": "Artist"}
+                for message_id in (40, 30, 20, 10, 5)
+            ])
+            service.client = FakeCancellingSyncClient(
+                [SimpleNamespace(id=index) for index in (40, 30, 20, 10)], cancel_after=None
+            )
+            service._message_to_track = lambda message, chat_id: {
+                "chatId": chat_id, "messageId": str(message.id),
+                "fileName": f"{message.id}.mp3", "mimeType": "audio/mpeg",
+            }
+            await service.sync_source("57", full=True)
+            self.assertEqual(4, service.database.list_tracks(chat_id="57")["total"])
+            self.assertFalse(service.database.get_track("57", "5")["available"])
+            service.database.close()
+
+    async def test_interrupted_full_sync_keeps_unseen_tracks_available(self):
+        # The scan dies mid-way (cancel_after=1, after message 40). It never completed, so
+        # none of the tracks it did not re-see may be marked unavailable.
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.upsert_source({"chatId": "58", "kind": "channel", "title": "Interrupted"})
+            service.database.upsert_tracks([
+                {"chatId": "58", "messageId": str(message_id), "fileName": f"{message_id}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {message_id}", "artist": "Artist"}
+                for message_id in (40, 30, 20, 10)
+            ])
+            service.client = FakeCancellingSyncClient(
+                [SimpleNamespace(id=index) for index in (40, 30)], cancel_after=1
+            )
+            service._message_to_track = lambda message, chat_id: {
+                "chatId": chat_id, "messageId": str(message.id),
+                "fileName": f"{message.id}.mp3", "mimeType": "audio/mpeg",
+            }
+            with self.assertRaises(asyncio.CancelledError):
+                await service.sync_source("58", full=True)
+            self.assertEqual(4, service.database.list_tracks(chat_id="58")["total"])
             service.database.close()
 
     async def test_replacing_login_disconnects_the_old_flow(self):
@@ -796,6 +862,111 @@ class QueueWindowTests(unittest.TestCase):
                 database.close()
 
 
+class SyncGenerationTests(unittest.TestCase):
+    """Full-scan availability via the seen_generation marker, not a NOT IN clause."""
+
+    def test_sync_statements_stay_fixed_shape_beyond_100k_messages(self):
+        # A 100k+ message source used to build one "message_id NOT IN (?, ?, ...)" clause
+        # per seen id: huge SQL text approaching SQLite's bind limit on large channels.
+        # The generation marker keeps every sync statement a fixed small shape.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            statements = []
+
+            def trace(sql):
+                if sql.lstrip().upper().startswith(("UPDATE", "INSERT")):
+                    statements.append(sql)
+
+            database.connection.set_trace_callback(trace)
+            try:
+                generation = database.begin_sync_generation("1")
+                self.assertEqual(1, generation)
+                for start in range(0, 100_010, 1000):
+                    database.upsert_tracks([
+                        {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                         "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                        for index in range(start, min(start + 1000, 100_010))
+                    ], seen_generation=generation)
+                database.complete_sync_generation("1", generation)
+            finally:
+                database.connection.set_trace_callback(None)
+            self.assertEqual(100_010, database.list_sources()[0]["trackCount"])
+            self.assertFalse(
+                any("NOT IN" in sql.upper() for sql in statements),
+                "the sync must not build a placeholder-per-track NOT IN query",
+            )
+            self.assertLessEqual(
+                max(len(sql) for sql in statements), 2048,
+                "every sync statement must stay a fixed small shape",
+            )
+
+            # A second full scan that never re-sees ten tracks marks exactly those
+            # unavailable -- the >100k path completes successfully.
+            generation = database.begin_sync_generation("1")
+            self.assertEqual(2, generation, "each full scan bumps the generation")
+            for start in range(0, 100_000, 1000):
+                database.upsert_tracks([
+                    {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                     "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                    for index in range(start, min(start + 1000, 100_000))
+                ], seen_generation=generation)
+            database.complete_sync_generation("1", generation)
+            self.assertEqual(100_000, database.list_sources()[0]["trackCount"])
+            database.close()
+
+    def test_completed_full_sync_marks_unseen_tracks_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            first = database.begin_sync_generation("1")
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(3)
+            ], seen_generation=first)
+            database.complete_sync_generation("1", first)
+            self.assertEqual(3, database.list_tracks(chat_id="1")["total"])
+
+            second = database.begin_sync_generation("1")
+            self.assertEqual(2, second, "each full scan bumps the generation")
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "song-1.mp3",
+                 "mimeType": "audio/mpeg", "title": "Track 1", "artist": "Artist"},
+                {"chatId": "1", "messageId": "2", "fileName": "song-2.mp3",
+                 "mimeType": "audio/mpeg", "title": "Track 2", "artist": "Artist"},
+            ], seen_generation=second)
+            database.complete_sync_generation("1", second)
+            page = database.list_tracks(chat_id="1")
+            self.assertEqual(2, page["total"])
+            self.assertEqual({"1:1", "1:2"}, {item["key"] for item in page["items"]})
+            database.close()
+
+    def test_interrupted_full_sync_keeps_unseen_tracks_available(self):
+        # begin_sync_generation + upserts, then no complete_sync_generation: the scan died
+        # mid-way, so tracks it never re-seen must stay available.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            first = database.begin_sync_generation("1")
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
+                for index in range(3)
+            ], seen_generation=first)
+            database.complete_sync_generation("1", first)
+            self.assertEqual(3, database.list_tracks(chat_id="1")["total"])
+
+            generation = database.begin_sync_generation("1")
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "1", "fileName": "song-1.mp3",
+                 "mimeType": "audio/mpeg", "title": "Track 1", "artist": "Artist"},
+            ], seen_generation=generation)
+            # No complete_sync_generation: the interrupted scan must not mark anything.
+            self.assertEqual(3, database.list_tracks(chat_id="1")["total"])
+            database.close()
+
+
 class SearchReconcileTests(unittest.TestCase):
     def test_reconcile_rebuilds_a_drifted_fts_index(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -806,11 +977,12 @@ class SearchReconcileTests(unittest.TestCase):
                  "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
                 for index in range(40)
             ])
-            # Simulate a crash that dropped the in-memory dirty set: rows missing from FTS and
-            # no pending flush left to restore them. Any search between upsert and flush would
-            # have re-inserted them, so clear the set to mimic process death.
-            database._dirty_search_keys.clear()
+            # Simulate drift the dirty queue cannot explain: FTS rows missing with no
+            # pending search_dirty work left to restore them (orphaned rows, or rows lost
+            # before the durable table existed). Any search between upsert and flush would
+            # have re-inserted them, so drop the queue to mimic that state.
             with database.transaction() as connection:
+                connection.execute("DELETE FROM search_dirty")
                 # rowid-based FTS v7 has no key column
                 connection.execute(
                     "DELETE FROM tracks_fts WHERE rowid IN (SELECT rowid FROM tracks WHERE chat_id='1' AND message_id LIKE '3_')"
@@ -830,11 +1002,131 @@ class SearchReconcileTests(unittest.TestCase):
                  "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
                 for index in range(10)
             ])
-            # The dirty set is the index's working memory: flush it, then the counts agree and
+            # The dirty queue is the index's working memory: flush it, then the counts agree and
             # reconcile must find nothing to do.
             database._flush_search()
             self.assertEqual(0, database.reconcile_search())
             database.close()
+
+    def test_pending_search_updates_survive_a_process_restart(self):
+        # A rename is queued in search_dirty in the same transaction as the override, so a
+        # crash before the delayed flush cannot lose it. Reopening the database and searching
+        # picks the pending work up; the replaced old title must no longer match.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "library.sqlite3"
+            database = Database(path)
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "2", "fileName": "song-2.mp3",
+                 "mimeType": "audio/mpeg", "title": "Old title", "artist": "Artist"}
+            ])
+            database.save_metadata_patch("1", "2", {"title": "New title"}, [])
+            with database.lock:
+                pending = database.connection.execute(
+                    "SELECT COUNT(*) FROM search_dirty"
+                ).fetchone()[0]
+            self.assertEqual(1, pending, "the rename must be queued for the FTS flush")
+            # Crash before the flush: closing the raw handle skips Database.close(), which
+            # would have flushed the queue. Only the durable rows survive.
+            database.connection.close()
+
+            restarted = Database(path)
+            try:
+                page = restarted.list_tracks(query="New title")
+                self.assertEqual(1, page["total"])
+                self.assertEqual("1:2", page["items"][0]["key"])
+                self.assertEqual(0, restarted.list_tracks(query="Old title")["total"])
+            finally:
+                restarted.close()
+
+    def test_failed_flush_leaves_dirty_work_pending(self):
+        # If the FTS update raises inside the flush transaction, the rollback must keep the
+        # search_dirty rows so the next flush retries them.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "library.sqlite3")
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([
+                {"chatId": "1", "messageId": "2", "fileName": "song-2.mp3",
+                 "mimeType": "audio/mpeg", "title": "Old title", "artist": "Artist"}
+            ])
+            database.save_metadata_patch("1", "2", {"title": "New title"}, [])
+            with patch.object(database, "_update_search", side_effect=sqlite3.OperationalError("boom")):
+                with self.assertRaises(sqlite3.OperationalError):
+                    database._flush_search()
+            with database.lock:
+                row = database.connection.execute(
+                    "SELECT track_key FROM search_dirty"
+                ).fetchone()
+            self.assertEqual("1:2", row["track_key"], "a failed flush must not lose the pending key")
+            # The retry succeeds and the queue drains.
+            database._flush_search()
+            self.assertEqual(1, database.list_tracks(query="New title")["total"])
+            database.close()
+
+
+class PrefetchProtectionTests(unittest.IsolatedAsyncioTestCase):
+    """start_prefetch must mutate the shared key set, not rebind it (regression: A1)."""
+
+    def service(self, directory: str) -> TelegramService:
+        return TelegramService(
+            Database(Path(directory) / "library.sqlite3"),
+            api_id=1,
+            api_hash="test",
+            encryption_key=Fernet.generate_key().decode(),
+            data_directory=Path(directory),
+        )
+
+    async def test_start_prefetch_mutates_the_shared_set_in_place(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.save_settings({"prefetchCount": 5})
+            shared = service.prefetch_keys
+            self.assertIs(service.media.protected_keys, shared)
+            service.start_prefetch(["1:2", "1:3"])
+            self.assertIs(service.prefetch_keys, shared, "selection must never rebind the set")
+            self.assertIs(service.media.protected_keys, shared)
+            self.assertEqual({"1:2", "1:3"}, shared)
+            # Let the first job finish (the replacement path cancels a running prefetch,
+            # which is JobRunner behavior, not what this regression covers).
+            await asyncio.sleep(0)
+            # A replacement selection drops the old protection and adopts the new keys.
+            service.start_prefetch(["1:4", "1:5"])
+            self.assertIs(service.media.protected_keys, shared)
+            self.assertEqual({"1:4", "1:5"}, shared)
+            self.assertNotIn("1:2", shared)
+            service.database.close()
+
+    async def test_eviction_keeps_the_active_prefetch_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            cached = []
+            for message_id, size in (("2", 1000), ("3", 100), ("4", 100)):
+                service.database.upsert_tracks([{
+                    "chatId": "1", "messageId": message_id, "fileName": f"song-{message_id}.mp3",
+                    "mimeType": "audio/mpeg", "fileSize": size, "title": f"T{message_id}",
+                    "artist": "A", "documentId": message_id,
+                }])
+                identity = media_identity(message_id, size)
+                digest = media_digest(f"1:{message_id}", identity)
+                path = service.media.media_directory / f"{digest}.audio"
+                path.write_bytes(b"x" * size)
+                service.database.save_media_cache(f"1:{message_id}", identity, path.name, size)
+                cached.append(path)
+            service.database.save_settings({"prefetchCount": 2})
+            service.start_prefetch(["1:2", "1:3", "1:4"])
+            self.assertIs(service.media.protected_keys, service.prefetch_keys)
+            # Budget fits the protected pair (1100) but not the third entry (1200), so only
+            # the unprotected one may go.
+            service.media._evict_cache_sync(maximum=1100)
+            self.assertTrue(cached[0].exists(), "prefetched entry must survive eviction")
+            self.assertTrue(cached[1].exists(), "prefetched entry must survive eviction")
+            self.assertFalse(cached[2].exists(), "unprotected entry must be evicted")
+            self.assertEqual(
+                {"1:2", "1:3"},
+                {entry["track_key"] for entry in service.database.media_cache_entries()},
+            )
+            service.database.close()
 
 
 if __name__ == "__main__":

@@ -654,12 +654,22 @@ class TelegramService:
         highest_scanned = minimum
         seen: set[str] = set()
         items: dict[str, dict[str, Any]] = {}
+        # Bound before the try like minimum/highest_scanned, so a cancel during get_entity
+        # (before the scan loop assigns it) cannot NameError in the cancellation handler.
+        generation: int | None = None
         async with self.sync_semaphore:
             async with lock:
                 try:
                     if job:
                         job.state = "running"
                     entity = await asyncio.wait_for(client.get_entity(int(chat_id)), timeout=30)
+                    # A full scan owns the availability decision: tracks it never re-sees
+                    # become unavailable once it completes (complete_sync_generation).
+                    # Incremental and preview scans never mark anything, so they open no
+                    # generation -- a failed or interrupted scan must never flip rows.
+                    generation = (
+                        self.database.begin_sync_generation(chat_id) if full and not temporary else None
+                    )
                     # Single-pass scan: one iter_messages over the history, filtering
                     # audio/document in Python. Halves API round-trips vs the old
                     # two-pass (Music + Document). Kept simple — no filter= arg so
@@ -676,11 +686,15 @@ class TelegramService:
                         if job:
                             job.found = len(seen)
                         if len(items) >= 100:
-                            await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
+                            await asyncio.to_thread(
+                                self.database.upsert_tracks, list(items.values()), seen_generation=generation
+                            )
                             items.clear()
-                    await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
-                    if full and not temporary:
-                        self.database.mark_missing_unavailable(chat_id, seen)
+                    await asyncio.to_thread(
+                        self.database.upsert_tracks, list(items.values()), seen_generation=generation
+                    )
+                    if generation is not None:
+                        self.database.complete_sync_generation(chat_id, generation)
                     highest = max(highest_scanned, minimum)
                     self.database.finish_sync(chat_id, highest)
                     return self.database.get_source(chat_id) or source
@@ -689,7 +703,7 @@ class TelegramService:
                     # iter_messages walks newest to oldest, so highest_scanned is the newest
                     # id after the very first message; persisting it here would make the next
                     # incremental sync skip every older message we never got to.
-                    self.database.upsert_tracks(list(items.values()))
+                    self.database.upsert_tracks(list(items.values()), seen_generation=generation)
                     raise
                 except Exception as error:
                     self.database.finish_sync(
@@ -942,7 +956,11 @@ class TelegramService:
             # A different selection replaces the running prefetch; the runner owns the cancel.
             self.jobs.cancel("prefetch")
         self.prefetch_order = selected
-        self.prefetch_keys = set(selected)
+        # MediaCache.protected_keys is this same set object, shared by reference so eviction
+        # never deletes a track being fetched. Rebind it here and the protection strands on
+        # the old set; mutate in place so the cache always sees the active selection.
+        self.prefetch_keys.clear()
+        self.prefetch_keys.update(selected)
         job = BackgroundJob(secrets.token_urlsafe(12), "prefetch", result={})
         if not selected:
             job.state = "complete"

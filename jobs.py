@@ -11,9 +11,12 @@ what the frontend polls, so it is frozen here.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
+
+LOGGER = logging.getLogger(__name__)
 
 JOB_RETENTION_SECONDS = 15 * 60
 JOB_MAX_SURVIVORS = 100
@@ -31,6 +34,7 @@ class BackgroundJob:
     error: str = ""
     result: Any = None
     created_at: float = field(default_factory=time.monotonic)
+    finished_at: float | None = None
     task: asyncio.Task[Any] | None = None
 
     def public(self) -> dict[str, Any]:
@@ -57,6 +61,15 @@ class JobRunner:
         task = asyncio.create_task(coroutine)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._consume_error)
+
+    @staticmethod
+    def _consume_error(task: asyncio.Task[Any]) -> None:
+        """Retrieve a spawn failure so no unobserved-task-exception warning escapes."""
+        if task.cancelled():
+            return
+        if error := task.exception():
+            LOGGER.exception("Background task failed", exc_info=error)
 
     def start(
         self,
@@ -74,6 +87,10 @@ class JobRunner:
 
     def register(self, job: BackgroundJob) -> dict[str, Any]:
         """Insert an already-terminal job (e.g. an empty prefetch) without running it."""
+        if job.state not in {"queued", "running"} and job.finished_at is None:
+            # Terminal by construction (start_prefetch marks an empty run complete before
+            # registering); without this the retention clock would never start.
+            job.finished_at = time.monotonic()
         self.prune()
         self.jobs[job.id] = job
         return job.public()
@@ -93,6 +110,7 @@ class JobRunner:
         except Exception as error:
             job.error = (error_mapper or self._default_error)(error)
             job.state = "error"
+        job.finished_at = time.monotonic()
 
     @staticmethod
     def _default_error(error: Exception) -> str:
@@ -128,6 +146,7 @@ class JobRunner:
                 # cancellation; without this it would sit "queued" forever and dedup would
                 # keep mistaking it for an active job.
                 job.state = "cancelled"
+                job.finished_at = time.monotonic()
         return job.public()
 
     def cancel(self, kind: str, chat_id: str | None = None) -> BackgroundJob | None:
@@ -137,6 +156,7 @@ class JobRunner:
             job.task.cancel()
             if job.state == "queued":
                 job.state = "cancelled"
+                job.finished_at = time.monotonic()
         return job
 
     def prune(self) -> None:
@@ -145,7 +165,11 @@ class JobRunner:
             job for job in self.jobs.values()
             if job.state not in {"queued", "running"}
         ]
-        remove = {job.id for job in terminal if now - job.created_at > JOB_RETENTION_SECONDS}
+        remove = {
+            job.id for job in terminal
+            if now - (job.finished_at if job.finished_at is not None else job.created_at)
+            > JOB_RETENTION_SECONDS
+        }
         survivors = sorted(
             (job for job in terminal if job.id not in remove),
             key=lambda job: job.created_at,

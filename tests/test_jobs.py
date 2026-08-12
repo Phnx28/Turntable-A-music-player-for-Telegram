@@ -1,8 +1,9 @@
 import asyncio
+import logging
 import time
 import unittest
 
-from jobs import BackgroundJob, JobRunner, JOB_MAX_SURVIVORS, JOB_RETENTION_SECONDS
+from jobs import BackgroundJob, JobRunner, LOGGER, JOB_MAX_SURVIVORS, JOB_RETENTION_SECONDS
 
 
 class JobRunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -94,10 +95,11 @@ class JobRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.runner.status("missing")
 
     def test_prune_drops_old_terminal_jobs_and_caps_survivors(self):
-        # time.monotonic() is boot-relative and large, so a created_at of 0 is ancient.
+        # time.monotonic() is boot-relative and large, so a finished_at of 0 is ancient.
         old = self._job()
         old.state = "complete"
         old.created_at = 0
+        old.finished_at = 0
         self.runner.register(old)
         self.runner.prune()
         self.assertNotIn(old.id, self.runner.jobs)
@@ -111,6 +113,76 @@ class JobRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.runner.register(job)
         self.runner.prune()
         self.assertEqual(JOB_MAX_SURVIVORS, len(self.runner.jobs))
+
+    async def test_long_running_job_keeps_full_retention_after_finish(self):
+        # A job that started beyond the retention window must survive a full retention
+        # window once it finishes, and only be pruned when finished_at itself ages out.
+        job = self._job()
+        job.created_at = 0  # ancient: already past retention while it was queued
+        hold = asyncio.Event()
+        self.runner.start(job, self._work(job, hold=hold))
+        await asyncio.sleep(0)
+        hold.set()
+        await job.task
+        self.assertEqual("complete", job.state)
+        self.assertIsNotNone(job.finished_at)
+        self.runner.prune()
+        self.assertIn(job.id, self.runner.jobs, "a just-finished job survives the full window")
+        job.finished_at = 0  # now ancient too
+        self.runner.prune()
+        self.assertNotIn(job.id, self.runner.jobs, "an aged terminal job is pruned")
+
+    def test_register_stamps_finished_at_on_terminal_job(self):
+        job = self._job(kind="prefetch", result={})
+        job.state = "complete"
+        self.runner.register(job)
+        self.assertIsNotNone(job.finished_at)
+
+    async def test_cancelling_a_queued_job_stamps_finished_at(self):
+        # A queued task never runs its handler, so the runner itself must record the
+        # cancellation timestamp for both cancel entry points.
+        by_id = self._job(kind="prefetch")
+        self.runner.start(by_id, self._work(by_id))
+        self.runner.cancel_by_id(by_id.id)
+        self.assertEqual("cancelled", by_id.state)
+        self.assertIsNotNone(by_id.finished_at)
+
+        by_kind = self._job(kind="prefetch")
+        self.runner.start(by_kind, self._work(by_kind))
+        self.runner.cancel("prefetch")
+        self.assertEqual("cancelled", by_kind.state)
+        self.assertIsNotNone(by_kind.finished_at)
+
+    async def test_spawn_consumes_and_logs_task_exceptions(self):
+        async def boom():
+            raise RuntimeError("spawned boom")
+
+        # Watch the asyncio logger for the unretrieved-exception warning: it must never
+        # fire, because the runner retrieves the exception in its done callback.
+        asyncio_logger = logging.getLogger("asyncio")
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        previous_level = asyncio_logger.level
+        asyncio_logger.setLevel(logging.WARNING)
+        asyncio_logger.addHandler(handler)
+        try:
+            with self.assertLogs(LOGGER, level="ERROR") as captured:
+                self.runner.spawn(boom())
+                await asyncio.gather(*list(self.runner._background_tasks), return_exceptions=True)
+                await asyncio.sleep(0)  # let the done callbacks run
+        finally:
+            asyncio_logger.removeHandler(handler)
+            asyncio_logger.setLevel(previous_level)
+
+        self.assertTrue(
+            any("spawned boom" in line for line in captured.output),
+            "the spawned failure must be logged",
+        )
+        self.assertFalse(
+            any("Task exception was never retrieved" in line for line in records),
+            "a retrieved spawn failure must not warn",
+        )
 
     async def test_cancel_all_is_the_single_shutdown_path(self):
         job = self._job()

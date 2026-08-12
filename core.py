@@ -347,8 +347,9 @@ class Database:
         # single locked connection so write serialization and transactions are unchanged.
         self._local = threading.local()
         self._track_counts: dict[str, int] | None = None
-        # ponytail: defer FTS rebuild until a search-using read needs the index
-        self._dirty_search_keys: set[str] = set()
+        # ponytail: defer FTS updates until a search-using read (or the periodic
+        # housekeeping flush) needs the index. Pending keys live in the durable
+        # search_dirty table so a crash cannot drop them.
         with self.lock:
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
@@ -618,6 +619,41 @@ class Database:
                 """
             )
             self.connection.commit()
+        if version < 10:
+            # FTS updates used to be queued in an in-memory set, so a crash between a
+            # metadata/title change and the delayed flush could stale the search index
+            # forever. Pending keys are now durable: writers add rows to search_dirty
+            # in the same transaction as the change, and _flush_search deletes them only
+            # after the FTS write commits (reconcile_search() clears leftovers at startup).
+            self.connection.executescript(
+                """
+                CREATE TABLE search_dirty (
+                    track_key TEXT PRIMARY KEY,
+                    updated_at INTEGER NOT NULL
+                );
+
+                PRAGMA user_version = 10;
+                """
+            )
+            self.connection.commit()
+        if version < 11:
+            # A full source sync used to mark un-seen tracks unavailable with one giant
+            # "message_id NOT IN (?, ?, ...)" clause over every seen id -- huge SQL text
+            # that approaches SQLite's bind limit on large channels. Tracks now carry
+            # the generation of the last completed full scan instead, and
+            # complete_sync_generation() flips the un-seen rows with a fixed-shape UPDATE.
+            self.connection.executescript(
+                """
+                ALTER TABLE tracks ADD COLUMN seen_generation INTEGER;
+                CREATE TABLE sync_generations (
+                    chat_id TEXT PRIMARY KEY,
+                    generation INTEGER NOT NULL
+                );
+
+                PRAGMA user_version = 11;
+                """
+            )
+            self.connection.commit()
 
     def ping(self) -> bool:
         """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
@@ -867,7 +903,13 @@ class Database:
                 (last_message_id, now_ts(), error, chat_id),
             )
 
-    def upsert_tracks(self, tracks: Iterable[Mapping[str, Any]]) -> None:
+    def upsert_tracks(self, tracks: Iterable[Mapping[str, Any]], seen_generation: int | None = None) -> None:
+        """Insert or refresh *tracks*, optionally stamping them as seen by a full scan.
+
+        *seen_generation* comes from begin_sync_generation(). A generation-less upsert
+        (live events, incremental scans) leaves an existing marker alone, so a completed
+        full scan can still judge the row; a brand-new row simply has no marker yet.
+        """
         self._track_counts = None
         values = [
             (
@@ -887,6 +929,7 @@ class Database:
                 int(item.get("discNumber") or 0),
                 int(item.get("sentAt") or 0),
                 str(item.get("documentId") or ""),
+                seen_generation,
             )
             for item in tracks
         ]
@@ -899,8 +942,9 @@ class Database:
                     chat_id, message_id, file_name, mime_type, file_size, duration_ms,
                     telegram_title, telegram_artist, telegram_album,
                     telegram_album_artist, telegram_genre, telegram_year,
-                    telegram_track_number, telegram_disc_number, sent_at, document_id, available
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    telegram_track_number, telegram_disc_number, sent_at, document_id,
+                    available, seen_generation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(chat_id, message_id) DO UPDATE SET
                     file_name = excluded.file_name,
                     mime_type = excluded.mime_type,
@@ -916,28 +960,60 @@ class Database:
                     telegram_disc_number = excluded.telegram_disc_number,
                     sent_at = excluded.sent_at,
                     document_id = excluded.document_id,
-                    available = 1
+                    available = 1,
+                    seen_generation = COALESCE(excluded.seen_generation, tracks.seen_generation)
                 """,
                 values,
             )
-            for value in values:
-                self._dirty_search_keys.add(track_key(value[0], value[1]))
+            # Queue the FTS update in the same transaction as the track rows so a crash
+            # before the flush cannot permanently stale the search index.
+            connection.executemany(
+                """
+                INSERT INTO search_dirty (track_key, updated_at) VALUES (?, ?)
+                ON CONFLICT(track_key) DO UPDATE SET updated_at = excluded.updated_at
+                """,
+                [(track_key(value[0], value[1]), now_ts()) for value in values],
+            )
             try:
                 self._invalidate_pos_cache()
             except AttributeError:
                 pass
 
-    def mark_missing_unavailable(self, chat_id: str, seen_message_ids: set[str]) -> None:
+    def begin_sync_generation(self, chat_id: str) -> int:
+        """Bump and return the generation for a full scan of *chat_id*.
+
+        Every track upserted during the scan must carry the returned generation; once the
+        scan finishes successfully, complete_sync_generation() flips the tracks it never
+        saw to unavailable. A failed or interrupted scan must never call the completer.
+        """
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO sync_generations (chat_id, generation) VALUES (?, 1)
+                ON CONFLICT(chat_id) DO UPDATE SET generation = generation + 1
+                """,
+                (chat_id,),
+            )
+            return int(connection.execute(
+                "SELECT generation FROM sync_generations WHERE chat_id = ?", (chat_id,)
+            ).fetchone()[0])
+
+    def complete_sync_generation(self, chat_id: str, generation: int) -> None:
+        """Mark tracks a finished full scan never saw as unavailable.
+
+        Only safe after the whole scan has succeeded: rows whose seen_generation is older
+        than *generation* -- or NULL, i.e. never stamped by any scan -- flip to
+        unavailable, so tracks whose messages were deleted on Telegram stop appearing.
+        """
         self._track_counts = None
         with self.transaction() as connection:
-            if seen_message_ids:
-                placeholders = ",".join("?" for _ in seen_message_ids)
-                connection.execute(
-                    f"UPDATE tracks SET available = 0 WHERE chat_id = ? AND message_id NOT IN ({placeholders})",
-                    (chat_id, *sorted(seen_message_ids)),
-                )
-            else:
-                connection.execute("UPDATE tracks SET available = 0 WHERE chat_id = ?", (chat_id,))
+            connection.execute(
+                """
+                UPDATE tracks SET available = 0
+                WHERE chat_id = ? AND (seen_generation IS NULL OR seen_generation != ?)
+                """,
+                (chat_id, generation),
+            )
 
     def mark_unavailable(self, chat_id: str, message_ids: Iterable[str]) -> None:
         ids = list(message_ids)
@@ -945,10 +1021,14 @@ class Database:
             return
         placeholders = ",".join("?" for _ in ids)
         with self.transaction() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 f"UPDATE tracks SET available = 0 WHERE chat_id = ? AND message_id IN ({placeholders})",
                 (chat_id, *ids),
             )
+            # The cached per-source counts in list_sources must not survive a change to
+            # availability; only invalidate when the update actually changed rows.
+            if cursor.rowcount:
+                self._track_counts = None
         try:
             self._invalidate_pos_cache()
         except AttributeError:
@@ -1366,7 +1446,14 @@ class Database:
                     "DELETE FROM metadata_overrides WHERE chat_id = ? AND message_id = ?",
                     (chat_id, message_id),
                 )
-            self._dirty_search_keys.add(track_key(chat_id, message_id))
+            # Same transaction as the override, so a crash cannot drop the FTS update.
+            connection.execute(
+                """
+                INSERT INTO search_dirty (track_key, updated_at) VALUES (?, ?)
+                ON CONFLICT(track_key) DO UPDATE SET updated_at = excluded.updated_at
+                """,
+                (track_key(chat_id, message_id), now_ts()),
+            )
             try:
                 self._invalidate_pos_cache()
             except AttributeError:
@@ -1430,22 +1517,29 @@ class Database:
         return [self._track_row(row) for row in rows]
 
     def _flush_search(self) -> None:
+        # Snapshot the queue under the lock, then do the FTS work in the transaction
+        # below. Keys added by a concurrent write stay in the table for the next flush.
         with self.lock:
-            if not self._dirty_search_keys:
+            rows = self.connection.execute("SELECT track_key FROM search_dirty").fetchall()
+            if not rows:
                 return
-            keys = list(self._dirty_search_keys)
-            self._dirty_search_keys.clear()
+            keys = [str(row["track_key"]) for row in rows]
         with self.transaction() as connection:
             self._update_search(connection, keys)
+            # Only clear the queue after the FTS write commits: if _update_search
+            # raises, the rollback leaves the rows pending for the next flush.
+            connection.execute("DELETE FROM search_dirty")
 
     def reconcile_search(self) -> int:
         """Rebuild the FTS index if it has drifted from the tracks table.
 
-        The dirty set is in-memory only, so a crash can drop the keys that were queued
-        to be indexed, and deleting a source leaves orphaned FTS rows behind (no
-        triggers). Called once at startup in a thread: if the counts disagree at all,
-        the fresh process has no pending flush to explain it, so rebuild.
+        Pending FTS work is durable (search_dirty), so a crash cannot drop it: flush
+        any leftover rows first, then the count comparison below is a secondary safety
+        net for drift the queue cannot explain (orphaned FTS rows, rows lost before
+        the table existed). Called once at startup in a thread: if the counts still
+        disagree after the flush, rebuild.
         """
+        self._flush_search()
         with self.lock:
             tracks = self.connection.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
             fts = self.connection.execute("SELECT COUNT(*) FROM tracks_fts").fetchone()[0]

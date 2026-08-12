@@ -147,7 +147,7 @@ class EnrichTests(ExternalTestCase):
             "mimeType": "audio/mpeg", "title": title, "artist": artist, "durationMs": 1000,
         }])
 
-    def _router(self, score: int = 97, with_cover: bool = True):
+    def _router(self, score: int = 97, with_cover: bool = True, cover_status: int = 200):
         def handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
             if "/ws/2/recording/" in url:
@@ -165,9 +165,17 @@ class EnrichTests(ExternalTestCase):
                     }]
                 return httpx.Response(200, json={"recordings": recordings})
             if "coverartarchive.org" in url:
+                if cover_status != 200:
+                    return httpx.Response(cover_status)
                 return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=_jpeg_bytes())
             return httpx.Response(404)
         return handler
+
+    def _miss_marker(self, key: str = "1:5") -> bool:
+        row = self.database.connection.execute(
+            "SELECT 1 FROM artwork_misses WHERE track_key = ?", (key,)
+        ).fetchone()
+        return row is not None
 
     def test_score_96_never_applies_and_writes_a_miss(self):
         seen = self.stub_http(self._router(score=96))
@@ -208,6 +216,95 @@ class EnrichTests(ExternalTestCase):
         # Next run retries the same track.
         run(self.services.enrich_covers())
         self.assertEqual(len(seen), 2)
+
+    def test_caa_404_writes_a_miss_marker(self):
+        self.stub_http(self._router(cover_status=404))
+        self._seed()
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 0, "missed": 1})
+        self.assertTrue(self._miss_marker())
+        track = self.database.get_track("1", "5")
+        self.assertFalse(track["metadata"].get("artworkPath"))
+        # The marker makes the track ineligible for future runs.
+        self.assertEqual(self.database.tracks_needing_artwork(), [])
+
+    def test_caa_429_does_not_write_a_miss_marker(self):
+        self.stub_http(self._router(cover_status=429))
+        self._seed()
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 0, "missed": 0})
+        self.assertFalse(self._miss_marker())
+        # The track stays eligible for the next run, which retries and succeeds.
+        self.assertIn("5", [t["messageId"] for t in self.database.tracks_needing_artwork()])
+        self.stub_http(self._router(cover_status=200))
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 1, "missed": 0})
+        track = self.database.get_track("1", "5")
+        self.assertTrue(track["metadata"].get("artworkPath"))
+        self.assertEqual(self.database.tracks_needing_artwork(), [])
+
+    def test_caa_500_does_not_write_a_miss_marker(self):
+        self.stub_http(self._router(cover_status=500))
+        self._seed()
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 0, "missed": 0})
+        self.assertFalse(self._miss_marker())
+
+    def test_cover_transport_error_does_not_write_a_miss_marker(self):
+        base = self._router()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "coverartarchive.org" in str(request.url):
+                raise httpx.ConnectError("connection refused")
+            return base(request)
+
+        self.stub_http(handler)
+        self._seed()
+        result = run(self.services.enrich_covers())
+        self.assertEqual(result, {"added": 0, "missed": 0})
+        self.assertFalse(self._miss_marker())
+        # The track stays eligible for the next run.
+        self.assertIn("5", [t["messageId"] for t in self.database.tracks_needing_artwork()])
+
+    def test_successful_fetch_clears_a_stale_miss_marker(self):
+        self.stub_http(self._router(cover_status=404))
+        self._seed()
+        run(self.services.enrich_covers())
+        self.assertTrue(self._miss_marker())
+        # A later fetch (the manual candidate dialog path) applies art and clears the miss.
+        self.stub_http(self._router(cover_status=200))
+        track = self.database.get_track("1", "5")
+        run(self.services.apply_candidate(track, "rec-1:rel-1"))
+        track = self.database.get_track("1", "5")
+        self.assertTrue(track["metadata"].get("artworkPath"))
+        self.assertFalse(self._miss_marker())
+        self.assertEqual(self.database.tracks_needing_artwork(), [])
+
+    def test_cover_error_classification(self):
+        for status in (404, 410, 400, 403, 418):
+            self.assertTrue(
+                self.services._is_permanent_cover_miss(httpx.Response(status)), status
+            )
+        for status in (408, 425, 429, 500, 502, 503, 504):
+            self.assertFalse(
+                self.services._is_permanent_cover_miss(httpx.Response(status)), status
+            )
+
+    def test_retry_after_is_read_and_bounded(self):
+        self.assertEqual(
+            self.services._retry_after_seconds(httpx.Response(429, headers={"retry-after": "3"})), 3.0
+        )
+        # Above the cap the delay is clamped; absent or HTTP-date headers mean no wait.
+        self.assertEqual(
+            self.services._retry_after_seconds(httpx.Response(503, headers={"retry-after": "300"})), 60.0
+        )
+        self.assertEqual(self.services._retry_after_seconds(httpx.Response(429)), 0.0)
+        self.assertEqual(
+            self.services._retry_after_seconds(
+                httpx.Response(429, headers={"retry-after": "Tue, 15 Nov 1994 08:12:31 GMT"})
+            ),
+            0.0,
+        )
 
     def test_edited_and_artworked_tracks_are_untouched(self):
         self.stub_http(self._router(score=97, with_cover=True))
