@@ -1192,3 +1192,146 @@ class ArtworkEnrichmentTests(unittest.TestCase):
         self.assertFalse(database.get_settings()["autoArtwork"])
         with self.assertRaises(ValueError):
             database.save_settings({"autoArtwork": "yes"})
+
+
+class CursorPaginationTests(unittest.TestCase):
+    """C2: keyset cursors walk a deep library without OFFSET scans."""
+
+    def _database(self):
+        database = Database(Path(tempfile.mkdtemp()) / "library.sqlite3")
+        database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        database.upsert_tracks([
+            {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+             "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist",
+             "sentAt": 1753000000 + index * 60}
+            for index in range(500)
+        ])
+        return database
+
+    def test_forward_and_backward_cursor_walks(self):
+        database = self._database()
+        try:
+            first = database.list_tracks(limit=100)
+            self.assertEqual(500, first["total"])
+            self.assertIsNotNone(first["nextCursor"])
+            self.assertIsNotNone(first["prevCursor"])
+            page_keys = {item["key"] for item in first["items"]}
+
+            second = database.list_tracks(limit=100, cursor=first["nextCursor"])
+            self.assertEqual(100, len(second["items"]))
+            self.assertFalse({item["key"] for item in second["items"]} & page_keys,
+                              "cursor page must not overlap the previous one")
+            self.assertEqual(second["items"][0]["sentAt"], first["items"][-1]["sentAt"] - 60)
+
+            # Walking back with the previous page's prevCursor returns the same rows.
+            back = database.list_tracks(limit=100, cursor=second["prevCursor"], before=True)
+            self.assertEqual(100, len(back["items"]))
+            self.assertEqual([item["key"] for item in back["items"]],
+                             [item["key"] for item in first["items"]])
+        finally:
+            database.close()
+
+    def test_cursor_tokens_are_absent_on_unsupported_paths(self):
+        database = self._database()
+        try:
+            filtered = database.list_tracks(query="Track", limit=100)
+            self.assertIsNone(filtered["nextCursor"], "searches fall back to OFFSET")
+            self.assertIsNone(filtered["prevCursor"])
+            source = database.list_tracks(chat_id="1", limit=100)
+            self.assertIsNone(source["nextCursor"], "per-source views fall back to OFFSET")
+        finally:
+            database.close()
+
+
+class QueryPerfTests(unittest.TestCase):
+    """C1/C3/C4/C6: windowed queues, counts and day breaks never materialise the library."""
+
+    def _database(self):
+        database = Database(Path(tempfile.mkdtemp()) / "library.sqlite3")
+        database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        database.upsert_tracks([
+            {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
+             "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist",
+             "sentAt": 1753000000 + index * 3600}
+            for index in range(5000)
+        ])
+        return database
+
+    def test_windowed_queue_fetches_only_the_window(self):
+        database = self._database()
+        statements = []
+
+        def trace(*args):
+            statements.append(args[0])
+
+        try:
+            database.connection.set_trace_callback(trace)
+            result = database.playback_queue(
+                current_key="1:2500", window_before=50, window_after=300
+            )
+            database.connection.set_trace_callback(None)
+            self.assertEqual(351, len(result["keys"]))
+            self.assertIn("1:2500", result["keys"])
+            self.assertEqual(5000, result["total"])
+            # No statement may pull every key into Python: the full-list SELECT shape
+            # (no LIMIT) must not appear.
+            for statement in statements:
+                self.assertNotRegex(statement, r"SELECT t\.chat_id \|\| ':' \|\| t\.message_id AS key\s+FROM tracks t JOIN sources s [\s\S]*ORDER BY t\.sent_at DESC, t\.rowid DESC\s*$",
+                                    "windowed queue must not materialise the full library")
+                self.assertLess(len(statement), 500, "window queries stay small")
+        finally:
+            database.close()
+
+    def test_counts_and_day_breaks_are_cached_per_generation(self):
+        database = self._database()
+        count_statements = []
+        reader = database.reader
+        # Only the filtered COUNT is what scrolls with the client; the allMusicTotal
+        # COUNT is a separate cached query and would muddy the count.
+        reader.set_trace_callback(
+            lambda *args: count_statements.append(args[0])
+            if args[0].strip().startswith("SELECT COUNT(*)") and "metadata_overrides" in args[0]
+            else None
+        )
+
+        try:
+            first = database.list_tracks(limit=100)
+            self.assertEqual(5000, first["total"])
+            self.assertEqual(5000, first["allMusicTotal"])
+            self.assertGreater(len(first["dayBreaks"]), 0)
+            # A second, deeper page with the same filter must reuse the cached values.
+            second = database.list_tracks(limit=100, offset=4000)
+            self.assertEqual(5000, second["total"])
+            self.assertEqual(5000, second["allMusicTotal"])
+            self.assertEqual(first["dayBreaks"], second["dayBreaks"],
+                             "day breaks are recomputed only when the library changes")
+            self.assertLessEqual(len(count_statements), 1,
+                                 "only the first request pays for the counts")
+            # A metadata edit changes search results: cached counts must be dropped.
+            database.save_metadata_patch("1", "7", {"title": "Edited"}, [])
+            count_statements.clear()
+            third = database.list_tracks(query="Edited", limit=100)
+            self.assertEqual(1, third["total"])
+            self.assertEqual(1, len(count_statements), "the new generation re-counts")
+        finally:
+            reader.set_trace_callback(None)
+            database.close()
+
+    def test_fts_update_reuses_rowids_from_the_initial_query(self):
+        database = self._database()
+        lookups = []
+
+        def trace(*args):
+            if args[0].startswith("SELECT rowid FROM tracks WHERE"):
+                lookups.append(args[0])
+
+        try:
+            database.connection.set_trace_callback(trace)
+            database.list_tracks(query="Track 30")
+            database.connection.set_trace_callback(None)
+            self.assertEqual([], lookups, "FTS flush must not pay per-key rowid lookups")
+            # "Track 4999" is unique in a 0..4999 crate; trigram phrase matching also
+            # matches "Track 30" inside "Track 300", so a non-unique term would overcount.
+            self.assertEqual(1, database.list_tracks(query="Track 4999")["total"])
+        finally:
+            database.close()

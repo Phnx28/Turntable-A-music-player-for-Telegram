@@ -31,6 +31,11 @@ METADATA_FIELDS = {
     "artworkPath",
 }
 
+# One shuffled ordering per filter, reused for a short session so windowed queue
+# requests never re-sort the whole library (see playback_queue).
+SHUFFLE_CACHE_TTL_SECONDS = 5 * 60
+SHUFFLE_CACHE_MAX_ENTRIES = 3
+
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav"}
 
 BIND_HOSTS = {"127.0.0.1", "0.0.0.0"}
@@ -309,6 +314,19 @@ def weighted_shuffle_tracks(
     return [str(item["key"]) for item in (*head, *tail)]
 
 
+def _slice_window(
+    keys: list[str], current_key: str, window_before: int, window_after: int
+) -> tuple[int, list[str]]:
+    """The (offset, slice) of *keys* centred on *current_key*, for windowed queues."""
+    try:
+        index = keys.index(current_key) if current_key else 0
+    except ValueError:
+        index = 0
+    start = max(0, index - window_before)
+    end = min(len(keys), index + window_after + 1)
+    return start, keys[start:end]
+
+
 def _restrict(target: Path, mode: int) -> None:
     """chmod *target* to *mode*, ignoring a missing file or a filesystem that cannot.
 
@@ -347,6 +365,16 @@ class Database:
         # single locked connection so write serialization and transactions are unchanged.
         self._local = threading.local()
         self._track_counts: dict[str, int] | None = None
+        # Library generation: bumped whenever membership/scope changes (availability,
+        # source selection, metadata edits). Counts and day breaks are cached against it,
+        # so scrolling page N no longer re-counts the library or recomputes all breaks.
+        self._library_generation = 0
+        self._count_cache: dict[tuple[int, tuple[str, str, bool, bool]], int] = {}
+        self._all_music_total_cache: dict[int, int] = {}
+        self._day_breaks_cache: dict[tuple[int, tuple[str, str, bool, bool]], list[dict[str, Any]]] = {}
+        # One shuffled ordering per filter, cached for a short session so replaying the
+        # queue does not re-sort the whole library on every request (see playback_queue).
+        self._shuffle_cache: dict[tuple[str, str, bool, bool], tuple[int, float, list[str]]] = {}
         # ponytail: defer FTS updates until a search-using read (or the periodic
         # housekeeping flush) needs the index. Pending keys live in the durable
         # search_dirty table so a crash cannot drop them.
@@ -846,6 +874,7 @@ class Database:
             self._invalidate_pos_cache()
         except AttributeError:
             pass
+        self._bump_library_generation()
 
     def set_source_pinned(self, chat_id: str, pinned: bool) -> None:
         with self.transaction() as connection:
@@ -858,6 +887,7 @@ class Database:
 
     def set_sources_selected(self, chat_ids: Iterable[str], selected: bool) -> None:
         self._track_counts = None
+        self._bump_library_generation()
         ids = list(dict.fromkeys(str(value) for value in chat_ids))
         if not ids:
             return
@@ -888,6 +918,7 @@ class Database:
 
     def clear_sources(self) -> None:
         self._track_counts = None
+        self._bump_library_generation()
         with self.transaction() as connection:
             connection.execute("DELETE FROM sources")
 
@@ -911,6 +942,7 @@ class Database:
         full scan can still judge the row; a brand-new row simply has no marker yet.
         """
         self._track_counts = None
+        self._bump_library_generation()
         values = [
             (
                 str(item["chatId"]),
@@ -1006,6 +1038,7 @@ class Database:
         unavailable, so tracks whose messages were deleted on Telegram stop appearing.
         """
         self._track_counts = None
+        self._bump_library_generation()
         with self.transaction() as connection:
             connection.execute(
                 """
@@ -1029,6 +1062,7 @@ class Database:
             # availability; only invalidate when the update actually changed rows.
             if cursor.rowcount:
                 self._track_counts = None
+                self._bump_library_generation()
         try:
             self._invalidate_pos_cache()
         except AttributeError:
@@ -1133,6 +1167,7 @@ class Database:
         total: int | None = None,
         sort: str = "posted",
         cursor: str | None = None,
+        before: bool = False,
     ) -> dict[str, Any]:
         offset = max(0, int(offset))
         limit = max(25, min(int(limit), 200))
@@ -1143,19 +1178,29 @@ class Database:
         # read and can run on the per-thread connection without taking the write lock.
         # Cursor pagination (keyset): when cursor is "sentAt:rowid" and sort is posted,
         # use WHERE (sent_at, rowid) < (cursor_sent, cursor_rowid) instead of OFFSET.
-        # This is O(log n) regardless of depth; OFFSET scans and discards.
+        # This is O(log n) regardless of depth; OFFSET scans and discards. `before` fetches
+        # the page *preceding* the cursor by walking the order backwards and reversing.
         cursor_clause = ""
         cursor_params: list[Any] = []
+        keyset = False
         if cursor and sort == "posted" and not query and not liked and not chat_id and not include_unselected:
             try:
                 c_sent, c_rowid = cursor.split(":", 1)
                 c_sent_i, c_rowid_i = int(c_sent), int(c_rowid)
-                # For ORDER BY sent_at DESC, rowid DESC: next page is strictly less than cursor
-                cursor_clause = " AND ((t.sent_at < ?) OR (t.sent_at = ? AND t.rowid < ?))"
+                if before:
+                    # Backwards page: strictly *greater* than the cursor in DESC order.
+                    cursor_clause = " AND ((t.sent_at > ?) OR (t.sent_at = ? AND t.rowid > ?))"
+                else:
+                    # For ORDER BY sent_at DESC, rowid DESC: next page is strictly less than cursor
+                    cursor_clause = " AND ((t.sent_at < ?) OR (t.sent_at = ? AND t.rowid < ?))"
                 cursor_params = [c_sent_i, c_sent_i, c_rowid_i]
+                keyset = True
             except (ValueError, AttributeError):
                 cursor_clause = ""
         reader = self.reader
+        # A backwards keyset walk reverses the whole ordering (cursor > key), then the
+        # page is flipped back below. Only posted sort is cursor-capable, so ASC is exact.
+        row_order = "t.sent_at ASC, t.rowid ASC" if (keyset and before) else f"{order}, t.rowid DESC"
         rows = reader.execute(
             f"""
             SELECT t.rowid AS track_rowid, t.chat_id, t.message_id, t.file_name,
@@ -1168,77 +1213,111 @@ class Database:
             LEFT JOIN metadata_overrides o
                 ON o.chat_id = t.chat_id AND o.message_id = t.message_id
             WHERE {where}{cursor_clause}
-            ORDER BY {order}, t.rowid DESC
+            ORDER BY {row_order}
             LIMIT ? OFFSET ?
             """,
-            (*parameters, *cursor_params, limit, offset),
+            (*parameters, *cursor_params, limit, 0 if keyset else offset),
         ).fetchall()
-            # ponytail: COUNT(*) OVER() on this query cost ~200ms on a 55k library because the
-            # window function materializes every matching row before the LIMIT. A plain COUNT(*)
-            # never builds the rows and lands in single-digit ms, so ask for it separately and
-            # only when the caller cannot already know it.
+        if keyset and before:
+            # The backwards walk returned the page reversed; restore library order.
+            rows = rows[::-1]
+        # ponytail: COUNT(*) OVER() on this query cost ~200ms on a 55k library because the
+        # window function materializes every matching row before the LIMIT. A plain COUNT(*)
+        # never builds the rows and lands in single-digit ms, so ask for it separately and
+        # only when the caller cannot already know it. Counts and totals are cached against
+        # the library generation, so scrolling never re-counts an unchanged library.
+        generation = self._library_generation
+        filter_key = self._library_filter_key(chat_id, query, liked, include_unselected)
         if total is None:
-            # The overrides join cannot change the count, but short queries filter on
-            # o.payload, so it has to stay in the FROM clause.
-            count = reader.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM tracks t
-                JOIN sources s ON s.chat_id = t.chat_id
-                LEFT JOIN metadata_overrides o
-                    ON o.chat_id = t.chat_id AND o.message_id = t.message_id
-                WHERE {where}
-                """,
-                parameters,
-            ).fetchone()[0]
-        else:
-            count = total
-        all_music_total = reader.execute(
-            """
-            SELECT COUNT(*)
-            FROM tracks t
-            JOIN sources s ON s.chat_id = t.chat_id
-            WHERE t.available = 1 AND s.selected = 1
-            """
-        ).fetchone()[0]
-        day_breaks: list[dict[str, Any]] = []
-        if not chat_id and not liked and (sort or "posted") == "posted":
-            day_rows = reader.execute(
-                f"""
-                WITH ordered AS (
-                    SELECT ROW_NUMBER() OVER (ORDER BY {order}, t.rowid DESC) - 1 AS track_index,
-                           CASE WHEN t.sent_at > 0
-                             THEN strftime('%Y-%m-%d', t.sent_at, 'unixepoch')
-                           END AS day_key
+            cached = self._count_cache.get((generation, filter_key))
+            if cached is not None:
+                count = cached
+            else:
+                # The overrides join cannot change the count, but short queries filter on
+                # o.payload, so it has to stay in the FROM clause.
+                count = reader.execute(
+                    f"""
+                    SELECT COUNT(*)
                     FROM tracks t
                     JOIN sources s ON s.chat_id = t.chat_id
                     LEFT JOIN metadata_overrides o
-                      ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                        ON o.chat_id = t.chat_id AND o.message_id = t.message_id
                     WHERE {where}
-                ), boundaries AS (
-                    SELECT track_index, day_key,
-                           LAG(day_key) OVER (ORDER BY track_index) AS previous_day
-                    FROM ordered
-                )
-                SELECT track_index, day_key
-                FROM boundaries
-                WHERE day_key IS NOT NULL
-                  AND (previous_day IS NULL OR previous_day != day_key)
-                ORDER BY track_index
-                """,
-                parameters,
-            ).fetchall()
-            day_breaks = [
-                {"index": int(row["track_index"]), "dayKey": row["day_key"]}
-                for row in day_rows
-            ]
+                    """,
+                    parameters,
+                ).fetchone()[0]
+                self._count_cache[(generation, filter_key)] = count
+        else:
+            count = total
+        all_music_total = self._all_music_total_cache.get(generation)
+        if all_music_total is None:
+            all_music_total = reader.execute(
+                """
+                SELECT COUNT(*)
+                FROM tracks t
+                JOIN sources s ON s.chat_id = t.chat_id
+                WHERE t.available = 1 AND s.selected = 1
+                """
+            ).fetchone()[0]
+            self._all_music_total_cache[generation] = all_music_total
+        day_breaks: list[dict[str, Any]] = []
+        if not chat_id and not liked and (sort or "posted") == "posted":
+            cached_breaks = self._day_breaks_cache.get((generation, filter_key))
+            if cached_breaks is not None:
+                day_breaks = cached_breaks
+            else:
+                day_rows = reader.execute(
+                    f"""
+                    WITH ordered AS (
+                        SELECT ROW_NUMBER() OVER (ORDER BY {order}, t.rowid DESC) - 1 AS track_index,
+                               CASE WHEN t.sent_at > 0
+                                 THEN strftime('%Y-%m-%d', t.sent_at, 'unixepoch')
+                               END AS day_key
+                        FROM tracks t
+                        JOIN sources s ON s.chat_id = t.chat_id
+                        LEFT JOIN metadata_overrides o
+                          ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                        WHERE {where}
+                    ), boundaries AS (
+                        SELECT track_index, day_key,
+                               LAG(day_key) OVER (ORDER BY track_index) AS previous_day
+                        FROM ordered
+                    )
+                    SELECT track_index, day_key
+                    FROM boundaries
+                    WHERE day_key IS NOT NULL
+                      AND (previous_day IS NULL OR previous_day != day_key)
+                    ORDER BY track_index
+                    """,
+                    parameters,
+                ).fetchall()
+                day_breaks = [
+                    {"index": int(row["track_index"]), "dayKey": row["day_key"]}
+                    for row in day_rows
+                ]
+                self._day_breaks_cache[(generation, filter_key)] = day_breaks
+        # Keyset tokens for the cursor-capable path: the first row of this page is the
+        # cursor for the page *before* it, the last row for the page *after* it.
+        next_cursor = None
+        prev_cursor = None
+        if sort == "posted" and not query and not liked and not chat_id and not include_unselected and rows:
+            prev_cursor = f"{rows[0]['sent_at']}:{rows[0]['track_rowid']}"
+            next_cursor = f"{rows[-1]['sent_at']}:{rows[-1]['track_rowid']}"
         return {
             "items": [self._track_summary(row) for row in rows],
             "offset": offset,
             "total": int(count),
             "allMusicTotal": int(all_music_total),
             "dayBreaks": day_breaks,
+            "nextCursor": next_cursor,
+            "prevCursor": prev_cursor,
         }
+
+    @staticmethod
+    def _library_filter_key(
+        chat_id: str | None, query: str, liked: bool, include_unselected: bool
+    ) -> tuple[str, str, bool, bool]:
+        return (chat_id or "", query, bool(liked), bool(include_unselected))
 
     _pos_cache: dict[str, tuple[list[tuple[int,int,int,str,str]], float]] | None = None
     _pos_cache_lock = __import__("threading").RLock()
@@ -1283,6 +1362,18 @@ class Database:
         if self._pos_cache is not None:
             with self._pos_cache_lock:
                 self._pos_cache.clear()
+
+    def _bump_library_generation(self) -> None:
+        """Invalidate everything cached against library membership/scope.
+
+        Counts, allMusicTotal and day breaks are keyed by generation; bumping it forces a
+        recompute on the next read, so page N never pays for a full-library recount unless
+        membership actually changed.
+        """
+        self._library_generation += 1
+        self._count_cache.clear()
+        self._all_music_total_cache.clear()
+        self._day_breaks_cache.clear()
 
     def track_position(
         self,
@@ -1458,6 +1549,8 @@ class Database:
                 self._invalidate_pos_cache()
             except AttributeError:
                 pass
+        # Metadata edits change search results, so search-filtered counts must recompute.
+        self._bump_library_generation()
         # A manual edit supersedes any auto-enrichment decision about this track.
         self.clear_artwork_miss(track_key(chat_id, message_id))
         return self.get_track(chat_id, message_id)  # type: ignore[return-value]
@@ -1547,6 +1640,9 @@ class Database:
             return 0
         with self.transaction() as connection:
             self._rebuild_search(connection)
+        # The rebuild changes search results without any write-path bump; drop cached
+        # counts so the next search re-queries.
+        self._bump_library_generation()
         return tracks - fts
 
     def _rebuild_search(self, connection: sqlite3.Connection) -> None:
@@ -1569,10 +1665,13 @@ class Database:
         pairs = [split_track_key(key) for key in ordered]
         clauses = "(t.chat_id, t.message_id) IN (" + ", ".join("(?, ?)" for _ in pairs) + ")"
         parameters = [value for pair in pairs for value in pair]
+        # The rowid rides along with the row so the delete/insert below never pays a
+        # second per-key lookup.
         rows = connection.execute(
             f"""
-            SELECT t.chat_id, t.message_id, t.telegram_title, t.telegram_artist,
-                   t.telegram_album, t.file_name, o.payload AS override_payload
+            SELECT t.rowid AS track_rowid, t.chat_id, t.message_id, t.telegram_title,
+                   t.telegram_artist, t.telegram_album, t.file_name,
+                   o.payload AS override_payload
             FROM tracks t
             LEFT JOIN metadata_overrides o
               ON o.chat_id = t.chat_id AND o.message_id = t.message_id
@@ -1581,23 +1680,21 @@ class Database:
             parameters,
         ).fetchall()
         if delete:
-            placeholders = ", ".join("?" for _ in ordered)
             # v6 used a string `key` column; v7 is rowid-based (no key column).
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version >= 7:
-                rowids = [connection.execute("SELECT rowid FROM tracks WHERE chat_id=? AND message_id=?", split_track_key(k)).fetchone() for k in ordered]
-                rowids = [r[0] for r in rowids if r]
+                rowids = [row["track_rowid"] for row in rows]
                 if rowids:
                     connection.executemany("DELETE FROM tracks_fts WHERE rowid=?", [(r,) for r in rowids])
             else:
+                placeholders = ", ".join("?" for _ in ordered)
                 connection.execute(f"DELETE FROM tracks_fts WHERE key IN ({placeholders})", ordered)
         inserts = []
         for row in rows:
             override = json.loads(row["override_payload"] or "{}")
             inserts.append(
                 (
-                    row["chat_id"],
-                    row["message_id"],
+                    row["track_rowid"],
                     override.get("title", row["telegram_title"]),
                     override.get("artist", row["telegram_artist"]),
                     override.get("album", row["telegram_album"]),
@@ -1606,18 +1703,14 @@ class Database:
             )
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version >= 7:
-            rowid_inserts = []
-            for chat_id, message_id, title, artist, album, file_name in inserts:
-                row = connection.execute("SELECT rowid FROM tracks WHERE chat_id=? AND message_id=?", (chat_id, message_id)).fetchone()
-                if row:
-                    rowid_inserts.append((row[0], title, artist, album, file_name))
-            if rowid_inserts:
+            if inserts:
                 connection.executemany(
                     "INSERT INTO tracks_fts (rowid, title, artist, album, file_name) VALUES (?, ?, ?, ?, ?)",
-                    rowid_inserts,
+                    inserts,
                 )
         else:
-            keyed = [(f"{chat_id}:{message_id}", title, artist, album, file_name) for chat_id, message_id, title, artist, album, file_name in inserts]
+            keyed = [(track_key(row["chat_id"], row["message_id"]), title, artist, album, file_name)
+                     for row, (_, title, artist, album, file_name) in zip(rows, inserts)]
             connection.executemany(
                 "INSERT INTO tracks_fts (key, title, artist, album, file_name) VALUES (?, ?, ?, ?, ?)",
                 keyed,
@@ -1701,6 +1794,136 @@ class Database:
         clauses, parameters = self._library_filter(
             chat_id, query, liked, include_unselected
         )
+        where = " AND ".join(clauses)
+        filter_key = self._library_filter_key(chat_id, query, liked, include_unselected)
+        windowed = bool(window_before or window_after)
+        if shuffle:
+            keys = self._shuffled_session_keys(clauses, parameters, filter_key)
+            # Protocol: a shuffled window excludes the current track (the frontend
+            # prepends it itself), so a shuffled window has nothing to centre on and
+            # starts at the top of the fresh order, exactly as before caching.
+            if current_key:
+                keys = [key for key in keys if key != current_key]
+            total = len(keys)
+            offset = 0
+            if windowed:
+                offset, keys = _slice_window(keys, current_key, window_before, window_after)
+        elif windowed:
+            # The client only draws queueIndex +/- a few hundred and rebuilds the window from
+            # the server when it runs past an edge. Instead of materialising every key and
+            # slicing in Python, fetch just the window around the current track with two
+            # keyset queries (O(log n) each) plus the COUNTs; total/offset keep the client
+            # honest about how much more the server still holds.
+            keys, offset, total = self._ordered_window(
+                where, parameters, filter_key, current_key, window_before, window_after
+            )
+        else:
+            with self.lock:
+                rows = self.connection.execute(
+                    f"""
+                    SELECT t.chat_id || ':' || t.message_id AS key
+                    FROM tracks t
+                    JOIN sources s ON s.chat_id = t.chat_id
+                    LEFT JOIN metadata_overrides o
+                      ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                    WHERE {where}
+                    ORDER BY t.sent_at DESC, t.rowid DESC
+                    """,
+                    parameters,
+                ).fetchall()
+            keys = [str(row["key"]) for row in rows]
+            offset, total = 0, len(keys)
+        if not windowed:
+            return keys
+        return {"keys": keys, "offset": offset, "total": total}
+
+    def _ordered_window(
+        self,
+        where: str,
+        parameters: list[Any],
+        filter_key: tuple[str, str, bool, bool],
+        current_key: str,
+        window_before: int,
+        window_after: int,
+    ) -> tuple[list[str], int, int]:
+        """The queue window around *current_key* via keyset queries, never the full list."""
+        reader = self.reader
+        target = None
+        if current_key:
+            target = reader.execute(
+                "SELECT sent_at, rowid FROM tracks WHERE chat_id = ? AND message_id = ?",
+                split_track_key(current_key),
+            ).fetchone()
+        generation = self._library_generation
+        total = self._count_cache.get((generation, filter_key))
+        if total is None:
+            total = reader.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM tracks t
+                JOIN sources s ON s.chat_id = t.chat_id
+                LEFT JOIN metadata_overrides o
+                  ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                WHERE {where}
+                """,
+                parameters,
+            ).fetchone()[0]
+            self._count_cache[(generation, filter_key)] = total
+        key_sql = (
+            "SELECT t.chat_id || ':' || t.message_id AS key "
+            "FROM tracks t JOIN sources s ON s.chat_id = t.chat_id "
+            "LEFT JOIN metadata_overrides o ON o.chat_id = t.chat_id AND o.message_id = t.message_id "
+            f"WHERE {where}"
+        )
+        if target is None:
+            # No current track (or it left the library): window from the top, as before.
+            rows = reader.execute(
+                f"{key_sql} ORDER BY t.sent_at DESC, t.rowid DESC LIMIT ?",
+                (*parameters, window_after + 1),
+            ).fetchall()
+            return [str(row["key"]) for row in rows], 0, int(total)
+        before_sql = " AND (t.sent_at > ? OR (t.sent_at = ? AND t.rowid > ?))"
+        after_sql = " AND (t.sent_at < ? OR (t.sent_at = ? AND t.rowid < ?))"
+        params = (*parameters, target["sent_at"], target["sent_at"], target["rowid"])
+        # Rows before *current* sort strictly greater (DESC order); walk them in reverse.
+        before_rows = reader.execute(
+            f"{key_sql}{before_sql} ORDER BY t.sent_at ASC, t.rowid ASC LIMIT ?",
+            (*params, window_before),
+        ).fetchall()
+        after_rows = reader.execute(
+            f"{key_sql}{after_sql} ORDER BY t.sent_at DESC, t.rowid DESC LIMIT ?",
+            (*params, window_after),
+        ).fetchall()
+        position = reader.execute(
+            f"SELECT COUNT(*) FROM tracks t JOIN sources s ON s.chat_id = t.chat_id "
+            f"LEFT JOIN metadata_overrides o ON o.chat_id = t.chat_id AND o.message_id = t.message_id "
+            f"WHERE {where}{before_sql}",
+            params,
+        ).fetchone()[0]
+        before_keys = [str(row["key"]) for row in reversed(before_rows)]
+        after_keys = [str(row["key"]) for row in after_rows]
+        # The contract keeps the offset of the *window*, not the current track's position:
+        # the client uses it to know how much more the server still holds above the slice.
+        return before_keys + [current_key] + after_keys, max(0, int(position) - window_before), int(total)
+
+    def _shuffled_session_keys(
+        self,
+        clauses: list[str],
+        parameters: list[Any],
+        filter_key: tuple[str, str, bool, bool],
+    ) -> list[str]:
+        """The weighted shuffle for *filter*, computed once per library generation.
+
+        Replaying the queue (or moving between its edges) used to re-sort the whole
+        library on every request; the ordering is now a short-lived session state,
+        invalidated whenever the library changes (generation) or after a few minutes.
+        The frontend protocol re-adds the current track itself, so the list needs no
+        per-current_key variant.
+        """
+        now = time.monotonic()
+        cached = self._shuffle_cache.get(filter_key)
+        if cached and cached[0] == self._library_generation and now - cached[1] < SHUFFLE_CACHE_TTL_SECONDS:
+            return cached[2]
         with self.lock:
             rows = self.connection.execute(
                 f"""
@@ -1719,38 +1942,21 @@ class Database:
                 """,
                 parameters,
             ).fetchall()
-        if not shuffle:
-            keys = [str(row["key"]) for row in rows]
-        else:
-            keys = weighted_shuffle_tracks(
-                [
-                    {
-                        "key": row["key"],
-                        "playCount": row["play_count"],
-                        "lastStartedAt": row["last_started_at"],
-                        "lastPlayedAt": row["last_played_at"],
-                    }
-                    for row in rows
-                ],
-                current_key,
-            )
-        if not window_before and not window_after:
-            return keys
-        # The client only draws queueIndex +/- a few hundred and rebuilds the window from the
-        # server when it runs past an edge, so materialising 54,660 keys as JSON on every play
-        # is wasted wire. Slice around the current track; total/offset keep the client honest
-        # about how much more the server still holds.
-        try:
-            index = keys.index(current_key) if current_key else 0
-        except ValueError:
-            index = 0
-        start = max(0, index - window_before)
-        end = min(len(keys), index + window_after + 1)
-        return {
-            "keys": keys[start:end],
-            "offset": start,
-            "total": len(keys),
-        }
+        keys = weighted_shuffle_tracks(
+            [
+                {
+                    "key": row["key"],
+                    "playCount": row["play_count"],
+                    "lastStartedAt": row["last_started_at"],
+                    "lastPlayedAt": row["last_played_at"],
+                }
+                for row in rows
+            ]
+        )
+        self._shuffle_cache[filter_key] = (self._library_generation, now, keys)
+        while len(self._shuffle_cache) > SHUFFLE_CACHE_MAX_ENTRIES:
+            self._shuffle_cache.pop(next(iter(self._shuffle_cache)))
+        return keys
 
     def shuffled_track_keys(self, chat_id: str | None = None, current_key: str = "") -> list[str]:
         return self.playback_queue(chat_id, shuffle=True, current_key=current_key)

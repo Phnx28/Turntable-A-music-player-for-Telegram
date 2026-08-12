@@ -4,7 +4,9 @@
 // stale bytes and leak library contents into the caches API.
 
 const SHELL = "/";
-const SHELL_CACHE = "turntable-shell-v1";
+// Bumped whenever the shell manifest changes; the activate handler deletes every other
+// cache, so a stale shell can never outlive its version.
+const SHELL_CACHE = "turntable-shell-v2";
 
 const SHELL_ASSETS = [
   "/",
@@ -52,20 +54,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: stale-while-revalidate. The server already sends no-cache + ETag, so this
-  // only speeds up repeat loads.
+  // Static assets: network-first. A stale-while-revalidate shell could pair an old app.js
+  // with a new backend on the first visit after an update; fetching first guarantees the
+  // code matches the server it talks to, and the cached copy is only the offline fallback.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const update = fetch(request)
-        .then((response) => {
-          if (response.ok && url.pathname.startsWith("/assets/")) {
-            const copy = response.clone();
-            caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || update;
-    })
+    fetch(request)
+      .then((response) => {
+        if (response.ok && url.pathname.startsWith("/assets/")) {
+          const copy = response.clone();
+          caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
+        }
+        return response;
+      })
+      .catch(() => caches.match(request))
   );
 });

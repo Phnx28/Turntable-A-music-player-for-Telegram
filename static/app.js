@@ -12,6 +12,8 @@ const state = {
   repeat: localStorage.getItem("tm-repeat") || "off",
   cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
+  // offset -> { cursor, before } keyset tokens for the posted/no-filter path (C2).
+  pageCursors: new Map(),
   loadedPages: new Set(), pageRequests: new Set(), totalTracks: 0, allMusicTotal: null, dayBreaks: [], windowStart: -1, rowFocusIndex: 0, libraryLoading: false,
   globalTracks: [], globalSources: [], summaryRequests: new Set(),
   temporarySource: null, temporaryJob: null, keepingSource: false, likedCount: 0, historyVisible: 200,
@@ -613,13 +615,20 @@ function enterTelegramLogin() {
 
 async function boot() {
   applyPreferences();
-  const auth = await api("/api/auth/status");
+  // All boot reads are independent; auth gates the password view, status gates the
+  // Telegram view, and the rest feed the shell -- so fetch them together.
+  const [auth, status, stats, settings, sources] = await Promise.all([
+    api("/api/auth/status"),
+    api("/api/status"),
+    api("/api/library/stats"),
+    api("/api/settings"),
+    api("/api/sources"),
+  ]);
   if (auth.passwordEnabled && !auth.authenticated) {
     showView("lock-view");
     $("lock-password").focus();
     return;
   }
-  const status = await api("/api/status");
   if (!status.telegram.linked) {
     showView("telegram-view");
     if (status.startupError) showError(new AppError("The saved Telegram authorization expired. Reconnect with QR or phone; your local library and edits are safe."), null, "Reconnect Telegram");
@@ -630,8 +639,8 @@ async function boot() {
   showView("app-shell");
   let saved = null;
   try { saved = normalizePlayerState(JSON.parse(localStorage.getItem("tm-player-state") || "null")); } catch {}
-  const stats = await api("/api/library/stats");
-  [state.settings, state.sources] = await Promise.all([api("/api/settings"), api("/api/sources")]);
+  state.settings = settings;
+  state.sources = sources;
   state.likedCount = stats.likedCount || 0;
   state.temporarySource = saved?.temporarySource || null;
   state.likedMode = Boolean(saved?.liked);
@@ -913,14 +922,27 @@ async function loadPage(offset, force = false, token = libraryRequest) {
   if (!shouldFetchPage(offset, state.loadedPages, state.pageRequests)) return;
   state.pageRequests.add(offset);
   const cacheKey = libraryCacheKey(offset);
+  // Keyset pagination for the default chronological path: once a neighbouring page has
+  // supplied its cursor tokens, deep pages stop paying OFFSET scans. Other views
+  // (filters, search, per-source, liked) keep offset paging.
+  const query = $("track-search").value.trim();
+  let cursorSuffix = "";
+  if (!state.likedMode && !state.source && !query && state.sort === "posted") {
+    const token = state.pageCursors.get(offset);
+    if (token) cursorSuffix = `&cursor=${encodeURIComponent(token.cursor)}${token.before ? "&before=true" : ""}`;
+  }
   try {
-    const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}${knownTotalParam(offset, state.totalTracks)}`, { signal: requestController.signal });
+    const raw = !force && state.libraryCache.get(cacheKey) || await api(`/api/tracks?${cacheKey}${knownTotalParam(offset, state.totalTracks)}${cursorSuffix}`, { signal: requestController.signal });
     if (token !== libraryRequest) return;
     const page = normalizeTrackPage(raw);
-    if (!state.libraryCache.has(cacheKey)) cacheSet(state.libraryCache, cacheKey, page, 8);
+    if (!state.libraryCache.has(cacheKey)) cacheSet(state.libraryCache, cacheKey, page, 24);
     state.totalTracks = page.total;
     state.allMusicTotal = page.allMusicTotal;
     state.dayBreaks = page.dayBreaks;
+    // Chain the cursors: the next page is fetched with this page's last row, the
+    // previous page with its first row (walked backwards).
+    if (page.nextCursor) state.pageCursors.set(offset + 100, { cursor: page.nextCursor });
+    if (page.prevCursor) state.pageCursors.set(offset - 100, { cursor: page.prevCursor, before: true });
     mergePageInto(state.tracks, page, (track) => cacheSet(state.summaryCache, track.key, track, 500));
     state.loadedPages.add(page.offset);
     renderTracks(true);
@@ -933,7 +955,7 @@ async function loadPage(offset, force = false, token = libraryRequest) {
 async function loadLibrary(force = false, keepVisible = false) {
   requestController?.abort(); requestController = new AbortController();
   const token = ++libraryRequest;
-  state.tracks = []; state.loadedPages.clear(); state.pageRequests.clear();
+  state.tracks = []; state.loadedPages.clear(); state.pageRequests.clear(); state.pageCursors.clear();
   state.totalTracks = 0; state.dayBreaks = []; state.windowStart = -1; state.rowFocusIndex = 0; state.libraryLoading = true;
   // Refining a search should not blank the list. Keep the previous rows on screen, dimmed,
   // until the new page lands; a skeleton flash on every keystroke reads as the app breaking.
@@ -1258,16 +1280,26 @@ function renderLyrics() {
   const empty = !lines.length && !state.lyrics?.plainText;
   $("lyrics-empty").hidden = !empty; $("add-lyrics-empty").hidden = !empty;
   if (empty) $("lyrics-empty").textContent = "No lyrics found for this track.";
+  // The rebuilt buttons replaced every node updateLyric may have highlighted.
+  activeLyricNode = state.lyric >= 0 ? $("lyrics-lines").querySelector(`[data-lyric="${state.lyric}"]`) : null;
+  activeLyricNode?.classList.add("active");
 }
+
+let activeLyricNode = null;
 
 function updateLyric() {
   const lines = state.lyrics?.lines || [];
   const index = lyricIndex(lines, audio.currentTime * 1000); if (index === state.lyric) return;
   state.lyric = index;
-  $("lyrics-lines").querySelectorAll("button").forEach((button, position) => button.classList.toggle("active", position === index));
+  // Toggling every button on each line change was O(n) per tick of the playback timer;
+  // only the previous and the next active node change.
+  const next = $("lyrics-lines").querySelector(`[data-lyric="${index}"]`);
+  if (activeLyricNode && activeLyricNode !== next) activeLyricNode.classList.remove("active");
+  if (next) next.classList.add("active");
+  activeLyricNode = next;
   if (!state.lyricsFollow) return;
   state.lyricAutoScrolling = true;
-  $("lyrics-lines").querySelector(`[data-lyric="${index}"]`)?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  next?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   clearTimeout(state.lyricScrollTimer);
   state.lyricScrollTimer = setTimeout(() => { state.lyricAutoScrolling = false; }, 500);
 }
@@ -2072,7 +2104,24 @@ async function toggleTrackLike(key, { notify = false } = {}) {
     if (canonical !== requested) state.likedCount += canonical ? 1 : -1;
     applyLiked(canonical);
     if (notify) { toast(canonical ? "Added to Liked Songs" : "Removed from Liked Songs"); schedulePersist(); }
-    if (state.likedMode) loadLibrary(true);
+    if (state.likedMode && !canonical) {
+      // Unliking in Liked Songs removes the row immediately; the page refreshes in the
+      // background so totals and neighbouring rows settle without a full library reload.
+      const index = state.tracks.findIndex((track) => track?.key === key);
+      if (index !== -1) {
+        state.tracks.splice(index, 1);
+        state.totalTracks = Math.max(0, state.totalTracks - 1);
+        state.dayBreaks = [];
+        renderTracks(true); renderSources();
+        // Drop the stale cached page so scrolling back cannot resurrect the row, then
+        // refetch that page in the background.
+        const pageOffset = Math.floor(index / 100) * 100;
+        state.libraryCache.delete(libraryCacheKey(pageOffset));
+        loadPage(pageOffset, true);
+      }
+    } else if (state.likedMode) {
+      loadLibrary(true);
+    }
   } catch (error) {
     const baseline = rollbackLikeOperation(rowLikeOperations, key, operation);
     if (baseline === null) return;
@@ -2582,12 +2631,20 @@ $("source-list").addEventListener("contextmenu", (event) => { const row = event.
 function cleanupSourceDrag() {
   $("source-list").querySelectorAll(".source-entry.is-dragging, .source-entry.drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
 }
+// Dragover used to call getBoundingClientRect() for every source entry on every mousemove;
+// the mids are captured once at dragstart (and on resize) instead.
+let sourceDragMids = [];
+function measureSourceMids() {
+  sourceDragMids = [...$("source-list").querySelectorAll(".source-entry[draggable=true]")]
+    .map((el) => ({
+      source: el.dataset.source,
+      mid: el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2,
+    }));
+}
 function closestSourceEntry(clientY) {
-  const entries = [...$("source-list").querySelectorAll(".source-entry[draggable=true]")];
-  return entries.reduce((best, el) => {
-    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
-    const dist = Math.abs(clientY - mid);
-    return dist < best.dist ? { entry: el, dist } : best;
+  return sourceDragMids.reduce((best, item) => {
+    const dist = Math.abs(clientY - item.mid);
+    return dist < best.dist ? { entry: item, dist } : best;
   }, { entry: null, dist: Infinity });
 }
 $("source-list").addEventListener("dragstart", (event) => {
@@ -2595,8 +2652,12 @@ $("source-list").addEventListener("dragstart", (event) => {
   if (!entry) { event.preventDefault(); return; }
   draggedSource = entry.dataset.source || "";
   entry.classList.add("is-dragging");
+  measureSourceMids();
+  const remeasure = () => { if (draggedSource) measureSourceMids(); };
+  window.addEventListener("resize", remeasure);
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("text/plain", "");
+  window.addEventListener("dragend", () => window.removeEventListener("resize", remeasure), { once: true });
 });
 $("source-list").addEventListener("dragover", (event) => {
   event.preventDefault();
@@ -2609,13 +2670,8 @@ $("source-list").addEventListener("drop", async (event) => {
   event.preventDefault();
   cleanupSourceDrag();
   if (!draggedSource) return;
-  const entries = [...$("source-list").querySelectorAll(".source-entry[draggable=true]:not(.is-dragging)")];
-  const closest = entries.reduce((best, el) => {
-    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
-    const dist = Math.abs(event.clientY - mid);
-    return dist < best.dist ? { entry: el, dist } : best;
-  }, { entry: null, dist: Infinity });
-  const target = closest.entry?.dataset.source;
+  const closest = closestSourceEntry(event.clientY);
+  const target = closest.entry?.source;
   if (!target || target === draggedSource) { draggedSource = ""; return; }
   const ordered = sourceSort(state.sources).map((item) => item.chatId);
   ordered.splice(ordered.indexOf(draggedSource), 1);

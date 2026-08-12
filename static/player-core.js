@@ -50,6 +50,9 @@ export function normalizeTrackPage(payload) {
     allMusicTotal: Number.isFinite(Number(payload.allMusicTotal))
       ? Math.max(0, Number(payload.allMusicTotal)) : null,
     dayBreaks,
+    // Keyset tokens for the posted/no-filter path; absent on offset-based views.
+    nextCursor: typeof payload.nextCursor === "string" ? payload.nextCursor : null,
+    prevCursor: typeof payload.prevCursor === "string" ? payload.prevCursor : null,
   };
 }
 
