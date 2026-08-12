@@ -1579,6 +1579,7 @@ class Database:
             "key": track_key(chat_id, message_id),
             "chatId": chat_id,
             "messageId": message_id,
+            "rowid": value.get("track_rowid"),
             "source": {
                 "chatId": chat_id,
                 "title": value["source_title"],
@@ -1812,6 +1813,66 @@ class Database:
                 "SELECT * FROM recordings WHERE acoustid = ?", (acoustid,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def tracks_for_enrichment(
+        self, chat_id: str, scope: str, limit: int = 50, after_rowid: int = 0
+    ) -> list[dict[str, Any]]:
+        """Eligible tracks for a bulk enrichment pass, in rowid order.
+
+        *scope* selects which tracks count as needing work:
+        - "uncertain" (default): never attempted, retryable, or uncertain
+          (ambiguous; no_match only when fingerprinting was unavailable).
+        - "missing_only": tracks whose displayed title/artist are missing.
+        - "reprocess": every available track (already-settled ones are no-ops
+          for the pipeline; identity links are preserved).
+
+        The job walks batches with *after_rowid* so a resumable run never loops
+        over tracks it already settled this session.
+        """
+        scope = scope or "uncertain"
+        if scope == "reprocess":
+            condition = ""
+        elif scope == "missing_only":
+            condition = """AND (t.telegram_title IN ('', 'Unknown title')
+                                OR t.telegram_artist IN ('', 'Unknown artist'))"""
+        else:
+            condition = """AND (e.status IS NULL
+                                OR e.status IN ('temporary_failure', 'ambiguous')
+                                OR (e.status = 'no_match' AND e.failure_code = 'fingerprint-unavailable'))"""
+        with self.lock:
+            rows = self.connection.execute(
+                f"""
+                SELECT t.*, t.rowid AS track_rowid,
+                       s.title AS source_title, s.kind AS source_kind,
+                       s.selected AS source_selected,
+                       o.payload AS override_payload,
+                       recording_fields.recording_fields_payload
+                FROM tracks t
+                JOIN sources s ON s.chat_id = t.chat_id
+                LEFT JOIN metadata_overrides o
+                    ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                {self._RECORDING_FIELDS_JOIN}
+                LEFT JOIN track_enrichment e ON e.track_key = t.chat_id || ':' || t.message_id
+                WHERE t.chat_id = ? AND t.available = 1 AND t.rowid > ?
+                {condition}
+                ORDER BY t.rowid ASC
+                LIMIT ?
+                """,
+                (chat_id, int(after_rowid), limit),
+            ).fetchall()
+        return [self._track_row(row) for row in rows]
+
+    def reset_source_enrichment_states(self, chat_id: str) -> int:
+        """Drop the enrichment states for a source (the "reprocess everything" scope)."""
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM track_enrichment
+                WHERE track_key LIKE ?
+                """,
+                (f"{chat_id}:%",),
+            )
+            return int(cursor.rowcount or 0)
 
     def set_recording_release_group(self, recording_id: int, release_group_mbid: str) -> None:
         with self.transaction() as connection:

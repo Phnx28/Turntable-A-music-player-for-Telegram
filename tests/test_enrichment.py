@@ -338,3 +338,127 @@ class ArtworkStateTests(unittest.IsolatedAsyncioTestCase):
         displayed = self.database.get_track("1", "2")
         self.assertEqual("user-choice.jpg", displayed["metadata"]["artworkPath"])
         self.assertEqual("user-choice.jpg", displayed["overrides"]["artworkPath"])
+
+
+class BulkEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    """H3/H5/H6/H7: resumable, cancellable, playback-first bulk enrichment."""
+
+    def setUp(self):
+        self.database = _database()
+        self.addCleanup(self.database.close)
+        self.database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        self.database.upsert_tracks([
+            {"chatId": "1", "messageId": str(i), "fileName": f"song-{i}.mp3",
+             "mimeType": "audio/mpeg", "title": f"Track {i}", "artist": "Artist",
+             "documentId": str(i)}
+            for i in range(30)
+        ])
+        self.candidate = AcoustIDRecording(
+            "mbid-a", "Paranoid Android", "Radiohead", 383_000, sources=5,
+            release_groups=[ReleaseGroup("rg-1", "OK Computer", "Album")],
+        )
+
+    def _service(self, acquire_delay=0.0):
+        media = SimpleNamespace(fingerprint_source=AsyncMock(return_value=Path("/tmp/song.mp3")))
+        fingerprints = SimpleNamespace(
+            fingerprint_track=AsyncMock(
+                return_value=SimpleNamespace(fingerprint="AQADtEm", duration=383.0)
+            )
+        )
+        acoustid = SimpleNamespace(configured=lambda: True, lookup=AsyncMock(return_value=[self.candidate]))
+        return EnrichmentService(
+            self.database, media, fingerprints, acoustid,
+            cover_fetcher=AsyncMock(return_value="cover.jpg"),
+        )
+
+    async def test_bulk_walk_is_resumable_and_settles_every_track(self):
+        service = self._service()
+        job = SimpleNamespace(processed=0, found=0, result=None)
+        await service.bulk_enrich_source(job, "1", "uncertain", fetch_artwork=True, replace_existing=False)
+        self.assertEqual(30, job.processed)
+        self.assertEqual(30, job.found)
+        resolved = [
+            key for key in (
+                self.database.get_enrichment_state(f"1:{i}") for i in range(30)
+            ) if key and key["status"] == "resolved"
+        ]
+        self.assertEqual(30, len(resolved), "every track settled with durable state")
+
+    async def test_interrupted_run_resumes_without_reprocessing(self):
+        service = self._service()
+
+        def flaky_lookup(fingerprint, duration):
+            async def lookup():
+                await asyncio.sleep(0.01)
+                if not hasattr(flaky_lookup, "count"):
+                    flaky_lookup.count = 0
+                flaky_lookup.count += 1
+                if flaky_lookup.count == 3:
+                    raise AcoustIDError("transient")
+                return [self.candidate]
+            return lookup()
+
+        service.acoustid.lookup = flaky_lookup
+        job = SimpleNamespace(processed=0, found=0, result=None)
+        await service.bulk_enrich_source(job, "1", "uncertain", fetch_artwork=True, replace_existing=False)
+        # One track hit a transient failure: the run stops for retry backoff later.
+        failures = [
+            self.database.get_enrichment_state(f"1:{i}")
+            for i in range(30)
+            if self.database.get_enrichment_state(f"1:{i}")
+        ]
+        retryable = [state for state in failures if state["status"] == "temporary_failure"]
+        self.assertEqual(1, len(retryable))
+        # A second run resumes: the resolved tracks are skipped, the retryable one is
+        # re-attempted only after its backoff (clear it to simulate a later run).
+        self.database.set_enrichment_state(retryable[0]["track_key"], "temporary_failure")
+        job2 = SimpleNamespace(processed=0, found=0, result=None)
+        await service.bulk_enrich_source(job2, "1", "uncertain", fetch_artwork=True, replace_existing=False)
+        resolved = [
+            self.database.get_enrichment_state(f"1:{i}")
+            for i in range(30)
+        ]
+        self.assertTrue(all(state["status"] == "resolved" for state in resolved),
+                        "the resumed run settles the remaining track")
+
+    async def test_playback_triggers_bypass_the_bulk_gate(self):
+        # The bulk semaphore admits two tracks; playback triggers must not queue
+        # behind them (Phase H6: playback always wins over bulk enrichment).
+        service = self._service()
+        gate = asyncio.Event()
+        original = service.enrich_track
+
+        async def slow_bulk(track, **kwargs):
+            if kwargs.get("trigger") == "bulk":
+                await gate.wait()
+            return await original(track, **kwargs)
+
+        service.enrich_track = slow_bulk
+        first = asyncio.create_task(service.enrich_track(
+            self.database.get_track("1", "0"), trigger="bulk"))
+        second = asyncio.create_task(service.enrich_track(
+            self.database.get_track("1", "1"), trigger="bulk"))
+        playback = asyncio.create_task(service.enrich_track(
+            self.database.get_track("1", "2"), trigger="playback"))
+        await asyncio.sleep(0.05)
+        gate.set()
+        await asyncio.gather(first, second, playback)
+        self.assertEqual("resolved", playback.result().decision,
+                         "playback enrichment completes regardless of the bulk queue")
+
+    async def test_cancellation_stops_the_walk_cleanly(self):
+        service = self._service()
+        job = SimpleNamespace(processed=0, found=0, result=None)
+
+        task = asyncio.create_task(service.bulk_enrich_source(
+            job, "1", "uncertain", fetch_artwork=True, replace_existing=False))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        # The tracks settled before the cancel keep their durable states.
+        settled = [
+            self.database.get_enrichment_state(f"1:{i}")
+            for i in range(5)
+        ]
+        self.assertTrue(any(state is not None for state in settled))

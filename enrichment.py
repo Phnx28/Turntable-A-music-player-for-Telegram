@@ -36,6 +36,12 @@ RESOLVER_VERSION = 1
 RETRY_BASE_SECONDS = 30
 RETRY_MAX_SECONDS = 24 * 60 * 60
 
+# Bulk enrichment concurrency (Phase H5): conservative, internal constants.
+BULK_TRACK_CONCURRENCY = 2
+BULK_COVER_CONCURRENCY = 3
+BULK_BATCH_SIZE = 25
+BULK_CLUSTER_WINDOW = 20  # resolved neighbours whose release groups vote (H7)
+
 # Source label for provenance rows written by this pipeline.
 _ENRICHMENT_SOURCE = "fingerprint_resolver"
 
@@ -75,6 +81,10 @@ class EnrichmentService:
         # Playback-triggered runs in flight, keyed by track key, so rapid play events
         # never start a second fingerprint for the same track.
         self._in_flight: set[str] = set()
+        # Bulk concurrency (Phase H5): conservative, internal constants. Playback
+        # triggers bypass these gates entirely, so bulk enrichment yields to playback.
+        self.bulk_semaphore = asyncio.Semaphore(BULK_TRACK_CONCURRENCY)
+        self.cover_semaphore = asyncio.Semaphore(BULK_COVER_CONCURRENCY)
 
     async def enrich_track(
         self,
@@ -82,12 +92,29 @@ class EnrichmentService:
         *,
         trigger: Literal["playback", "bulk", "manual"],
         replace_existing: bool = False,
+        context_hint: str = "",
     ) -> EnrichmentResult:
         key = track["key"]
         if key in self._in_flight:
             return EnrichmentResult("skipped", reason="already in flight")
         self._in_flight.add(key)
         try:
+            # Bulk runs share the concurrency gates; playback/manual runs never wait
+            # behind them (Phase H6: playback always wins over bulk enrichment).
+            if trigger == "bulk":
+                async with self.bulk_semaphore:
+                    return await _enrich_track(
+                        self.database,
+                        self.media,
+                        self.fingerprints,
+                        self.acoustid,
+                        track,
+                        trigger=trigger,
+                        replace_existing=replace_existing,
+                        cover_fetcher=self.cover_fetcher,
+                        context_hint=context_hint,
+                        cover_gate=self.cover_semaphore,
+                    )
             return await _enrich_track(
                 self.database,
                 self.media,
@@ -97,9 +124,66 @@ class EnrichmentService:
                 trigger=trigger,
                 replace_existing=replace_existing,
                 cover_fetcher=self.cover_fetcher,
+                context_hint=context_hint,
+                cover_gate=self.cover_semaphore,
             )
         finally:
             self._in_flight.discard(key)
+
+    async def bulk_enrich_source(
+        self,
+        job: Any,
+        chat_id: str,
+        scope: str,
+        *,
+        fetch_artwork: bool,
+        replace_existing: bool,
+    ) -> None:
+        """The resumable bulk job body (Phase H): one track at a time, durable state.
+
+        Walks the source's eligible tracks in rowid order, skipping anything the
+        pipeline settles (each track's enrichment state commits as it goes, so an
+        interrupted job resumes where the states say). Playback-triggered
+        enrichment and the cache-current task always outrank this job.
+        """
+        if scope == "reprocess":
+            # Reprocessing everything means re-running the pipeline for the source;
+            # identity links are kept, so already-resolved tracks re-check artwork.
+            self.database.reset_source_enrichment_states(chat_id)
+        last_rowid = 0
+        recent_groups: list[str] = []
+        while True:
+            batch = self.database.tracks_for_enrichment(
+                chat_id, scope, limit=BULK_BATCH_SIZE, after_rowid=last_rowid
+            )
+            if not batch:
+                break
+            hint = _most_common(recent_groups[-BULK_CLUSTER_WINDOW:])
+            results = await asyncio.gather(
+                *[
+                    self.enrich_track(
+                        track,
+                        trigger="bulk",
+                        replace_existing=replace_existing,
+                        context_hint=hint,
+                    )
+                    for track in batch
+                ],
+                return_exceptions=True,
+            )
+            for track, result in zip(batch, results):
+                job.processed += 1
+                if isinstance(result, Exception):
+                    LOGGER.warning("Bulk enrichment failed for %s: %s", track["key"], result)
+                elif result.decision in {"resolved", "auto_apply", "fill_missing_only"}:
+                    job.found += 1
+                recording = self.database.get_track_recording(track["key"])
+                if recording and recording.get("release_group_mbid"):
+                    recent_groups.append(str(recording["release_group_mbid"]))
+            last_rowid = int(batch[-1].get("rowid") or 0)
+            job.result = {"lastRowid": last_rowid}
+            # Give the event loop (and playback) room between batches.
+            await asyncio.sleep(0)
 
     def enrich_playback(self, track: dict[str, Any]) -> None:
         """Silent playback-triggered enrichment (Phase F7): fire and forget.
@@ -128,6 +212,8 @@ async def _enrich_track(
     trigger: Literal["playback", "bulk", "manual"],
     replace_existing: bool,
     cover_fetcher: Callable[[str, str], Any] | None,
+    context_hint: str = "",
+    cover_gate: Any = None,
 ) -> EnrichmentResult:
     """Resolve *track* to a recording identity and persist it.
 
@@ -156,7 +242,10 @@ async def _enrich_track(
     # step failed transiently last run); re-enter straight at release/artwork.
     recording = database.get_track_recording(key)
     if recording is not None:
-        return await _release_and_artwork(database, track, recording, cover_fetcher)
+        return await _release_and_artwork(
+            database, track, recording, cover_fetcher,
+            context_hint=context_hint, cover_gate=cover_gate,
+        )
 
     database.set_enrichment_state(
         key, "fingerprinting", resolver_version=RESOLVER_VERSION
@@ -210,7 +299,10 @@ async def _enrich_track(
             ),
         )
         recording = database.get_track_recording(key)
-        return await _release_and_artwork(database, track, recording, cover_fetcher)
+        return await _release_and_artwork(
+            database, track, recording, cover_fetcher,
+            context_hint=context_hint, cover_gate=cover_gate,
+        )
     except asyncio.CancelledError:
         # The state stays "fingerprinting"; startup recovery flips it to retryable.
         raise
@@ -271,6 +363,9 @@ async def _release_and_artwork(
     track: dict[str, Any],
     recording: dict[str, Any] | None,
     cover_fetcher: Callable[[str, str], Any] | None,
+    *,
+    context_hint: str = "",
+    cover_gate: Any = None,
 ) -> EnrichmentResult:
     """Resolve the release group and fetch its cover for a resolved recording.
 
@@ -289,6 +384,7 @@ async def _release_and_artwork(
             album_tag=track["metadata"].get("album"),
             year=_int_or_none(track["metadata"].get("year")),
             track_number=_int_or_none(track["metadata"].get("trackNumber")),
+            hint=context_hint or None,
         )
         if chosen is None:
             # No plausible release group: the recording stays resolved, and artwork
@@ -308,7 +404,11 @@ async def _release_and_artwork(
         return EnrichmentResult("resolved", recording_id=recording_id)
     quality = str(database.get_settings().get("coverQuality") or "1200")
     try:
-        artwork = await cover_fetcher(release_group_id, quality)
+        if cover_gate is not None:
+            async with cover_gate:
+                artwork = await cover_fetcher(release_group_id, quality)
+        else:
+            artwork = await cover_fetcher(release_group_id, quality)
     except Exception as error:
         LOGGER.warning("Release-group cover failed transiently for %s: %s", key, error)
         return _temporary(database, key, "artwork retry")
@@ -378,3 +478,14 @@ def _temporary(database: Any, track_key: str, reason: str) -> EnrichmentResult:
         next_retry_at=int(time.time() + delay),
     )
     return EnrichmentResult("temporary_failure", reason=reason)
+
+
+def _most_common(values: list[str]) -> str:
+    """The most frequent value, or "" when nothing repeats enough to matter."""
+    if not values:
+        return ""
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    best = max(counts, key=counts.get)
+    return best if counts[best] >= 3 else ""

@@ -418,6 +418,28 @@
       </div>
     </dialog>
 
+    <dialog id="enrich-dialog" class="modal wide-modal enrich-dialog">
+      <header class="modal-header">
+        <h2>Auto-fix metadata</h2>
+        <button class="icon-button" type="button" data-close="enrich-dialog" aria-label="Close" title="Close"><svg><use href="#i-close"/></svg></button>
+      </header>
+      <div class="editor-modal-body">
+        <p id="enrich-source-title" class="dialog-status"></p>
+        <fieldset class="enrich-scope" id="enrich-scope">
+          <legend class="utility">Process</legend>
+          <label><input type="radio" name="enrich-scope" value="uncertain" checked> Unidentified / uncertain tracks</label>
+          <label><input type="radio" name="enrich-scope" value="missing_only"> Missing metadata only</label>
+          <label><input type="radio" name="enrich-scope" value="reprocess"> Reprocess everything</label>
+        </fieldset>
+        <label class="checkbox-row"><input id="enrich-artwork" type="checkbox" checked> Fetch album artwork</label>
+        <label class="checkbox-row"><input id="enrich-replace" type="checkbox"> Replace existing Telegram metadata when fingerprint verified</label>
+        <p id="enrich-status" class="dialog-status" role="status" aria-live="polite"></p>
+        <div class="form-actions full-row">
+          <button id="start-enrich" class="button primary" type="button">Start</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="lyrics-dialog" class="modal">
       <header class="modal-header">
         <h2>Edit lyrics</h2>

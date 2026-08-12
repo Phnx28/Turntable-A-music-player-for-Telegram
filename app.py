@@ -174,6 +174,12 @@ class SyncBody(BaseModel):
     full: bool = False
 
 
+class EnrichSourceBody(BaseModel):
+    scope: str = "uncertain"
+    fetchArtwork: bool = True
+    replaceExisting: bool = False
+
+
 class MetadataPatchBody(BaseModel):
     set: dict[str, Any] = Field(default_factory=dict)
     clear: list[str] = Field(default_factory=list)
@@ -792,6 +798,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Manual "Fetch covers now": runs even when autoArtwork is off, but still
         # requires a MusicBrainz contact (the worker reports that as a skipped state).
         return telegram(request).start_enrich(manual=True)
+
+    @application.post("/api/sources/{chat_id}/enrich")
+    async def source_enrich(request: Request, chat_id: str, body: EnrichSourceBody) -> dict[str, Any]:
+        # Per-source bulk enrichment (Phase H): a resumable background job over the
+        # same fingerprint-first resolver playback uses. One job per source at a time.
+        if body.scope not in {"uncertain", "missing_only", "reprocess"}:
+            raise HTTPException(422, "Unknown enrichment scope")
+        runner = telegram(request).jobs
+        if active := runner.active("enrich", chat_id):
+            return active.public()
+        job = BackgroundJob(secrets.token_urlsafe(12), "enrich", chat_id=chat_id)
+        enrichment = request.app.state.enrichment
+        if enrichment is None:
+            raise HTTPException(503, "Enrichment is not configured")
+        return runner.start(
+            job,
+            enrichment.bulk_enrich_source(
+                job, chat_id, body.scope,
+                fetch_artwork=body.fetchArtwork,
+                replace_existing=body.replaceExisting,
+            ),
+            error_mapper=lambda error: f"Metadata enrichment failed: {error}",
+        )
 
     @application.get("/api/jobs/{job_id}")
     async def job_status(request: Request, job_id: str) -> dict[str, Any]:

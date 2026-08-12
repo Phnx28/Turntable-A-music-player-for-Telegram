@@ -1958,9 +1958,58 @@ function sourceMenu(chatId, x, y) {
     { label: "Open", action: () => selectSource(chatId) },
     { label: "Sync new tracks", action: () => syncSource(chatId, false) },
     { label: "Full rescan", action: () => syncSource(chatId, true) },
+    { label: "Auto-fix metadata", action: () => openBulkEnrich(chatId) },
     { label: "Remove from library", danger: true, action: () => unselectSources([chatId]) },
   ], x, y);
 }
+
+function openBulkEnrich(chatId) {
+  const source = state.sources.find((item) => item.chatId === chatId);
+  $("enrich-dialog").dataset.chatId = chatId;
+  $("enrich-source-title").textContent = source
+    ? `${source.title} · ${source.trackCount.toLocaleString()} tracks`
+    : "This source";
+  $("enrich-status").textContent = "";
+  $("start-enrich").disabled = false;
+  $("start-enrich").removeAttribute("aria-busy");
+  $("enrich-dialog").showModal();
+  $("start-enrich").focus();
+}
+
+async function startBulkEnrich() {
+  const dialog = $("enrich-dialog");
+  const chatId = dialog.dataset.chatId;
+  const button = $("start-enrich");
+  button.disabled = true; button.setAttribute("aria-busy", "true");
+  $("enrich-status").textContent = "Scanning the source…";
+  try {
+    const job = await api(`/api/sources/${encodeURIComponent(chatId)}/enrich`, {
+      method: "POST",
+      body: JSON.stringify({
+        scope: document.querySelector('input[name="enrich-scope"]:checked')?.value || "uncertain",
+        fetchArtwork: $("enrich-artwork").checked,
+        replaceExisting: $("enrich-replace").checked,
+      }),
+    });
+    watchJob(job, (current) => {
+      if (current.state === "complete" || current.state === "error" || current.state === "cancelled") {
+        dialog.close();
+        loadLibrary(true);
+        if (current.state === "complete") toast(`Metadata fix complete · ${current.found.toLocaleString()} tracks enriched`);
+        else if (current.state === "error") showError(new AppError(current.error || "Metadata enrichment failed", true));
+      } else {
+        $("enrich-status").textContent = `Working… ${current.processed.toLocaleString()} tracks`;
+        if (dialog.hidden) dialog.close();
+      }
+    });
+  } catch (error) {
+    $("enrich-status").textContent = "";
+    button.disabled = false; button.removeAttribute("aria-busy");
+    showError(error);
+  }
+}
+
+$("start-enrich").addEventListener("click", startBulkEnrich);
 
 const DISCOVER_SORT_LABELS = { recent: "Latest", count: "Music files", name: "Name" };
 const DISCOVER_SORT_MENU_LABELS = { recent: "Latest post", count: "Most music files", name: "Name · A–Z" };

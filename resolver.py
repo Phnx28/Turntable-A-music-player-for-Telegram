@@ -343,14 +343,19 @@ def resolve_release_group(
     album_tag: str | None = None,
     year: int | None = None,
     track_number: int | None = None,
+    hint: str | None = None,
 ) -> ReleaseGroup | None:
     """The release group the Telegram context most plausibly belongs to.
 
     Evidence, in order: the album tag matching the release-group title; the
-    release type (an Album when the track is part of one, a Single when not).
-    No release groups, or no plausible one, returns None -- the recording stays
-    resolved without a release group, and artwork falls back to the existing
-    policy rather than to "the first release MusicBrainz returned".
+    release type (an Album when the track is part of one, a Single when not);
+    and the *hint* -- a neighbouring track's resolved release group (Phase H7
+    album clustering). The hint only *supports* identity: the group must still
+    be among the fingerprint-derived candidates, so it can never force a track
+    into an album against its own evidence. No release groups, or no plausible
+    one, returns None -- the recording stays resolved without a release group,
+    and artwork falls back to the existing policy rather than to "the first
+    release MusicBrainz returned".
 
     *year* and *track_number* are accepted for callers that can supply them
     (a future MusicBrainz-backed resolver scores release dates and track
@@ -361,6 +366,7 @@ def resolve_release_group(
     if not candidates:
         return None
     album = normalize_name(album_tag or "")
+    hint_title = normalize_name(hint or "")
 
     def base_rank(group: ReleaseGroup) -> float:
         return _RELEASE_TYPE_RANK.get(
@@ -375,6 +381,10 @@ def resolve_release_group(
                 total += 10.0
             elif album in title or title in album:
                 total += 5.0
+        if hint_title:
+            title = normalize_name(group.title)
+            if hint_title == title or hint_title in title or title in hint_title:
+                total += 3.0
         return total
 
     if album:

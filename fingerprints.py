@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FPCALC_TIMEOUT_SECONDS = 120
+# Chromaprint subprocesses are CPU-heavy: cap concurrent fingerprinting (Phase H5).
+FPCALC_CONCURRENCY = 2
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class FingerprintService:
         self.fpcalc_path = fpcalc_path
         self.timeout = timeout
         self._available: bool | None = None
+        self._process_gate = asyncio.Semaphore(FPCALC_CONCURRENCY)
 
     def available(self) -> bool:
         """Cached availability probe: the command exists and is executable."""
@@ -47,6 +50,10 @@ class FingerprintService:
         """Fingerprint one local audio file. Raises FingerprintError on any failure."""
         if not self.available():
             raise FingerprintError("fpcalc is not installed; fingerprinting unavailable")
+        async with self._process_gate:
+            return await self._fingerprint(path)
+
+    async def _fingerprint(self, path: Path) -> FingerprintResult:
         try:
             process = await asyncio.create_subprocess_exec(
                 self.fpcalc_path,
