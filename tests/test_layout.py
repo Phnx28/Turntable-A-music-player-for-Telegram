@@ -2082,6 +2082,32 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("nowrap", title.evaluate("element => getComputedStyle(element).whiteSpace"))
         self.assertEqual("plaintext", title.evaluate("element => getComputedStyle(element).unicodeBidi"))
 
+    def test_source_picker_uses_plain_language_and_stable_scan_progress_copy(self):
+        page = self.page(1440, 900)
+        self.assertEqual(
+            "Select Telegram chats to use as playlists. Changes save immediately; groups are excluded.",
+            page.locator("#source-dialog > .small-copy").text_content(),
+        )
+        progress = page.locator("#discover-progress")
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest('loading', 12)")
+        self.assertEqual("Loading chats…", progress.text_content())
+
+        page.evaluate("""() => {
+          document.getElementById('source-dialog').showModal();
+          window.__updateDiscoverProgressForTest({ state: 'running', processed: 0 }, 12);
+        }""")
+        self.assertEqual("Scanning 0 of 12", progress.text_content())
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'running', processed: 7 }, 12)")
+        self.assertEqual("Scanning 7 of 12", progress.text_content())
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'complete', processed: 12 }, 12)")
+        self.assertEqual("12 chats scanned", progress.text_content())
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'running', processed: 0 }, 0)")
+        self.assertEqual("", progress.text_content())
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")

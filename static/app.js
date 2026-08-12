@@ -1486,19 +1486,28 @@ async function syncAllSources() {
 }
 
 async function openSources() {
-  $("source-dialog").showModal(); $("discover-list").innerHTML = '<div class="list-skeleton"><span></span><span></span><span></span></div>';
+  $("source-dialog").showModal(); updateDiscoverProgress("loading"); $("discover-list").innerHTML = '<div class="list-skeleton"><span></span><span></span><span></span></div>';
   try {
-    state.discovered = await api("/api/sources/discover"); renderDiscovered(); $("discover-list").classList.add("is-revealing"); setTimeout(() => $("discover-list").classList.remove("is-revealing"), 420);
+    state.discovered = await api("/api/sources/discover");
+    const total = state.discovered.length;
+    updateDiscoverProgress({ state: "running", processed: 0 }, total);
+    renderDiscovered(); $("discover-list").classList.add("is-revealing"); setTimeout(() => $("discover-list").classList.remove("is-revealing"), 420);
     const job = await api("/api/sources/discover/counts", { method: "POST" });
     watchJob(job, (current) => {
-      $("discover-progress").textContent = current.state === "complete" ? "Counts ready" : `Counting ${current.processed}/${state.discovered.length}`;
+      updateDiscoverProgress(current, total);
       for (const item of state.discovered) if (current.result?.[item.chatId] != null) item.musicFileCount = current.result[item.chatId];
       renderDiscovered();
-      $("discover-list").classList.add("is-revealing");
-      setTimeout(() => $("discover-list").classList.remove("is-revealing"), 500);
     }, () => $("source-dialog").open);
   } catch (error) { showError(error, openSources); }
 }
+
+function updateDiscoverProgress(current, total = state.discovered.length) {
+  $("discover-progress").textContent = current === "loading" ? "Loading chats…" : !total ? "" : current?.state === "complete"
+    ? `${total.toLocaleString()} chats scanned`
+    : `Scanning ${Math.min(current?.processed || 0, total).toLocaleString()} of ${total.toLocaleString()}`;
+}
+
+window.__updateDiscoverProgressForTest = updateDiscoverProgress;
 
 function filteredDiscoveredSources() {
   const query = $("discover-search").value.trim().toLocaleLowerCase();
