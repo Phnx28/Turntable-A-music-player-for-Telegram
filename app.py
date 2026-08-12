@@ -16,7 +16,7 @@ from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from telethon.errors import RPCError
@@ -35,6 +35,7 @@ from acoustid import AcoustIDClient
 from enrichment import EnrichmentService
 from external import ExternalServices
 from fingerprints import FingerprintService
+from google_drive import GoogleDriveError, GoogleSyncManager
 from storage import storage_summary
 from sync import SyncEngine
 from telegram_service import TelegramService
@@ -59,6 +60,8 @@ class Settings:
     data_directory: Path
     musicbrainz_contact: str
     acoustid_api_key: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -109,6 +112,8 @@ class Settings:
             data_directory=data_directory,
             musicbrainz_contact=os.environ.get("MUSICBRAINZ_CONTACT", ""),
             acoustid_api_key=os.environ.get("ACOUSTID_API_KEY", ""),
+            google_client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
+            google_client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
         )
 
 
@@ -277,6 +282,36 @@ def _record_login_failure(client: str) -> None:
                 _login_failures.pop(key, None)
 
 
+def _sync_ensure_connected(application: FastAPI) -> None:
+    """Attach the Drive provider and the Telegram account namespace to the engine.
+
+    Self-healing: called at startup and by the housekeeping loop, so a login,
+    logout or Drive connect that happened elsewhere is picked up on the next
+    pass. Without a connected Drive account the engine stays provider-less and
+    local-first operation is untouched (K4).
+    """
+    sync: SyncEngine = application.state.sync
+    manager: GoogleSyncManager = application.state.sync_manager
+    database: Database = application.state.database
+    account = database.get_account()
+    namespace = str(account["telegram_user_id"]) if account else ""
+    if namespace != sync.namespace:
+        sync.set_namespace(namespace)
+    sync.provider = manager.build_provider() if manager.connected() else None
+
+
+def sync_state_str(request: Request, key: str) -> str:
+    return request.app.state.database.sync_state_get(key) or ""
+
+
+def sync_state_int(request: Request, key: str) -> int | None:
+    value = request.app.state.database.sync_state_get(key)
+    try:
+        return int(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _clear_login_failures(client: str) -> None:
     _login_failures.pop(client, None)
 
@@ -328,18 +363,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Provider-agnostic sync (Phase J): no provider is configured until Google
         # Drive connects (Phase K), so the app runs unchanged with no cloud. Local
         # mutations still journal the durable outbox, drained once a provider exists.
+        sync_http = httpx.AsyncClient()
+        application.state.sync_http = sync_http
+        active_host = os.environ.get("TURNTABLE_ACTIVE_HOST", "").strip()
+        redirect_uri = active_host if active_host.startswith(("http://", "https://")) else f"http://{active_host}"
+        application.state.sync_manager = GoogleSyncManager(
+            database,
+            Fernet(settings.encryption_key.encode()),
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            redirect_uri=f"{redirect_uri.rstrip('/')}/api/sync/google/callback",
+            http=sync_http,
+        )
         application.state.sync = SyncEngine(database, provider=None)
+        _sync_ensure_connected(application)
         application.state.startup_error = None
 
         async def _housekeeping() -> None:
             # The FTS dirty set is in-memory only, so a long-running process would lose a crash
             # window of search updates if nothing flushed between library reads. A 15 s timer
-            # keeps the lag small; the same loop sweeps stale .part files hourly.
+            # keeps the lag small; the same loop sweeps stale .part files hourly and drains
+            # the sync outbox (K4: pushes are debounced to ~15 s, pulls to a few minutes).
             next_partial_cleanup = time.monotonic() + 60 * 60
+            next_sync_pull = time.monotonic() + 5 * 60
             while True:
                 try:
                     await asyncio.sleep(15)
                     await asyncio.to_thread(database._flush_search)
+                    _sync_ensure_connected(application)
+                    sync_engine = application.state.sync
+                    if sync_engine.configured():
+                        if database.outbox_count() > 0 or time.monotonic() >= next_sync_pull:
+                            await sync_engine.sync_once()
+                            next_sync_pull = time.monotonic() + 5 * 60
                     if time.monotonic() >= next_partial_cleanup:
                         next_partial_cleanup = time.monotonic() + 60 * 60
                         await asyncio.to_thread(telegram.media.clean_partial_cache)
@@ -803,6 +859,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Manual "Fetch covers now": runs even when autoArtwork is off, but still
         # requires a MusicBrainz contact (the worker reports that as a skipped state).
         return telegram(request).start_enrich(manual=True)
+
+    @application.get("/api/sync/status")
+    async def sync_status(request: Request) -> dict[str, Any]:
+        sync: SyncEngine = request.app.state.sync
+        manager: GoogleSyncManager = request.app.state.sync_manager
+        _sync_ensure_connected(request.app)
+        return {
+            "connected": bool(sync.configured()),
+            "email": manager.email(),
+            "account": sync.namespace,
+            "pending": database(request).outbox_count(),
+            "lastSyncAt": sync_state_int(request, "sync_last_success"),
+            "lastError": sync_state_str(request, "sync_last_error"),
+        }
+
+    @application.post("/api/sync/google/connect")
+    async def sync_google_connect(request: Request) -> dict[str, Any]:
+        manager: GoogleSyncManager = request.app.state.sync_manager
+        if not manager.configured():
+            raise HTTPException(
+                422,
+                "Google OAuth is not configured. Set GOOGLE_CLIENT_ID and "
+                "GOOGLE_CLIENT_SECRET in the environment first.",
+            )
+        return {"authUrl": manager.connect_url()}
+
+    @application.get("/api/sync/google/callback")
+    async def sync_google_callback(request: Request) -> Response:
+        # The browser returns here after the Google consent screen. The exchange is
+        # quick; failures land back on the shell with a toast-worthy error query.
+        code = request.query_params.get("code", "")
+        state = request.query_params.get("state", "")
+        manager: GoogleSyncManager = request.app.state.sync_manager
+        error = ""
+        try:
+            email = await manager.complete_login(code, state)
+            _sync_ensure_connected(request.app)
+            await request.app.state.sync.sync_once()
+            database(request).sync_state_set("sync_last_success", str(int(time.time())))
+            error = f"?sync=connected&email={quote(email)}"
+        except GoogleDriveError as err:
+            error = f"?sync=error&detail={quote(str(err))}"
+        except Exception:
+            LOGGER.exception("Google Drive callback failed")
+            error = "?sync=error"
+        return RedirectResponse(f"/{error}")
+
+    @application.post("/api/sync/run")
+    async def sync_run(request: Request) -> dict[str, Any]:
+        _sync_ensure_connected(request.app)
+        sync: SyncEngine = request.app.state.sync
+        if not sync.configured():
+            raise HTTPException(422, "Google Drive is not connected")
+        report = await sync.sync_once()
+        now = int(time.time())
+        if report.get("error"):
+            database(request).sync_state_set("sync_last_error", str(report["error"]))
+        else:
+            database(request).sync_state_set("sync_last_success", str(now))
+        return report
+
+    @application.post("/api/sync/disconnect")
+    async def sync_disconnect(request: Request) -> dict[str, bool]:
+        manager: GoogleSyncManager = request.app.state.sync_manager
+        await manager.disconnect()
+        request.app.state.sync.provider = None
+        return {"ok": True}
 
     @application.post("/api/sources/{chat_id}/enrich")
     async def source_enrich(request: Request, chat_id: str, body: EnrichSourceBody) -> dict[str, Any]:

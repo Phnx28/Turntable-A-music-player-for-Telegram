@@ -2430,10 +2430,77 @@ function formatBytesShort(bytes) {
   return `${value} B`;
 }
 
+async function renderSyncStatus() {
+  const line = $("sync-status-line");
+  const detail = $("sync-detail");
+  const connect = $("sync-connect");
+  const now = $("sync-now");
+  const disconnect = $("sync-disconnect");
+  try {
+    const status = await api("/api/sync/status", { quiet: true });
+    if (status.connected) {
+      line.textContent = `Connected as ${status.email || "your Google account"}`;
+      detail.hidden = false;
+      detail.textContent = [
+        status.lastSyncAt ? `Last sync ${formatSyncedAt(status.lastSyncAt, Math.floor(Date.now() / 1000))}` : "No sync yet",
+        status.pending ? `${status.pending} pending changes` : "",
+        status.lastError ? `Last error: ${status.lastError}` : "",
+      ].filter(Boolean).join(" · ");
+      connect.hidden = true;
+      now.hidden = false;
+      disconnect.hidden = false;
+    } else {
+      line.textContent = "Not connected. Likes, source selection and metadata edits sync between your installs.";
+      detail.hidden = true;
+      connect.hidden = false;
+      now.hidden = true;
+      disconnect.hidden = true;
+    }
+  } catch { /* quiet: the settings pane still works without sync */ }
+}
+
+$("sync-connect").addEventListener("click", async () => {
+  const button = $("sync-connect"); button.disabled = true; button.setAttribute("aria-busy", "true");
+  try {
+    const { authUrl } = await api("/api/sync/google/connect", { method: "POST" });
+    window.open(authUrl, "_blank", "popup,width=560,height=680");
+    // The consent page round-trips to the app's callback and back to the shell;
+    // poll until the connection lands.
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const status = await api("/api/sync/status", { quiet: true });
+      if (status.connected) { toast("Google Drive connected"); await renderSyncStatus(); return; }
+    }
+    toast("Still waiting for Google… check the popup window.");
+  } catch (error) { showError(error); }
+  finally { button.disabled = false; button.removeAttribute("aria-busy"); }
+});
+
+$("sync-now").addEventListener("click", async () => {
+  const button = $("sync-now"); button.disabled = true; button.setAttribute("aria-busy", "true");
+  try {
+    const report = await api("/api/sync/run", { method: "POST" });
+    if (report.error) showError(new AppError(report.error, true));
+    else toast(report.pushed ? `Synced · ${report.pushed} changes pushed` : "Up to date");
+    await renderSyncStatus();
+  } catch (error) { showError(error); }
+  finally { button.disabled = false; button.removeAttribute("aria-busy"); }
+});
+
+$("sync-disconnect").addEventListener("click", async () => {
+  try {
+    await api("/api/sync/disconnect", { method: "POST" });
+    toast("Google Drive disconnected");
+    await renderSyncStatus();
+  } catch (error) { showError(error); }
+});
+
 async function openSettings() {
   $("settings-dialog").showModal();
   try {
     state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality; $("auto-artwork").checked = state.settings.autoArtwork !== false; updateAutoArtworkHelp();
+    renderSyncStatus();
     const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} songs cached · ${formatBytesShort(cache.bytes)}`;
     const [network, auth, status] = await Promise.all([api("/api/network"), api("/api/auth/status"), api("/api/status")]);
     state.network = network;

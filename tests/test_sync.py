@@ -59,7 +59,13 @@ def _database():
 
 
 def _engine(database, provider, device_id="device-a"):
-    return SyncEngine(database, provider, device_id=device_id)
+    engine = SyncEngine(database, provider, device_id=device_id)
+    engine.set_namespace("account-1")
+    return engine
+
+
+def _name(entity_type, entity_id):
+    return record_name(entity_type, entity_id, "account-1")
 
 
 class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
@@ -76,7 +82,7 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(1, database.outbox_count())
             report = await self._sync(engine)
             self.assertEqual(0, database.outbox_count(), "the outbox drains after a push")
-            remote = json.loads(provider.objects[record_name("like", "1:2")])
+            remote = json.loads(provider.objects[_name("like", "1:2")])
             self.assertEqual("1:2", remote["entityId"])
             self.assertEqual("upsert", remote["operation"])
             self.assertEqual(1000, remote["payload"]["likedAt"])
@@ -90,8 +96,8 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
         engine = _engine(database, provider)
         try:
             # Device B liked the track at t=900.
-            provider.objects[record_name("like", "1:2")] = json.dumps({
-                "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
+            provider.objects[_name("like", "1:2")] = json.dumps({
+                "namespace": "account-1", "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
                 "operation": "upsert", "payload": {"liked": True, "likedAt": 900},
                 "updatedAt": 900, "deviceId": "device-b",
             }).encode()
@@ -113,8 +119,8 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
             with patch("core.now_ts", return_value=500):
                 database.set_liked("1:2", True)
             # Remote unlike at t=700 (newer than the local like at 500): wins.
-            provider.objects[record_name("like", "1:2")] = json.dumps({
-                "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
+            provider.objects[_name("like", "1:2")] = json.dumps({
+                "namespace": "account-1", "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
                 "operation": "delete", "payload": {"liked": False, "likedAt": None},
                 "updatedAt": 700, "deviceId": "device-b",
             }).encode()
@@ -124,8 +130,8 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
             # Now re-like locally at t=800; an OLD remote unlike at 700 must lose.
             with patch("core.now_ts", return_value=800):
                 database.set_liked("1:2", True)
-            provider.objects[record_name("like", "1:2")] = json.dumps({
-                "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
+            provider.objects[_name("like", "1:2")] = json.dumps({
+                "namespace": "account-1", "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
                 "operation": "delete", "payload": {"liked": False, "likedAt": None},
                 "updatedAt": 700, "deviceId": "device-b",
             }).encode()
@@ -147,7 +153,7 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
             with patch("core.now_ts", return_value=3000):
                 database.set_liked("1:2", True)
             await self._sync(engine)
-            remote = json.loads(provider.objects[record_name("like", "1:2")])
+            remote = json.loads(provider.objects[_name("like", "1:2")])
             self.assertEqual(3000, remote["payload"]["likedAt"],
                              "the final like's own timestamp is what syncs")
         finally:
@@ -202,7 +208,7 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
                 connection.execute("UPDATE sync_outbox SET next_attempt_at = NULL")
             await self._sync(engine)
             self.assertEqual(0, database.outbox_count())
-            self.assertIn(record_name("like", "1:2"), provider.objects)
+            self.assertIn(_name("like", "1:2"), provider.objects)
         finally:
             database.close()
 
@@ -227,11 +233,11 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
         engine = _engine(database, provider)
         try:
             remote = json.dumps({
-                "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
+                "namespace": "account-1", "schemaVersion": 1, "entityType": "like", "entityId": "1:2",
                 "operation": "upsert", "payload": {"liked": True, "likedAt": 900},
                 "updatedAt": 900, "deviceId": "device-b",
             }).encode()
-            provider.objects[record_name("like", "1:2")] = remote
+            provider.objects[_name("like", "1:2")] = remote
             provider.revision = 1
             await self._sync(engine)
             first_liked_at = _liked_at(database)
@@ -255,8 +261,8 @@ class SyncEngineTests(unittest.IsolatedAsyncioTestCase):
             await self._sync(engine)
             self.assertEqual(0, database.outbox_count())
             # A remote metadata edit merges in without echoing.
-            provider.objects[record_name("metadata", "1:2")] = json.dumps({
-                "schemaVersion": 1, "entityType": "metadata", "entityId": "1:2",
+            provider.objects[_name("metadata", "1:2")] = json.dumps({
+                "namespace": "account-1", "schemaVersion": 1, "entityType": "metadata", "entityId": "1:2",
                 "operation": "upsert", "payload": {"title": "Remote edit"},
                 "updatedAt": 5000, "deviceId": "device-b",
             }).encode()

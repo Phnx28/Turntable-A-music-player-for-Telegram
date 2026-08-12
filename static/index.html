@@ -580,6 +580,18 @@
           <p id="settings-account-name" class="account-name">Not connected</p>
           <p id="settings-account-meta" class="small-copy"></p>
         </div>
+        <fieldset class="setting-group">
+          <legend class="utility">Sync</legend>
+          <div class="setting-block">
+            <label for="sync-status-line"><strong>Google Drive</strong><span id="sync-status-line">Not connected. Likes, source selection and metadata edits sync between your installs.</span></label>
+            <p id="sync-detail" class="small-copy" hidden></p>
+          </div>
+          <div class="form-actions">
+            <button id="sync-connect" class="button" type="button">Connect Google Drive</button>
+            <button id="sync-now" class="button" type="button" hidden>Sync now</button>
+            <button id="sync-disconnect" class="button danger" type="button" hidden>Disconnect</button>
+          </div>
+        </fieldset>
         <div class="danger-zone">
           <p class="field-label danger-title">Danger zone</p>
           <div class="danger-row">

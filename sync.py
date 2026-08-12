@@ -47,8 +47,10 @@ class SyncProvider(Protocol):
     async def list_changes(self, cursor: str | None) -> ChangeBatch: ...
 
 
-def record_name(entity_type: str, entity_id: str) -> str:
-    return f"records/{entity_type}/{entity_id}"
+def record_name(entity_type: str, entity_id: str, namespace: str = "") -> str:
+    """The provider object name for one entity; namespaced per Telegram account."""
+    prefix = f"{namespace}/" if namespace else ""
+    return f"{prefix}records/{entity_type}/{entity_id}"
 
 
 class SyncEngine:
@@ -61,9 +63,18 @@ class SyncEngine:
         if not self.device_id:
             self.device_id = str(uuid.uuid4())
             database.sync_state_set("device_id", self.device_id)
+        # Account namespace (K3): all synced state is per-Telegram-account. Records
+        # are named and validated against it, so another account's source
+        # selections or likes are never applied to this library.
+        self.namespace = database.sync_state_get("sync_namespace") or ""
+
+    def set_namespace(self, namespace: str) -> None:
+        self.namespace = namespace or ""
+        if self.namespace:
+            self.database.sync_state_set("sync_namespace", self.namespace)
 
     def configured(self) -> bool:
-        return self.provider is not None
+        return self.provider is not None and bool(self.namespace)
 
     async def sync_once(self) -> dict[str, Any]:
         """Pull remote changes, merge, then push pending local changes.
@@ -108,6 +119,9 @@ class SyncEngine:
           precedence ladder).
         - recording: latest canonical identity wins (upsert by MBID).
         """
+        if record.get("namespace") != self.namespace:
+            # Another Telegram account's state must never leak into this library.
+            return
         entity_type = record.get("entityType") or ""
         entity_id = record.get("entityId") or ""
         operation = record.get("operation") or "upsert"
@@ -213,8 +227,11 @@ class SyncEngine:
                     "payload": json.loads(entry["payload_json"]),
                     "updatedAt": entry["created_at"],
                     "deviceId": self.device_id,
+                    "namespace": self.namespace,
                 }
-                name = record_name(entry["entity_type"], entry["entity_id"])
+                name = record_name(
+                    entry["entity_type"], entry["entity_id"], self.namespace
+                )
                 try:
                     result = await self.provider.write_object(
                         name, json.dumps(payload, ensure_ascii=False).encode()
