@@ -774,6 +774,35 @@ class Database:
                 """
             )
             self.connection.commit()
+        if version < 16:
+            # Provider-agnostic sync (Phase J): local mutations commit instantly and
+            # write a durable outbox entry in the same transaction, so the UI never
+            # waits on the cloud; the sync engine drains the outbox in the background.
+            # sync_state holds the device id, the pull cursor and push bookkeeping.
+            self.connection.executescript(
+                """
+                CREATE TABLE sync_outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at INTEGER
+                );
+
+                CREATE INDEX sync_outbox_due ON sync_outbox(next_attempt_at);
+
+                CREATE TABLE sync_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
+                PRAGMA user_version = 16;
+                """
+            )
+            self.connection.commit()
 
     def ping(self) -> bool:
         """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
@@ -989,12 +1018,20 @@ class Database:
                 f"UPDATE sources SET selected = ? WHERE chat_id IN ({placeholders})",
                 (int(selected), *ids),
             )
+            for chat_id in ids:
+                self.outbox_record(
+                    connection,
+                    "source",
+                    chat_id,
+                    "upsert",
+                    {"selected": bool(selected)},
+                )
         try:
             self._invalidate_pos_cache()
         except AttributeError:
             pass
 
-    def set_source_order(self, chat_ids: Iterable[str]) -> None:
+    def set_source_order(self, chat_ids: Iterable[str], journal: bool = True) -> None:
         ids = list(dict.fromkeys(str(value) for value in chat_ids))
         selected = {item["chatId"] for item in self.list_sources()}
         if set(ids) != selected:
@@ -1004,6 +1041,15 @@ class Database:
                 "UPDATE sources SET sort_order = ? WHERE chat_id = ?",
                 [(index, chat_id) for index, chat_id in enumerate(ids)],
             )
+            # A complete ordering snapshot, so a remote device replaces its whole order.
+            if journal:
+                self.outbox_record(
+                    connection,
+                    "source_order",
+                    "all",
+                    "upsert",
+                    {"chatIds": ids},
+                )
 
     def remove_source(self, chat_id: str) -> None:
         self.set_source_selected(chat_id, False)
@@ -1218,6 +1264,7 @@ class Database:
             "sentAt": int(value["sent_at"] or 0),
             "artworkVersion": hashlib.sha256(fingerprint.encode()).hexdigest()[:12],
             "liked": value.get("liked_at") is not None,
+            "likedAt": value.get("liked_at"),
             "source": {
                 "chatId": chat_id,
                 "title": value["source_title"],
@@ -1639,6 +1686,7 @@ class Database:
             "available": bool(value["available"]),
             "documentId": value.get("document_id", ""),
             "liked": value.get("liked_at") is not None,
+            "likedAt": value.get("liked_at"),
         }
 
     def set_liked(self, key: str, liked: bool) -> dict[str, Any]:
@@ -1651,6 +1699,13 @@ class Database:
             )
             if not cursor.rowcount:
                 raise KeyError("Track not found")
+            self.outbox_record(
+                connection,
+                "like",
+                key,
+                "upsert" if liked else "delete",
+                {"liked": bool(liked), "likedAt": liked_at},
+            )
         try:
             self._invalidate_pos_cache()
         except AttributeError:
@@ -1667,7 +1722,8 @@ class Database:
             ).fetchone()[0])
 
     def save_metadata_patch(
-        self, chat_id: str, message_id: str, values: Mapping[str, Any], clear: Iterable[str]
+        self, chat_id: str, message_id: str, values: Mapping[str, Any], clear: Iterable[str],
+        journal: bool = True,
     ) -> dict[str, Any]:
         track = self.get_track(chat_id, message_id)
         if not track:
@@ -1697,6 +1753,16 @@ class Database:
                 """,
                 (track_key(chat_id, message_id), now_ts()),
             )
+            # Manual metadata edits are user state that syncs across devices (Phase J).
+            # Sync merges pass journal=False so a pulled change is never echoed back.
+            if journal:
+                self.outbox_record(
+                    connection,
+                    "metadata",
+                    track_key(chat_id, message_id),
+                    "upsert" if updated else "delete",
+                    updated,
+                )
             try:
                 self._invalidate_pos_cache()
             except AttributeError:
@@ -1781,6 +1847,7 @@ class Database:
         confidence: float | None = None,
         method: str = "",
         resolver_version: int = 0,
+        journal: bool = True,
     ) -> int:
         """Find or create the recording identified by a MusicBrainz recording id.
 
@@ -1828,7 +1895,23 @@ class Database:
                     now,
                 ),
             )
-            return int(cursor.lastrowid)
+            recording_id = int(cursor.lastrowid)
+            # Recording identities are user knowledge that syncs (Phase J/L1); sync
+            # merges pass journal=False so a pulled identity is never echoed back.
+            if journal:
+                self.outbox_record(
+                    connection,
+                    "recording",
+                    musicbrainz_recording_id or f"acoustid:{acoustid}" or str(recording_id),
+                    "upsert",
+                    {
+                        "musicbrainzRecordingId": musicbrainz_recording_id,
+                        "canonicalTitle": canonical.get("title"),
+                        "canonicalArtist": canonical.get("artist"),
+                        "releaseGroupMbid": release_group_mbid,
+                    },
+                )
+            return recording_id
 
     def link_track_recording(self, track_key: str, recording_id: int) -> None:
         chat_id, message_id = split_track_key(track_key)
@@ -1977,6 +2060,87 @@ class Database:
                     resolver_version,
                     release_groups_json,
                 ),
+            )
+
+    # ------------------------------------------------------------------
+    # Sync outbox and state (Phase J): local mutations commit instantly and
+    # journal a durable outbox entry in the same transaction; the sync
+    # engine drains the outbox in the background. The app never waits on
+    # the cloud, and the outbox never holds secrets (J1/26.1).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def outbox_record(
+        connection: sqlite3.Connection,
+        entity_type: str,
+        entity_id: str,
+        operation: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Journal one change inside the caller's transaction (call with a write conn)."""
+        connection.execute(
+            """
+            INSERT INTO sync_outbox (entity_type, entity_id, operation, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (entity_type, entity_id, operation, json.dumps(payload, ensure_ascii=False), now_ts()),
+        )
+
+    def outbox_pending(self, limit: int = 50, now: int | None = None) -> list[dict[str, Any]]:
+        """Due outbox entries, oldest first."""
+        with self.lock:
+            rows = self.connection.execute(
+                """
+                SELECT * FROM sync_outbox
+                WHERE next_attempt_at IS NULL OR next_attempt_at <= ?
+                ORDER BY id ASC LIMIT ?
+                """,
+                (now if now is not None else now_ts(), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def outbox_mark_attempted(self, ids: Iterable[int], next_attempt_at: int) -> None:
+        values = [int(value) for value in ids]
+        if not values:
+            return
+        placeholders = ",".join("?" for _ in values)
+        with self.transaction() as connection:
+            connection.execute(
+                f"""
+                UPDATE sync_outbox
+                SET attempt_count = attempt_count + 1, next_attempt_at = ?
+                WHERE id IN ({placeholders})
+                """,
+                (next_attempt_at, *values),
+            )
+
+    def outbox_delete(self, ids: Iterable[int]) -> None:
+        values = [int(value) for value in ids]
+        if not values:
+            return
+        placeholders = ",".join("?" for _ in values)
+        with self.transaction() as connection:
+            connection.execute(f"DELETE FROM sync_outbox WHERE id IN ({placeholders})", values)
+
+    def outbox_count(self) -> int:
+        with self.lock:
+            return int(self.connection.execute("SELECT COUNT(*) FROM sync_outbox").fetchone()[0])
+
+    def sync_state_get(self, key: str) -> str | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT value FROM sync_state WHERE key = ?", (key,)
+            ).fetchone()
+        return str(row["value"]) if row else None
+
+    def sync_state_set(self, key: str, value: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO sync_state (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
             )
 
     def reset_stale_enrichment_states(self, age_seconds: int = 30 * 60) -> int:

@@ -36,6 +36,7 @@ from enrichment import EnrichmentService
 from external import ExternalServices
 from fingerprints import FingerprintService
 from storage import storage_summary
+from sync import SyncEngine
 from telegram_service import TelegramService
 
 
@@ -324,6 +325,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             cover_fetcher=external.fetch_release_group_cover,
         )
+        # Provider-agnostic sync (Phase J): no provider is configured until Google
+        # Drive connects (Phase K), so the app runs unchanged with no cloud. Local
+        # mutations still journal the durable outbox, drained once a provider exists.
+        application.state.sync = SyncEngine(database, provider=None)
         application.state.startup_error = None
 
         async def _housekeeping() -> None:
