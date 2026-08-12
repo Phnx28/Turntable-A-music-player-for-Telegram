@@ -1909,6 +1909,39 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_selector("#context-menu", state="hidden")
         self.assertTrue(page.is_hidden("#context-menu"))
 
+    def test_source_picker_filters_search_and_type_without_mutating_discovered_sources(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        items = [
+            {"chatId": "1", "title": "Dance in Doubt and Fear", "username": "dancefear", "kind": "channel", "selected": True, "trackCount": 7789},
+            {"chatId": "2", "title": "Mahdie 🎀", "username": None, "kind": "private", "selected": True, "trackCount": 337},
+            {"chatId": "3", "title": "VahidOnline", "username": "vahidonline", "kind": "channel", "selected": False, "trackCount": 0},
+        ]
+        page.evaluate("items => window.__renderDiscoveredForTest(items)", items)
+
+        def visible_titles():
+            return page.locator("#discover-list .discover-row strong").all_text_contents()
+
+        page.fill("#discover-search", "Vahid")
+        self.assertEqual(["VahidOnline"], visible_titles())
+
+        page.fill("#discover-search", "dancefear")
+        self.assertEqual(["Dance in Doubt and Fear"], visible_titles())
+
+        page.fill("#discover-search", "")
+        page.select_option("#discover-kind-filter", "private")
+        self.assertEqual(["Mahdie 🎀"], visible_titles())
+
+        page.fill("#discover-search", "missing")
+        self.assertEqual("No sources match these filters.", page.text_content("#discover-list .small-copy"))
+
+        page.fill("#discover-search", "")
+        page.select_option("#discover-kind-filter", "")
+        self.assertEqual(
+            ["Dance in Doubt and Fear", "Mahdie 🎀", "VahidOnline"],
+            visible_titles(),
+        )
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")

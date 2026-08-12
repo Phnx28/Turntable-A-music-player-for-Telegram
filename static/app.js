@@ -1500,13 +1500,32 @@ async function openSources() {
   } catch (error) { showError(error, openSources); }
 }
 
+function filteredDiscoveredSources() {
+  const query = $("discover-search").value.trim().toLocaleLowerCase();
+  const kind = $("discover-kind-filter").value;
+  return state.discovered.filter((item) => {
+    if (kind && item.kind !== kind) return false;
+    if (!query) return true;
+    const haystack = [item.title, item.username]
+      .filter(Boolean).join(" ").toLocaleLowerCase();
+    return haystack.includes(query);
+  });
+}
+
 function renderDiscovered() {
   const order = ["selected", "channel", "bot", "private", "saved"];
   const labels = { selected: "Selected", channel: "Channels", bot: "Bots", private: "Private chats", saved: "Saved messages" };
   const groups = new Map(order.map((key) => [key, []]));
   const mode = $("discover-sort").value;
   const compare = (a, b) => mode === "count" ? (b.musicFileCount ?? b.trackCount ?? -1) - (a.musicFileCount ?? a.trackCount ?? -1) : mode === "name" ? a.title.localeCompare(b.title) : (b.lastPostAt || 0) - (a.lastPostAt || 0);
-  for (const item of state.discovered) groups.get(item.selected ? "selected" : item.kind)?.push(item);
+  const visibleItems = filteredDiscoveredSources();
+  for (const item of visibleItems) groups.get(item.selected ? "selected" : item.kind)?.push(item);
+  const filtersActive = Boolean(
+    $("discover-search").value.trim() || $("discover-kind-filter").value,
+  );
+  const emptyCopy = filtersActive
+    ? "No sources match these filters."
+    : "No supported chats found.";
   $("discover-list").innerHTML = order.map((group) => {
     const items = groups.get(group).sort(compare); if (!items.length) return "";
     return `<section class="discover-group"><h3>${labels[group]}</h3>${items.map((item) => {
@@ -1514,8 +1533,13 @@ function renderDiscovered() {
       // ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
       return `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`;
     }).join("")}</section>`;
-  }).join("") || '<p class="small-copy">No supported chats found.</p>';
+  }).join("") || `<p id="discover-empty" class="small-copy">${escapeHtml(emptyCopy)}</p>`;
 }
+
+window.__renderDiscoveredForTest = (items) => {
+  state.discovered = items;
+  renderDiscovered();
+};
 
 async function toggleSource(input) {
   const item = state.discovered.find((value) => value.chatId === input.dataset.chat); if (!item) return;
@@ -2668,7 +2692,7 @@ $("sync-source").addEventListener("click", () => state.source ? syncSource(state
 $("keep-source").addEventListener("click", () => keepTemporarySource().catch(showError));
 $("add-source").addEventListener("click", openSources); document.querySelector('[data-action="add-source"]').addEventListener("click", openSources);
 $("sync-all-sources").addEventListener("click", () => syncAllSources().catch(showError));
-$("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", () => { syncDiscoverSortTrigger(); renderDiscovered(); }); syncDiscoverSortTrigger();
+$("discover-list").addEventListener("change", (event) => event.target.matches("[data-chat]") && toggleSource(event.target)); $("discover-sort").addEventListener("change", () => { syncDiscoverSortTrigger(); renderDiscovered(); }); $("discover-search").addEventListener("input", renderDiscovered); $("discover-kind-filter").addEventListener("change", renderDiscovered); syncDiscoverSortTrigger();
 $("discover-sort-trigger").addEventListener("click", openDiscoverSortMenu);
 $("sidebar-sort").value = localStorage.getItem("tm-source-sort") || "custom"; $("sidebar-sort").addEventListener("change", () => { localStorage.setItem("tm-source-sort", $("sidebar-sort").value); renderSources(); }); syncSidebarSortTrigger();
 $("sidebar-sort-trigger").addEventListener("click", openSidebarSortMenu);
