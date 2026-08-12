@@ -2903,7 +2903,7 @@ $("context-menu").addEventListener("keydown", (event) => {
   if (event.key === "Home") { event.preventDefault(); items[0].focus(); return; }
   if (event.key === "End") { event.preventDefault(); items[items.length - 1].focus(); return; }
 });
-$("context-menu").addEventListener("click", (event) => { const button = event.target.closest("[data-menu-index]"); if (button) { const action = $("context-menu")._actions[Number(button.dataset.menuIndex)]?.action; closeMenu(); action?.(); } }); document.addEventListener("pointerdown", (event) => { if (!event.target.closest("#context-menu") && !$("context-menu").hidden) closeMenu(); if (!event.target.closest(".global-search-wrap") && !$("global-results").hidden) closeGlobalSearch(); }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); closeGlobalSearch(); } });
+$("context-menu").addEventListener("click", (event) => { const button = event.target.closest("[data-menu-index]"); if (button) { const action = $("context-menu")._actions[Number(button.dataset.menuIndex)]?.action; closeMenu(); action?.(); } }); document.addEventListener("pointerdown", (event) => { if (!event.target.closest("#context-menu") && !$("context-menu").hidden) closeMenu(); if (!event.target.closest(".global-search-wrap") && !$("global-results").hidden) closeGlobalSearch(); }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { if (!$("context-menu").hidden) event.preventDefault(); closeMenu(); closeGlobalSearch(); } });
 document.addEventListener("keydown", (event) => {
   if (event.target.matches("input, textarea, [contenteditable]")) return;
   if (event.target.closest("button, a, [role='button'], select")) return;

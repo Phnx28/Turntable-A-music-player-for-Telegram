@@ -2108,6 +2108,73 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'running', processed: 0 }, 0)")
         self.assertEqual("", progress.text_content())
 
+    def test_source_picker_desktop_and_mobile_controls_fit_the_dialog(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => document.getElementById('source-dialog').showModal()")
+                shape = page.evaluate("""() => {
+                  const dialog = document.getElementById('source-dialog');
+                  const tools = dialog.querySelector('.discover-tools');
+                  const search = document.getElementById('discover-search').closest('label');
+                  const kind = document.getElementById('discover-kind-filter');
+                  const sort = document.getElementById('discover-sort-trigger');
+                  const progress = document.getElementById('discover-progress');
+                  const close = dialog.querySelector('[data-close="source-dialog"]');
+                  const box = (element) => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+                  return { dialog: box(dialog), tools: box(tools), search: box(search), kind: box(kind), sort: box(sort), progress: box(progress), close: box(close), dialogOverflow: dialog.scrollWidth > dialog.clientWidth };
+                }""")
+                for name in ("tools", "search", "kind", "sort", "progress"):
+                    self.assertGreaterEqual(shape[name]["left"], shape["dialog"]["left"] - 1, shape)
+                    self.assertLessEqual(shape[name]["right"], shape["dialog"]["right"] + 1, shape)
+                self.assertLessEqual(shape["close"]["right"], width + 1, shape)
+                self.assertLessEqual(shape["close"]["bottom"], height + 1, shape)
+                self.assertFalse(shape["dialogOverflow"], shape)
+                if width > 620:
+                    self.assertGreater(shape["search"]["width"], shape["kind"]["width"] * 1.5, shape)
+                else:
+                    self.assertAlmostEqual(shape["search"]["left"], shape["tools"]["left"], delta=1, msg=str(shape))
+                    self.assertAlmostEqual(shape["search"]["right"], shape["tools"]["right"], delta=1, msg=str(shape))
+                    self.assertGreater(shape["kind"]["top"], shape["search"]["bottom"], shape)
+                    self.assertAlmostEqual(shape["kind"]["top"], shape["sort"]["top"], delta=1, msg=str(shape))
+                    self.assertGreater(shape["progress"]["top"], shape["kind"]["bottom"], shape)
+
+    def test_source_picker_type_filter_keeps_only_channels_and_updates_count(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'channel-1', title: 'Channel One', username: null, kind: 'channel', selected: false, trackCount: 0 },
+          { chatId: 'channel-2', title: 'Channel Two', username: null, kind: 'channel', selected: false, trackCount: 0 },
+          { chatId: 'private-1', title: 'Private One', username: null, kind: 'private', selected: false, trackCount: 0 },
+        ])""")
+        page.select_option("#discover-kind-filter", "channel")
+        rows = page.locator("#discover-list .discover-row")
+        self.assertEqual(2, rows.count())
+        self.assertTrue(all("Channel" in text for text in rows.locator("small").all_text_contents()))
+        self.assertEqual("2", page.locator("#discover-list .discover-group-count").text_content())
+
+    def test_source_picker_keyboard_reaches_controls_menu_and_checkbox(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'channel-1', title: 'Keyboard Channel', username: null, kind: 'channel', selected: false, trackCount: 0 },
+        ])""")
+
+        page.locator("#discover-search").focus()
+        page.keyboard.press("Tab")
+        self.assertEqual("discover-kind-filter", page.evaluate("() => document.activeElement.id"))
+        page.keyboard.press("Tab")
+        self.assertEqual("discover-sort-trigger", page.evaluate("() => document.activeElement.id"))
+        page.keyboard.press("Enter")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.keyboard.press("Escape")
+        page.wait_for_function("() => document.getElementById('context-menu').hidden && document.activeElement.id === 'discover-sort-trigger'")
+        page.keyboard.press("Tab")
+        self.assertEqual("checkbox", page.evaluate("() => document.activeElement.type"))
+        page.keyboard.press("Space")
+        page.wait_for_function("() => document.querySelector('#discover-list input[type=checkbox]')?.checked")
+        self.assertTrue(page.locator("#discover-list input[type=checkbox]").is_checked())
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
