@@ -682,6 +682,81 @@ class Database:
                 """
             )
             self.connection.commit()
+        if version < 12:
+            # Recording identity (Phase E1): a Telegram message is *where* a playable copy
+            # lives; a recording is *what* it is. Fingerprint-first enrichment resolves
+            # tracks to recordings, and likes/metadata will follow the recording, so the
+            # identity is stored durably, separate from the location.
+            self.connection.executescript(
+                """
+                CREATE TABLE recordings (
+                    id INTEGER PRIMARY KEY,
+                    musicbrainz_recording_id TEXT UNIQUE,
+                    acoustid TEXT,
+                    isrc TEXT,
+                    canonical_title TEXT,
+                    canonical_artist TEXT,
+                    canonical_album TEXT,
+                    canonical_album_artist TEXT,
+                    canonical_year INTEGER,
+                    canonical_track_number INTEGER,
+                    canonical_disc_number INTEGER,
+                    release_group_mbid TEXT,
+                    release_mbid TEXT,
+                    identity_confidence REAL,
+                    identity_method TEXT,
+                    resolver_version INTEGER,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                ALTER TABLE tracks ADD COLUMN recording_id INTEGER REFERENCES recordings(id);
+
+                PRAGMA user_version = 12;
+                """
+            )
+            self.connection.commit()
+        if version < 13:
+            # Per-track automatic-enrichment state (Phase E2): durable status so bulk
+            # jobs are resumable and a crash mid-fingerprint never leaves a track stuck
+            # "processing" forever (see reset_stale_enrichment_states).
+            self.connection.executescript(
+                """
+                CREATE TABLE track_enrichment (
+                    track_key TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    last_attempt_at INTEGER,
+                    next_retry_at INTEGER,
+                    failure_code TEXT,
+                    fingerprint_version INTEGER,
+                    resolver_version INTEGER
+                );
+
+                PRAGMA user_version = 13;
+                """
+            )
+            self.connection.commit()
+        if version < 14:
+            # Per-field metadata provenance and locks (Phase E3): user corrections must
+            # outrank automatic enrichment forever, so automatic sources may never
+            # overwrite a locked field.
+            self.connection.executescript(
+                """
+                CREATE TABLE metadata_fields (
+                    recording_id INTEGER NOT NULL,
+                    field_name TEXT NOT NULL,
+                    value_json TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    confidence REAL,
+                    locked INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (recording_id, field_name)
+                );
+
+                PRAGMA user_version = 14;
+                """
+            )
+            self.connection.commit()
 
     def ping(self) -> bool:
         """Cheap liveness probe so /healthz fails when the DB is locked or gone."""
@@ -1608,6 +1683,275 @@ class Database:
                 (limit,),
             ).fetchall()
         return [self._track_row(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Recording identity (Phase E1): a Telegram message is where a playable
+    # copy lives; a recording is what it is. One recording may map to many
+    # Telegram tracks; a track can stay unresolved (recording_id IS NULL).
+    # ------------------------------------------------------------------
+
+    def get_or_create_recording(
+        self,
+        *,
+        musicbrainz_recording_id: str = "",
+        acoustid: str = "",
+        isrc: str = "",
+        canonical: Mapping[str, Any] | None = None,
+        release_group_mbid: str = "",
+        release_mbid: str = "",
+        confidence: float | None = None,
+        method: str = "",
+        resolver_version: int = 0,
+    ) -> int:
+        """Find or create the recording identified by a MusicBrainz recording id.
+
+        Called by the fingerprint resolver with strong evidence; the row is the durable
+        home for canonical metadata, provenance fields and, later, synced likes.
+        """
+        canonical = canonical or {}
+        with self.transaction() as connection:
+            if musicbrainz_recording_id:
+                row = connection.execute(
+                    "SELECT id FROM recordings WHERE musicbrainz_recording_id = ?",
+                    (musicbrainz_recording_id,),
+                ).fetchone()
+                if row:
+                    return int(row["id"])
+            now = now_ts()
+            cursor = connection.execute(
+                """
+                INSERT INTO recordings (
+                    musicbrainz_recording_id, acoustid, isrc,
+                    canonical_title, canonical_artist, canonical_album,
+                    canonical_album_artist, canonical_year, canonical_track_number,
+                    canonical_disc_number, release_group_mbid, release_mbid,
+                    identity_confidence, identity_method, resolver_version,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    musicbrainz_recording_id or None,
+                    acoustid or None,
+                    isrc or None,
+                    canonical.get("title") or None,
+                    canonical.get("artist") or None,
+                    canonical.get("album") or None,
+                    canonical.get("albumArtist") or None,
+                    int(canonical["year"]) if canonical.get("year") else None,
+                    int(canonical["trackNumber"]) if canonical.get("trackNumber") else None,
+                    int(canonical["discNumber"]) if canonical.get("discNumber") else None,
+                    release_group_mbid or None,
+                    release_mbid or None,
+                    confidence,
+                    method or None,
+                    resolver_version or None,
+                    now,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def link_track_recording(self, track_key: str, recording_id: int) -> None:
+        chat_id, message_id = split_track_key(track_key)
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE tracks SET recording_id = ? WHERE chat_id = ? AND message_id = ?",
+                (recording_id, chat_id, message_id),
+            )
+
+    def get_track_recording(self, track_key: str) -> dict[str, Any] | None:
+        chat_id, message_id = split_track_key(track_key)
+        with self.lock:
+            row = self.connection.execute(
+                """
+                SELECT r.* FROM recordings r
+                JOIN tracks t ON t.recording_id = r.id
+                WHERE t.chat_id = ? AND t.message_id = ?
+                """,
+                (chat_id, message_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def find_recording_by_acoustid(self, acoustid: str) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM recordings WHERE acoustid = ?", (acoustid,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Enrichment state (Phase E2): durable per-track status so bulk jobs
+    # resume and a crash cannot leave a track "processing" forever.
+    # ------------------------------------------------------------------
+
+    ENRICHMENT_TERMINAL = {"resolved", "ambiguous", "no_match", "manual_override"}
+
+    def get_enrichment_state(self, track_key: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM track_enrichment WHERE track_key = ?", (track_key,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_enrichment_state(
+        self,
+        track_key: str,
+        status: str,
+        *,
+        failure_code: str | None = None,
+        fingerprint_version: int | None = None,
+        resolver_version: int | None = None,
+        next_retry_at: int | None = None,
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO track_enrichment (
+                    track_key, status, last_attempt_at, next_retry_at, failure_code,
+                    fingerprint_version, resolver_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(track_key) DO UPDATE SET
+                    status = excluded.status,
+                    last_attempt_at = excluded.last_attempt_at,
+                    next_retry_at = excluded.next_retry_at,
+                    failure_code = excluded.failure_code,
+                    fingerprint_version = excluded.fingerprint_version,
+                    resolver_version = excluded.resolver_version
+                """,
+                (
+                    track_key,
+                    status,
+                    now_ts(),
+                    next_retry_at,
+                    failure_code,
+                    fingerprint_version,
+                    resolver_version,
+                ),
+            )
+
+    def reset_stale_enrichment_states(self, age_seconds: int = 30 * 60) -> int:
+        """Recover tracks stuck mid-processing (e.g. after a crash).
+
+        Any status that is not terminal and has not been touched for *age_seconds*
+        becomes a retryable temporary failure, so a crashed fingerprint run cannot
+        wedge the track out of future attempts forever.
+        """
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE track_enrichment
+                SET status = 'temporary_failure',
+                    failure_code = 'interrupted',
+                    last_attempt_at = ?
+                WHERE status NOT IN ('resolved', 'ambiguous', 'no_match', 'manual_override')
+                  AND last_attempt_at < ?
+                """,
+                (now_ts(), now_ts() - age_seconds),
+            )
+            return int(cursor.rowcount or 0)
+
+    # ------------------------------------------------------------------
+    # Metadata provenance (Phase E3): per-field values with a source and
+    # lock, so user corrections outrank automatic enrichment forever.
+    # ------------------------------------------------------------------
+
+    # Write precedence, highest first. A write is refused when the stored row is locked
+    # (by a user-class source) or when its source outranks the incoming one.
+    _METADATA_SOURCE_PRECEDENCE = {
+        "user": 5,
+        "sync": 5,
+        "manual_candidate": 4,
+        "fingerprint_resolver": 3,
+        "musicbrainz": 2,
+        "telegram": 1,
+    }
+
+    def set_metadata_field(
+        self,
+        recording_id: int,
+        field_name: str,
+        value: Any,
+        *,
+        source: str,
+        confidence: float | None = None,
+        locked: bool = False,
+    ) -> bool:
+        """Store one metadata field with provenance, honouring the precedence ladder.
+
+        Refuses (returns False, no change) when the existing value is user-locked or
+        comes from a higher-precedence source, so automatic enrichment can never
+        silently overwrite an explicit user correction. The manual editor's overrides
+        remain the source of truth for display until the resolver lands (Phase F).
+        """
+        precedence = self._METADATA_SOURCE_PRECEDENCE.get(source)
+        if precedence is None:
+            raise ValueError(f"Unknown metadata source: {source}")
+        user_class = source in {"user", "sync"}
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT source, locked FROM metadata_fields WHERE recording_id = ? AND field_name = ?",
+                (recording_id, field_name),
+            ).fetchone()
+            if row:
+                existing_precedence = self._METADATA_SOURCE_PRECEDENCE.get(row["source"], 0)
+                if int(row["locked"]) and not user_class:
+                    return False  # a locked user value blocks every automatic source
+                if existing_precedence > precedence:
+                    return False  # a higher-precedence source already owns the field
+            connection.execute(
+                """
+                INSERT INTO metadata_fields (
+                    recording_id, field_name, value_json, source, confidence,
+                    locked, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(recording_id, field_name) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    source = excluded.source,
+                    confidence = excluded.confidence,
+                    locked = excluded.locked,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    recording_id,
+                    field_name,
+                    json.dumps(value, ensure_ascii=False),
+                    source,
+                    confidence,
+                    int(locked),
+                    now_ts(),
+                ),
+            )
+            return True
+
+    def metadata_field(self, recording_id: int, field_name: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                """
+                SELECT * FROM metadata_fields
+                WHERE recording_id = ? AND field_name = ?
+                """,
+                (recording_id, field_name),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "recordingId": int(row["recording_id"]),
+            "field": row["field_name"],
+            "value": json.loads(row["value_json"]),
+            "source": row["source"],
+            "confidence": row["confidence"],
+            "locked": bool(row["locked"]),
+            "updatedAt": int(row["updated_at"]),
+        }
+
+    def recording_metadata(self, recording_id: int) -> dict[str, Any]:
+        """The stored provenance rows for a recording, as {field: value}."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT field_name, value_json FROM metadata_fields WHERE recording_id = ?",
+                (recording_id,),
+            ).fetchall()
+        return {row["field_name"]: json.loads(row["value_json"]) for row in rows}
 
     def _flush_search(self) -> None:
         # Snapshot the queue under the lock, then do the FTS work in the transaction

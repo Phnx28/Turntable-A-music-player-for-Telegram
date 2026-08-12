@@ -327,6 +327,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 LOGGER.info("Search index rebuilt at startup (tracks vs FTS drift: %+d)", drift)
         except Exception:
             LOGGER.exception("Search index reconcile failed at startup")
+        try:
+            # A crash mid-fingerprint must not wedge tracks out of enrichment forever.
+            recovered = await asyncio.to_thread(database.reset_stale_enrichment_states)
+            if recovered:
+                LOGGER.info("Recovered %d tracks stuck in enrichment processing", recovered)
+        except Exception:
+            LOGGER.exception("Enrichment-state recovery failed at startup")
         housekeeping = asyncio.create_task(_housekeeping())
         yield
         housekeeping.cancel()

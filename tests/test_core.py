@@ -1335,3 +1335,114 @@ class QueryPerfTests(unittest.TestCase):
             self.assertEqual(1, database.list_tracks(query="Track 4999")["total"])
         finally:
             database.close()
+
+
+class RecordingIdentityTests(unittest.TestCase):
+    """E1/E2/E3: durable recording identity, enrichment state, provenance."""
+
+    def _database(self):
+        return Database(Path(tempfile.mkdtemp()) / "library.sqlite3")
+
+    def test_old_database_migrates_to_recording_schema(self):
+        # Build a v11 database, then reopen: migrations 12-14 must apply without data loss.
+        path = Path(tempfile.mkdtemp()) / "library.sqlite3"
+        old = Database(path)
+        old.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+        old.upsert_tracks([{
+            "chatId": "1", "messageId": "2", "fileName": "song.mp3", "mimeType": "audio/mpeg",
+            "title": "Old track", "artist": "Artist",
+        }])
+        old.close()
+        fresh = Database(path)
+        try:
+            self.assertGreaterEqual(
+                fresh.connection.execute("PRAGMA user_version").fetchone()[0], 14
+            )
+            self.assertEqual("Old track", fresh.get_track("1", "2")["metadata"]["title"])
+        finally:
+            fresh.close()
+
+    def test_recording_identity_round_trip(self):
+        database = self._database()
+        try:
+            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
+            database.upsert_tracks([{
+                "chatId": "1", "messageId": "2", "fileName": "song.mp3",
+                "mimeType": "audio/mpeg", "title": "T", "artist": "A",
+            }])
+            recording_id = database.get_or_create_recording(
+                musicbrainz_recording_id="mbid-1",
+                canonical={"title": "Paranoid Android", "artist": "Radiohead", "year": 1997},
+                confidence=0.98, method="acoustid", resolver_version=1,
+            )
+            # Same MBID returns the same recording.
+            self.assertEqual(recording_id, database.get_or_create_recording(
+                musicbrainz_recording_id="mbid-1"))
+            database.link_track_recording("1:2", recording_id)
+            recording = database.get_track_recording("1:2")
+            self.assertIsNotNone(recording)
+            self.assertEqual("mbid-1", recording["musicbrainz_recording_id"])
+            self.assertEqual("Paranoid Android", recording["canonical_title"])
+            self.assertEqual("1:2", database.get_track("1", "2")["key"])
+        finally:
+            database.close()
+
+    def test_enrichment_state_and_stale_recovery(self):
+        database = self._database()
+        try:
+            database.set_enrichment_state("1:2", "fingerprinting", fingerprint_version=1)
+            state = database.get_enrichment_state("1:2")
+            self.assertEqual("fingerprinting", state["status"])
+            # A fresh state is not stale.
+            self.assertEqual(0, database.reset_stale_enrichment_states(age_seconds=3600))
+            # An old in-progress state becomes retryable.
+            with database.transaction() as connection:
+                connection.execute(
+                    "UPDATE track_enrichment SET last_attempt_at = 1 WHERE track_key = '1:2'"
+                )
+            self.assertEqual(1, database.reset_stale_enrichment_states(age_seconds=3600))
+            state = database.get_enrichment_state("1:2")
+            self.assertEqual("temporary_failure", state["status"])
+            self.assertEqual("interrupted", state["failure_code"])
+            # Terminal states are never recovered.
+            database.set_enrichment_state("1:2", "resolved")
+            with database.transaction() as connection:
+                connection.execute(
+                    "UPDATE track_enrichment SET last_attempt_at = 1 WHERE track_key = '1:2'"
+                )
+            self.assertEqual(0, database.reset_stale_enrichment_states(age_seconds=3600))
+        finally:
+            database.close()
+
+    def test_metadata_field_precedence_and_locks(self):
+        database = self._database()
+        try:
+            recording_id = database.get_or_create_recording(musicbrainz_recording_id="mbid-1")
+            # Automatic enrichment fills a field first.
+            self.assertTrue(database.set_metadata_field(
+                recording_id, "title", "Automatic title", source="fingerprint_resolver"))
+            # A user correction outranks it.
+            self.assertTrue(database.set_metadata_field(
+                recording_id, "title", "User title", source="user", locked=True))
+            # Automatic enrichment can never overwrite the locked user value.
+            self.assertFalse(database.set_metadata_field(
+                recording_id, "title", "Auto again", source="musicbrainz"))
+            field = database.metadata_field(recording_id, "title")
+            self.assertEqual("User title", field["value"])
+            self.assertTrue(field["locked"])
+            # A user-class write may update their own locked field.
+            self.assertTrue(database.set_metadata_field(
+                recording_id, "title", "Newer user title", source="user", locked=True))
+            self.assertEqual("Newer user title",
+                             database.metadata_field(recording_id, "title")["value"])
+            # A lower-precedence source cannot overwrite a higher one even when unlocked.
+            self.assertTrue(database.set_metadata_field(
+                recording_id, "artist", "Auto artist", source="fingerprint_resolver"))
+            self.assertFalse(database.set_metadata_field(
+                recording_id, "artist", "Text guess", source="musicbrainz"))
+            self.assertEqual("Auto artist", database.recording_metadata(recording_id)["artist"])
+            # Unknown sources are rejected loudly.
+            with self.assertRaises(ValueError):
+                database.set_metadata_field(recording_id, "title", "x", source="spyware")
+        finally:
+            database.close()
