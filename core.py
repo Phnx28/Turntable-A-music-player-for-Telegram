@@ -1146,14 +1146,16 @@ class Database:
     def get_track(self, chat_id: str, message_id: str) -> dict[str, Any] | None:
         with self.lock:
             row = self.connection.execute(
-                """
+                f"""
                 SELECT t.*, s.title AS source_title, s.kind AS source_kind,
                        s.selected AS source_selected,
-                       o.payload AS override_payload
+                       o.payload AS override_payload,
+                       recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
                     ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                {self._RECORDING_FIELDS_JOIN}
                 WHERE t.chat_id = ? AND t.message_id = ?
                 """,
                 (chat_id, message_id),
@@ -1186,14 +1188,15 @@ class Database:
     def _track_summary(row: sqlite3.Row) -> dict[str, Any]:
         value = dict(row)
         override = json.loads(value.get("override_payload") or "{}")
+        recording_fields = json.loads(value.get("recording_fields_payload") or "{}")
         chat_id = str(value["chat_id"])
         message_id = str(value["message_id"])
-        artwork = str(override.get("artworkPath") or "")
+        artwork = str(override.get("artworkPath") or recording_fields.get("artworkPath") or "")
         fingerprint = artwork or media_identity(value.get("document_id", ""), value.get("file_size", 0))
         return {
             "key": track_key(chat_id, message_id),
-            "title": override.get("title") or value["telegram_title"] or value["file_name"],
-            "artist": override.get("artist") or value["telegram_artist"] or "Unknown artist",
+            "title": override.get("title") or recording_fields.get("title") or value["telegram_title"] or value["file_name"],
+            "artist": override.get("artist") or recording_fields.get("artist") or value["telegram_artist"] or "Unknown artist",
             "durationMs": int(value["duration_ms"] or 0),
             "sentAt": int(value["sent_at"] or 0),
             "artworkVersion": hashlib.sha256(fingerprint.encode()).hexdigest()[:12],
@@ -1282,11 +1285,13 @@ class Database:
                    t.file_size, t.duration_ms, t.telegram_title, t.telegram_artist,
                    t.sent_at, t.document_id, t.liked_at, s.title AS source_title,
                    s.kind AS source_kind, s.selected AS source_selected,
-                   o.payload AS override_payload
+                   o.payload AS override_payload,
+                   recording_fields.recording_fields_payload
             FROM tracks t
             JOIN sources s ON s.chat_id = t.chat_id
             LEFT JOIN metadata_overrides o
                 ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+            {self._RECORDING_FIELDS_JOIN}
             WHERE {where}{cursor_clause}
             ORDER BY {row_order}
             LIMIT ? OFFSET ?
@@ -1514,17 +1519,31 @@ class Database:
                        t.telegram_title, t.telegram_artist, t.sent_at, t.document_id,
                        t.liked_at,
                        s.title AS source_title, s.kind AS source_kind,
-                       s.selected AS source_selected, o.payload AS override_payload
+                       s.selected AS source_selected, o.payload AS override_payload,
+                       recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
                   ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                {self._RECORDING_FIELDS_JOIN}
                 WHERE t.available = 1 AND ({clauses})
                 """,
                 parameters,
             ).fetchall()
         found = {track["key"]: track for track in map(self._track_summary, rows)}
         return [found[key] for key in ordered if key in found]
+
+    # One JSON object per recording: {field: value} from metadata_fields, layered
+    # between the raw Telegram fields and the user's overrides so fingerprint-
+    # resolved identity shows in the UI without ever masking a user correction.
+    _RECORDING_FIELDS_JOIN = """
+        LEFT JOIN (
+            SELECT recording_id,
+                   json_group_object(field_name, json(value_json)) AS recording_fields_payload
+            FROM metadata_fields
+            GROUP BY recording_id
+        ) recording_fields ON recording_fields.recording_id = t.recording_id
+    """
 
     @staticmethod
     def _track_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -1540,7 +1559,8 @@ class Database:
             "discNumber": value["telegram_disc_number"],
         }
         overrides = json.loads(value.get("override_payload") or "{}")
-        metadata = {**source_metadata, **overrides}
+        recording_fields = json.loads(value.get("recording_fields_payload") or "{}")
+        metadata = {**source_metadata, **recording_fields, **overrides}
         chat_id = str(value["chat_id"])
         message_id = str(value["message_id"])
         return {
@@ -1659,14 +1679,16 @@ class Database:
         limit = max(1, min(int(limit), 200))
         with self.lock:
             rows = self.connection.execute(
-                """
+                f"""
                 SELECT t.*, s.title AS source_title, s.kind AS source_kind,
                        s.selected AS source_selected,
-                       o.payload AS override_payload
+                       o.payload AS override_payload,
+                       recording_fields.recording_fields_payload
                 FROM tracks t
                 JOIN sources s ON s.chat_id = t.chat_id
                 LEFT JOIN metadata_overrides o
                     ON o.chat_id = t.chat_id AND o.message_id = t.message_id
+                {self._RECORDING_FIELDS_JOIN}
                 WHERE t.available = 1
                   AND t.telegram_title NOT IN ('', 'Unknown title')
                   AND NOT EXISTS (
@@ -2067,6 +2089,7 @@ class Database:
             "prefetchCount": 1,
             "bindHost": "127.0.0.1",
             "autoArtwork": True,
+            "acoustidApiKey": "",
         }
         with self.lock:
             rows = self.connection.execute("SELECT key, value FROM app_settings").fetchall()
@@ -2075,7 +2098,7 @@ class Database:
         return defaults
 
     def save_settings(self, values: Mapping[str, Any]) -> dict[str, Any]:
-        allowed = {"musicbrainzContact", "coverQuality", "prefetchCount", "bindHost", "autoArtwork"}
+        allowed = {"musicbrainzContact", "coverQuality", "prefetchCount", "bindHost", "autoArtwork", "acoustidApiKey"}
         if set(values) - allowed:
             raise ValueError("Unknown setting")
         auto = values.get("autoArtwork")
@@ -2084,6 +2107,9 @@ class Database:
         bind_host = values.get("bindHost")
         if bind_host is not None and str(bind_host) not in BIND_HOSTS:
             raise ValueError("Bind address must be 127.0.0.1 or 0.0.0.0")
+        acoustid = values.get("acoustidApiKey")
+        if acoustid is not None and (not isinstance(acoustid, str) or len(acoustid.strip()) > 100):
+            raise ValueError("AcoustID API key must be a short string")
         contact = values.get("musicbrainzContact")
         if contact is not None and (not isinstance(contact, str) or len(contact.strip()) > 300):
             raise ValueError("MusicBrainz contact must be a short email address or URL")

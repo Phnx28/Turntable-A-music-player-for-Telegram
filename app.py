@@ -31,7 +31,10 @@ from core import (
     split_track_key,
     verify_password,
 )
+from acoustid import AcoustIDClient
+from enrichment import EnrichmentService
 from external import ExternalServices
+from fingerprints import FingerprintService
 from storage import storage_summary
 from telegram_service import TelegramService
 
@@ -54,6 +57,7 @@ class Settings:
     encryption_key: str
     data_directory: Path
     musicbrainz_contact: str
+    acoustid_api_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -103,6 +107,7 @@ class Settings:
             encryption_key=encryption_key,
             data_directory=data_directory,
             musicbrainz_contact=os.environ.get("MUSICBRAINZ_CONTACT", ""),
+            acoustid_api_key=os.environ.get("ACOUSTID_API_KEY", ""),
         )
 
 
@@ -288,12 +293,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if settings.musicbrainz_contact and not database.get_settings()["musicbrainzContact"]:
             database.save_settings({"musicbrainzContact": settings.musicbrainz_contact})
+        if settings.acoustid_api_key and not database.get_settings()["acoustidApiKey"]:
+            database.save_settings({"acoustidApiKey": settings.acoustid_api_key})
         application.state.settings = settings
         application.state.database = database
         application.state.telegram = telegram
         application.state.external = external
         # The enrich job reuses the metadata dialog's candidate lookup + artwork writer.
         telegram.enrich_worker = external.enrich_covers
+        # Fingerprint-first enrichment: Chromaprint + AcoustID + the shared resolver.
+        acoustid_key = database.get_settings().get("acoustidApiKey") or ""
+        application.state.enrichment = EnrichmentService(
+            database=database,
+            media=telegram.media,
+            fingerprints=FingerprintService(),
+            acoustid=AcoustIDClient(
+                database,
+                httpx.AsyncClient(
+                    follow_redirects=True,
+                    headers={"User-Agent": external.user_agent},
+                ),
+                api_key=acoustid_key,
+                user_agent=external.user_agent,
+            ),
+        )
         application.state.startup_error = None
 
         async def _housekeeping() -> None:
@@ -340,6 +363,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await asyncio.gather(housekeeping, return_exceptions=True)
         await external.close()
         await telegram.stop()
+        acoustid = getattr(application.state.enrichment, "acoustid", None)
+        if acoustid is not None:
+            await acoustid.http.aclose()
         database.close()
 
     application = FastAPI(title="Telegram Turntable", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -1014,8 +1040,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/playback/events")
     async def playback_event(request: Request, body: PlaybackEventBody) -> dict[str, bool]:
-        await get_track_async(request, body.key)
+        track = await get_track_async(request, body.key)
         await asyncio.to_thread(database(request).record_playback, body.key, body.event)
+        # Silent fingerprint-first enrichment (Phase F7): the track started playing, so
+        # kick off background resolution. No spinner, no toast, no playback delay -- the
+        # durable enrichment state dedupes repeats, and the result surfaces naturally.
+        if body.event == "started":
+            enrichment = request.app.state.enrichment
+            if enrichment is not None:
+                enrichment.enrich_playback(track)
         return {"ok": True}
 
     @application.post("/api/playback/shuffle")

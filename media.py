@@ -476,6 +476,29 @@ class MediaCache:
             # surface as an error dialog.
             LOGGER.exception("Could not cache the current track %s", key)
 
+    async def fingerprint_source(self, track: dict[str, Any], timeout: float = 60.0) -> Path | None:
+        """A completed local audio file to fingerprint, without a second download.
+
+        Order: the completed cache, then the in-flight cache-current task for this
+        track (the playing track is usually already downloading), then a fresh cache
+        acquisition. Returns None when nothing could be produced in time -- the
+        enrichment pipeline treats that as a retryable temporary failure.
+        """
+        if cached := self.cached_media(track):
+            return cached
+        key = track["key"]
+        task = self.active_cache_tasks.get(key)
+        if task and not task.done():
+            try:
+                await asyncio.wait_for(task, timeout)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                return None
+            return self.cached_media(track)
+        try:
+            return await asyncio.wait_for(self.cache_media(track), timeout)
+        except Exception:
+            return None
+
     async def tagged_download(self, track: dict[str, Any]) -> Path | None:
         if not track.get("overrides"):
             return None
