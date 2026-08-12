@@ -1528,7 +1528,7 @@ function renderDiscovered() {
     : "No supported chats found.";
   $("discover-list").innerHTML = order.map((group) => {
     const items = groups.get(group).sort(compare); if (!items.length) return "";
-    return `<section class="discover-group"><h3>${labels[group]}</h3>${items.map((item) => {
+    return `<section class="discover-group"><h3><span>${escapeHtml(labels[group])}</span><span class="discover-group-count">${items.length.toLocaleString()}</span></h3>${items.map((item) => {
       const counted = item.musicFileCount ?? (item.trackCount > 0 ? item.trackCount : null);
       // ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
       return `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`;

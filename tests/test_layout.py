@@ -1496,9 +1496,9 @@ class LayoutTests(unittest.TestCase):
             dataFont: document.documentElement.dataset.font || null,
           };
         }""")
-        for name in ("title", "artist", "source", "heading", "tab", "button", "globalHeading", "discoverHeading"):
+        for name in ("title", "artist", "source", "heading", "tab", "button", "globalHeading"):
             self.assertIn("Be Vietnam Pro", fonts[name], f"{name} must use the human-facing type: {fonts}")
-        for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary", "globalCount", "bulkCount", "cacheUsage", "passwordStatus", "qrStatus"):
+        for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary", "globalCount", "bulkCount", "cacheUsage", "passwordStatus", "qrStatus", "discoverHeading"):
             self.assertIn("JetBrains Mono", fonts[name], f"{name} must use the data type: {fonts}")
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
@@ -1924,6 +1924,9 @@ class LayoutTests(unittest.TestCase):
 
         page.fill("#discover-search", "Vahid")
         self.assertEqual(["VahidOnline"], visible_titles())
+        heading = page.locator("#discover-list .discover-group h3")
+        self.assertEqual("Channels", heading.locator("span").first.text_content())
+        self.assertEqual("1", heading.locator(".discover-group-count").text_content())
 
         page.fill("#discover-search", "dancefear")
         self.assertEqual(["Dance in Doubt and Fear"], visible_titles())
