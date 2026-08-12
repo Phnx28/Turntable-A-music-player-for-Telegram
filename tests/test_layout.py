@@ -170,7 +170,7 @@ class LayoutTests(unittest.TestCase):
                                  body=json.dumps({"items": items, "offset": 0, "total": len(items)}))
         if path == "/api/settings":
             return route.fulfill(status=200, content_type="application/json",
-                                 body='{"musicbrainzContact": "", "coverQuality": "1200", "prefetchCount": 1, "bindHost": "127.0.0.1"}')
+                                 body='{"musicbrainzContact": "", "acoustidApiKey": "test-acoustid-key-7f3k", "coverQuality": "1200", "prefetchCount": 1, "bindHost": "127.0.0.1"}')
         if path == "/api/network":
             return route.fulfill(status=200, content_type="application/json",
                                  body='{"bindHost": "127.0.0.1", "activeHost": "127.0.0.1", "managed": false, "inDocker": false}')
@@ -1757,6 +1757,36 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(network["marked"], network)
         self.assertEqual(1, len([v for v in network["pressed"] if v == "true"]), network)
 
+    def test_metadata_pane_has_acoustid_key_field_with_guide(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.click("#open-settings")
+        page.wait_for_selector("#settings-dialog[open]")
+        page.wait_for_timeout(150)
+        page.click('[data-settings-tab="metadata"]')
+        page.wait_for_timeout(80)
+        shape = page.evaluate("""() => {
+          const input = document.getElementById('acoustid-key');
+          const guide = [...document.querySelectorAll('.settings-content .guide-link')]
+            .find((a) => a.href.includes('acoustid.org'));
+          const pane = input ? input.closest('[data-settings-pane]') : null;
+          return {
+            exists: !!input,
+            value: input ? input.value : null,
+            placeholder: input ? input.placeholder : null,
+            pane: pane ? pane.dataset.settingsPane : null,
+            guideHref: guide ? guide.href : null,
+            guideTarget: guide ? guide.getAttribute('target') : null,
+            guideRel: guide ? guide.getAttribute('rel') : null,
+          };
+        }""")
+        self.assertEqual("metadata", shape["pane"], shape)
+        self.assertEqual("test-acoustid-key-7f3k", shape["value"], shape)
+        self.assertIn("AcoustID", shape["placeholder"], shape)
+        self.assertEqual("https://acoustid.org/", shape["guideHref"], shape)
+        self.assertEqual("_blank", shape["guideTarget"], shape)
+        self.assertEqual("noreferrer", shape["guideRel"], shape)
+
     def test_player_is_one_uniform_glass_surface_on_the_canvas(self):
         for width, height in ((1440, 900), (390, 844)):
             with self.subTest(viewport=(width, height)):
@@ -2410,6 +2440,24 @@ class LayoutTests(unittest.TestCase):
           document.getElementById('player-locate').click();
         }""")
         page.wait_for_function("() => document.querySelector('#player-locate').getAttribute('aria-busy') === null")
+        # The row is already on screen: locate must land on it without a round trip.
+        self.assertFalse(positions, "a visible row must not need a server position round trip")
+        self.assertTrue(
+            page.evaluate("() => document.querySelector('.track-row[data-track-key=\"-1001:1000\"]')?.classList.contains('locate-flash')"),
+            "locate must land on the visible row and flash it",
+        )
+
+        # Now hide the row from the library: locate has to page to it via the position
+        # endpoint, and that request must carry the active sort. Select the track's
+        # source first so the refetch renders an empty library (the row is gone).
+        page.route("**/api/**", lambda route: route.fulfill(status=200, content_type="application/json", body='{"items": [], "offset": 0, "total": 0}')
+                   if urlsplit(route.request.url).path == "/api/tracks" else route.fallback())
+        page.evaluate("() => document.querySelector('.source-link[data-source=\"-1001\"]').click()")
+        page.wait_for_function("() => !document.getElementById('library').classList.contains('is-refreshing')")
+        self.assertFalse(page.evaluate("() => document.querySelector('.track-row[data-track-key=\"-1001:1000\"]') !== null"),
+                         "the row must be out of the rendered window for the position path")
+        page.evaluate("() => document.getElementById('player-locate').click()")
+        page.wait_for_function("() => document.querySelector('#player-locate').getAttribute('aria-busy') === null")
         self.assertTrue(positions, "locate did not request the current track position")
         self.assertIn("sort=title", positions[-1])
 
@@ -2887,21 +2935,26 @@ class LayoutTests(unittest.TestCase):
         page = self.page(1440, 900)
         self.open_now_panel(page)
         paused = page.evaluate("""() => {
-          const disc = document.querySelector('.large-art-wrap');
-          const style = getComputedStyle(disc);
+          const disc = document.querySelector('.label-disc');
+          // The spin lives on the art face, not the wrapper (the FLIP collapse measures
+          // the wrapper's box, and a rotated wrapper would report an inflated rect).
+          const face = disc.querySelector('.large-art');
+          const visible = disc.querySelector('.art-placeholder');
           const ring = getComputedStyle(disc, '::before');
           const probe = document.createElement('span');
           probe.style.borderTop = '1px solid var(--rule)';
           document.body.append(probe);
           const ruleColor = getComputedStyle(probe).borderTopColor;
           probe.remove();
+          const spin = visible?.getAnimations().find((animation) => animation.animationName === 'label-spin') ?? null;
           return {
             classes: disc.className,
-            radius: style.borderRadius,
+            radius: getComputedStyle(disc).borderRadius,
             square: Math.abs(disc.getBoundingClientRect().width - disc.getBoundingClientRect().height) < 1,
-            name: style.animationName,
-            duration: style.animationDuration,
-            playState: style.animationPlayState,
+            name: getComputedStyle(face).animationName,
+            duration: getComputedStyle(face).animationDuration,
+            playState: getComputedStyle(face).animationPlayState,
+            visiblePlayState: spin?.playState ?? null,
             ringColor: ring.borderTopColor,
             ruleColor,
           };
@@ -2912,22 +2965,26 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("label-spin", paused["name"])
         self.assertEqual("20s", paused["duration"])
         self.assertEqual("paused", paused["playState"], "a paused disc must hold its current angle")
+        self.assertEqual("paused", paused["visiblePlayState"], "the visible spinning face must hold its angle too")
         self.assertEqual(paused["ruleColor"], paused["ringColor"], "the paused ring must use --rule")
 
         page.evaluate("() => document.querySelector('.label-disc').classList.add('is-playing')")
         playing = page.evaluate("""() => {
           const disc = document.querySelector('.label-disc');
-          const style = getComputedStyle(disc);
+          const face = disc.querySelector('.large-art');
+          const visible = disc.querySelector('.art-placeholder');
           const ring = getComputedStyle(disc, '::before');
           const probe = document.createElement('span');
           probe.style.borderTop = '1px solid var(--stamp)';
           document.body.append(probe);
           const stampColor = getComputedStyle(probe).borderTopColor;
           probe.remove();
+          const spin = visible?.getAnimations().find((animation) => animation.animationName === 'label-spin') ?? null;
           return {
-            name: style.animationName,
-            duration: style.animationDuration,
-            playState: style.animationPlayState,
+            name: getComputedStyle(face).animationName,
+            duration: getComputedStyle(face).animationDuration,
+            playState: getComputedStyle(face).animationPlayState,
+            visiblePlayState: spin?.playState ?? null,
             ringColor: ring.borderTopColor,
             stampColor,
           };
@@ -2935,6 +2992,7 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("label-spin", playing["name"])
         self.assertEqual("20s", playing["duration"])
         self.assertEqual("running", playing["playState"])
+        self.assertEqual("running", playing["visiblePlayState"])
         self.assertEqual(playing["stampColor"], playing["ringColor"], "the playing ring must use --stamp")
 
     def test_label_disc_is_static_for_reduced_motion(self):
@@ -2964,11 +3022,13 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_function("() => document.querySelector('.now-header').classList.contains('is-compact')")
         animations = page.evaluate("""() => {
           const disc = document.querySelector('.label-disc');
-          const all = disc.getAnimations();
-          const spin = all.filter((animation) => animation.animationName === 'label-spin');
+          // The FLIP animates the wrapper (the disc itself); the spin lives on the art
+          // face, so count the flips on the wrapper and the spin on the face.
+          const face = disc.querySelector('.art-placeholder');
+          const spin = face?.getAnimations().filter((animation) => animation.animationName === 'label-spin') ?? [];
           return {
             compact: document.querySelector('.now-header').classList.contains('is-compact'),
-            flipCount: all.filter((animation) => animation.animationName !== 'label-spin').length,
+            flipCount: disc.getAnimations().length,
             spinCount: spin.length,
             spinState: spin[0]?.playState ?? null,
           };
@@ -3008,8 +3068,15 @@ class LayoutTests(unittest.TestCase):
                     const probe = document.createElement('i');
                     probe.style.background = token.trim();
                     document.body.append(probe);
-                    const value = getComputedStyle(probe).backgroundColor;
+                    let value = getComputedStyle(probe).backgroundColor;
                     probe.remove();
+                    // color-mix() results serialize as color(srgb r g b) with 0-1
+                    // components (not rgb(r, g, b) bytes); scale them back so the
+                    // luminance math below sees the same numbers as byte channels.
+                    const colorFn = value.match(/^color\\(srgb ([\\d.]+) ([\\d.]+) ([\\d.]+)/);
+                    if (colorFn) {
+                        return colorFn.slice(1).map((part) => Math.round(parseFloat(part) * 255));
+                    }
                     return value.match(/\\d+(\\.\\d+)?/g).slice(0, 3).map(Number);
                 };
                 return {

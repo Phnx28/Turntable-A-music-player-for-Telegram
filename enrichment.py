@@ -48,6 +48,12 @@ _ENRICHMENT_SOURCE = "fingerprint_resolver"
 # Statuses that mean "never re-attempt this track automatically".
 _TERMINAL = {"resolved", "ambiguous", "no_match", "manual_override"}
 
+# A no_match whose failure code names a *missing capability* (no fpcalc binary, no
+# AcoustID key) is not a definitive negative: the track was never actually judged.
+# Once the capability exists, playback and bulk enrichment retry it instead of
+# treating it as final, so installing fpcalc later is not silently ignored.
+_RETRYABLE_NO_MATCH_CODES = {"fingerprint-unavailable", "acoustid-unconfigured"}
+
 
 class EnrichmentResult:
     """Structured outcome of one enrich_track call."""
@@ -224,7 +230,8 @@ async def _enrich_track(
     key = track["key"]
     state = database.get_enrichment_state(key)
     if state and state["status"] in _TERMINAL:
-        return EnrichmentResult("skipped", reason=f"terminal state: {state['status']}")
+        if not (state["status"] == "no_match" and state.get("failure_code") in _RETRYABLE_NO_MATCH_CODES):
+            return EnrichmentResult("skipped", reason=f"terminal state: {state['status']}")
     if state and state["status"] == "fingerprinting":
         return EnrichmentResult("skipped", reason="already processing")
     if state and state["status"] == "temporary_failure":

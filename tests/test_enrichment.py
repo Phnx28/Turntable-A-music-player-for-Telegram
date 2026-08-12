@@ -231,6 +231,28 @@ class EnrichmentPipelineTests(unittest.IsolatedAsyncioTestCase):
         state = self.database.get_enrichment_state("1:2")
         self.assertEqual("acoustid-unconfigured", state["failure_code"])
 
+    async def test_capability_missing_no_match_is_never_terminal(self):
+        # no_match with a capability failure code (no fpcalc, no AcoustID key) means
+        # the track was never actually judged. Playback must retry once the
+        # capability exists instead of treating it as a definitive no-match.
+        candidate = AcoustIDRecording(
+            "mbid-a", "Paranoid Android", "Radiohead", 383_000, sources=5,
+            release_groups=[ReleaseGroup("rg-1", "OK Computer", "Album")],
+        )
+        self.database.set_enrichment_state("1:2", "no_match", failure_code="fingerprint-unavailable")
+        service = self._service([candidate])
+        result = await service.enrich_track(self.track, trigger="playback")
+        self.assertEqual("resolved", result.decision,
+                         "fingerprint-unavailable must retry, not skip as terminal")
+
+        self.database.set_enrichment_state("1:2", "no_match", failure_code="acoustid-unconfigured")
+        service = self._service([candidate])
+        result = await service.enrich_track(self.track, trigger="playback")
+        self.assertEqual("resolved", result.decision,
+                         "acoustid-unconfigured must retry once the key exists")
+        recording = self.database.get_track_recording("1:2")
+        self.assertEqual("mbid-a", recording["musicbrainz_recording_id"])
+
     async def test_playback_trigger_is_silent_and_deduped(self):
         self.database.set_enrichment_state("1:2", "temporary_failure",
                                            next_retry_at=9999999999)

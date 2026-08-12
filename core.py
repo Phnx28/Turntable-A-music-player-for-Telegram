@@ -1652,7 +1652,8 @@ class Database:
         else:
             condition = """AND (e.status IS NULL
                                 OR e.status IN ('temporary_failure', 'ambiguous')
-                                OR (e.status = 'no_match' AND e.failure_code = 'fingerprint-unavailable'))"""
+                                OR (e.status = 'no_match' AND e.failure_code IN
+                                    ('fingerprint-unavailable', 'acoustid-unconfigured')))"""
         with self.lock:
             rows = self.connection.execute(
                 f"""

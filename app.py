@@ -210,6 +210,7 @@ class SettingsBody(BaseModel):
     coverQuality: str | None = Field(default=None, pattern=r"^(500|1200|original)$")
     prefetchCount: int | None = Field(default=None, ge=0, le=20)
     autoArtwork: bool | None = Field(default=None, strict=True)
+    acoustidApiKey: str | None = Field(default=None, max_length=100)
 
 
 class PlaybackEventBody(BaseModel):
@@ -1189,9 +1190,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.patch("/api/settings")
     async def settings_save(request: Request, body: SettingsBody) -> dict[str, Any]:
-        return await asyncio.to_thread(
-            database(request).save_settings, body.model_dump(exclude_none=True)
-        )
+        values = body.model_dump(exclude_none=True)
+        saved = await asyncio.to_thread(database(request).save_settings, values)
+        # The enrichment client is built once at startup; make a key change apply
+        # immediately instead of waiting for a restart (configured() reads it live).
+        if "acoustidApiKey" in values:
+            enrichment = request.app.state.enrichment
+            if enrichment is not None:
+                enrichment.acoustid.api_key = (values["acoustidApiKey"] or "").strip()
+        return saved
 
     @application.post(
         "/api/settings/musicbrainz/test"    )

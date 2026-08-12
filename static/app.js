@@ -10,7 +10,7 @@ const state = {
   lyrics: null, flow: "", lyric: -1, queue: [], queueIndex: -1, queueTruncated: false, queueTotal: 0, queueOffset: 0,
   shuffle: localStorage.getItem("tm-shuffle") === "1",
   repeat: localStorage.getItem("tm-repeat") || "off",
-  cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "" },
+  cacheStates: {}, settings: { prefetchCount: 1, coverQuality: "1200", musicbrainzContact: "", acoustidApiKey: "" },
   trackCache: new Map(), summaryCache: new Map(), libraryCache: new Map(),
   // offset -> { cursor, before } keyset tokens for the posted/no-filter path (C2).
   pageCursors: new Map(),
@@ -2540,7 +2540,7 @@ async function renderStorage() {
 async function openSettings() {
   $("settings-dialog").showModal();
   try {
-    state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("default-cover-quality").value = state.settings.coverQuality; $("auto-artwork").checked = state.settings.autoArtwork !== false; updateAutoArtworkHelp();
+    state.settings = await api("/api/settings"); $("prefetch-count").value = state.settings.prefetchCount; $("musicbrainz-contact").value = state.settings.musicbrainzContact; $("acoustid-key").value = state.settings.acoustidApiKey || ""; $("default-cover-quality").value = state.settings.coverQuality; $("auto-artwork").checked = state.settings.autoArtwork !== false; updateAutoArtworkHelp();
     renderSyncStatus();
     const cache = await api("/api/cache/status"); $("cache-usage").textContent = `${cache.files} songs cached · ${formatBytesShort(cache.bytes)}`;
     const [network, auth, status] = await Promise.all([api("/api/network"), api("/api/auth/status"), api("/api/status")]);
@@ -2648,6 +2648,7 @@ function currentSettingsValues() {
   return {
     prefetchCount: Number($("prefetch-count").value),
     musicbrainzContact: $("musicbrainz-contact").value.trim(),
+    acoustidApiKey: $("acoustid-key").value.trim(),
     coverQuality: $("default-cover-quality").value,
     autoArtwork: $("auto-artwork").checked,
   };
@@ -3100,6 +3101,8 @@ $("musicbrainz-contact").addEventListener("input", () => { updateAutoArtworkHelp
 // Leaving the field flushes the pending debounce, so closing the dialog straight after typing
 // cannot lose the value.
 $("musicbrainz-contact").addEventListener("blur", flushSettings);
+$("acoustid-key").addEventListener("input", () => { saveSettingsSoon(currentSettingsValues()); });
+$("acoustid-key").addEventListener("blur", flushSettings);
 $("test-musicbrainz").addEventListener("click", async () => { try { state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ musicbrainzContact: $("musicbrainz-contact").value.trim(), coverQuality: $("default-cover-quality").value }) }); await api("/api/settings/musicbrainz/test", { method: "POST" }); toast("MusicBrainz connection works"); } catch (error) { showError(error, () => $("test-musicbrainz").click()); } });
 $("clear-cache").addEventListener("click", async () => { if (await confirmAction("Clear prefetched songs?", "Playback metadata and Telegram files will not be changed.", "Clear cache")) { try { await api("/api/cache", { method: "DELETE" }); $("cache-usage").textContent = "0 songs cached · 0 MB"; toast("Prefetched songs cleared"); } catch (error) { showError(error); } } });
 document.querySelectorAll("[data-setting] [data-value]").forEach((button) => button.addEventListener("click", () => { localStorage.setItem(`tm-${button.parentElement.dataset.setting}`, button.dataset.value); applyPreferences(); }));

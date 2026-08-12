@@ -271,6 +271,30 @@ class SettingsRouteTests(AppTestCase):
         self.assertEqual(body["coverQuality"], "500")
         self.assertEqual(body["prefetchCount"], 2)
 
+    def test_patch_persists_and_round_trips_the_acoustid_key(self) -> None:
+        response = self.client.patch(
+            "/api/settings", json={"acoustidApiKey": "test-acoustid-key-7f3k"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/api/settings").json()["acoustidApiKey"], "test-acoustid-key-7f3k")
+
+    def test_patch_applies_the_acoustid_key_to_the_live_client(self) -> None:
+        self.client.patch(
+            "/api/settings", json={"acoustidApiKey": "test-acoustid-key-7f3k"}, headers=self.SAME_ORIGIN
+        )
+        self.assertEqual(self.app.state.enrichment.acoustid.api_key, "test-acoustid-key-7f3k")
+
+    def test_patch_can_clear_the_acoustid_key(self) -> None:
+        self.client.patch(
+            "/api/settings", json={"acoustidApiKey": "test-acoustid-key-7f3k"}, headers=self.SAME_ORIGIN
+        )
+        self.client.patch(
+            "/api/settings", json={"acoustidApiKey": ""}, headers=self.SAME_ORIGIN
+        )
+        body = self.client.get("/api/settings").json()
+        self.assertEqual(body["acoustidApiKey"], "")
+        self.assertEqual(self.app.state.enrichment.acoustid.api_key, "")
+
 
 class TrackPositionRouteTests(AppTestCase):
     def test_position_route_propagates_the_allowlisted_sort(self) -> None:
