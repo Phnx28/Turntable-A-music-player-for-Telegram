@@ -1,5 +1,4 @@
 import {
-	adjacentIndex,
 	bufferedPercent,
 	explicitQueue,
 	formatTime,
@@ -513,16 +512,58 @@ async function clearQr() {
 	code.classList.remove("is-exiting");
 }
 
+function normalizePhoneEntry(raw) {
+	// Presentation-only punctuation and spaces; a leading 00 becomes + for detection.
+	let value = raw.trim().replace(/[^\d+]/g, "");
+	if (value.startsWith("00")) value = "+" + value.slice(2);
+	return value;
+}
+
+function updatePhoneReadiness() {
+	const button = $("send-telegram-code");
+	if (!button) return;
+	const hasCountry = Boolean($("telegram-country").value);
+	const digits = normalizePhoneEntry($("telegram-phone").value).replace(/\D/g, "");
+	const plausible = digits.length >= 4 && digits.length <= 20;
+	button.disabled = !(state.countriesLoaded && hasCountry && plausible);
+}
+
+function applyPhoneNormalization() {
+	const field = $("telegram-phone");
+	const normalized = normalizePhoneEntry(field.value);
+	if (!normalized.startsWith("+")) return updatePhoneReadiness();
+	const digits = normalized.replace(/\D/g, "");
+	const matches = countryList.filter((country) => digits.startsWith(country.dialCode));
+	if (matches.length === 1) {
+		// A unique calling code selects its country and leaves the national digits.
+		const national = digits.slice(matches[0].dialCode.length);
+		selectCountry(matches[0], { silent: true });
+		field.value = national;
+	} else if (matches.length > 1) {
+		// Shared calling codes: keep the current country when compatible, else don't guess.
+		const current = $("telegram-country").value;
+		if (current && digits.startsWith(current)) {
+			field.value = digits.slice(current.length);
+		}
+	}
+	updatePhoneReadiness();
+}
+
 function phoneNumber() {
 	const country = $("telegram-country").value;
+	const normalized = normalizePhoneEntry($("telegram-phone").value);
+	if (!country) {
+		// A fully international entry needs no country selection.
+		if (normalized.startsWith("+") && normalized.replace(/\D/g, "").length >= 4)
+			return normalized;
+		throw new AppError("Choose your country first.");
+	}
 	// Trunk prefix: people type their number the way they dial it locally (e.g. 0151... in
 	// Germany), but the international form drops that leading zero. Telegram rejects it otherwise.
-	const number = $("telegram-phone")
-		.value.replace(/\D/g, "")
-		.replace(/^0+/, "");
-	if (!country) throw new AppError("Choose your country first.");
-	if (!number) throw new AppError("Enter your phone number.");
-	return `+${country}${number}`;
+	const digits = normalized.replace(/\D/g, "").replace(/^0+/, "");
+	const national = digits.startsWith(country) ? digits.slice(country.length) : digits;
+	if (!national) throw new AppError("Enter your phone number.");
+	return `+${country}${national}`;
 }
 
 function countryFlag(iso2) {
@@ -663,6 +704,7 @@ function selectCountry(country, { silent = false } = {}) {
 	$("country-clear").hidden = false;
 	localStorage.setItem("tm-country", country.iso2);
 	closeCountryList();
+	updatePhoneReadiness();
 	if (!silent) requestAnimationFrame(() => $("telegram-phone").focus());
 }
 
@@ -673,6 +715,7 @@ function clearCountry({ focus = true } = {}) {
 	$("dial-prefix").textContent = "+";
 	$("country-clear").hidden = true;
 	closeCountryList();
+	updatePhoneReadiness();
 	if (focus) $("country-search").focus();
 }
 
@@ -3674,10 +3717,12 @@ $("country-search").addEventListener("input", () => {
 		selectedCountry = null;
 		$("telegram-country").value = "";
 		$("dial-prefix").textContent = "+";
+		updatePhoneReadiness();
 	}
 	$("country-clear").hidden = !$("country-search").value;
 	renderCountryOptions($("country-search").value);
 });
+$("telegram-phone").addEventListener("input", applyPhoneNormalization);
 $("country-search").addEventListener("beforeinput", (event) => {
 	// Typing printable text over a committed selection replaces it with a fresh query.
 	// Composition events are left alone so IME candidates keep working.

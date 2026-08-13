@@ -364,6 +364,65 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("g", page.input_value("#country-search"))
         self.assertIn("Germany", page.locator("#country-listbox").text_content())
 
+    def test_phone_readiness_and_normalization(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        payloads = []
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: (
+                payloads.append(json.loads(route.request.post_data or "{}")),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"flowId": "flow-1", "delivery": "App", "state": "waiting"}',
+                ),
+            )[1],
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        button = page.locator("#send-telegram-code")
+        phone = page.locator("#telegram-phone")
+        # Country selected but phone empty -> disabled.
+        self.assertTrue(button.is_disabled())
+        # Plausible local number -> enabled.
+        phone.fill("09123456789")
+        self.assertFalse(button.is_disabled())
+        # Clear the country -> disabled again.
+        country = page.locator("#country-search")
+        country.focus()
+        country.press("Backspace")
+        self.assertTrue(button.is_disabled())
+        # Paste an international number: it selects Iran and strips the code.
+        phone.fill("+989123456789")
+        self.assertEqual("98", page.input_value("#telegram-country"))
+        self.assertEqual("9123456789", page.input_value("#telegram-phone"))
+        self.assertFalse(button.is_disabled())
+        button.click()
+        page.wait_for_timeout(200)
+        self.assertEqual([{"phone": "+989123456789"}], payloads)
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
