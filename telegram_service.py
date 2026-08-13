@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import hashlib
 import logging
 import os
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any
 
-import segno
 import httpx
+import segno
+from core import Database, is_audio_file, media_identity, normalize_text, track_key
 from cryptography.fernet import Fernet, InvalidToken
+from jobs import BackgroundJob, JobRunner
+from media import MediaCache
 from telethon import TelegramClient, events, functions, types, utils
 from telethon.errors import FloodWaitError, RPCError, SessionPasswordNeededError
 from telethon.sessions import StringSession
@@ -22,10 +27,6 @@ from telethon.tl.types import (
     InputMessagesFilterMusic,
 )
 from telethon.tl.types import contacts as contacts_types
-
-from core import Database, is_audio_file, media_identity, normalize_text, track_key
-from jobs import BackgroundJob, JobRunner
-from media import MediaCache
 
 LOGGER = logging.getLogger(__name__)
 
@@ -235,7 +236,9 @@ class TelegramService:
 
     def _refresh_watched_ids(self) -> None:
         # ponytail: full rescan on change is fine; set is small (<10 chats), add per-source subscribe when this grows.
-        self._watched_chat_ids = {source["chatId"] for source in self.database.list_sources(False)}
+        self._watched_chat_ids = {
+            source["chatId"] for source in self.database.list_sources(False)
+        }
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         await self._save_event_message(event)
@@ -248,7 +251,9 @@ class TelegramService:
         if not chat_id or chat_id not in self._watched_chat_ids:
             return
         source = self.database.get_source(chat_id) if chat_id else None
-        if not source or (not source["selected"] and source["kind"] not in {"channel", "bot"}):
+        if not source or (
+            not source["selected"] and source["kind"] not in {"channel", "bot"}
+        ):
             return
         item = self._message_to_track(event.message, chat_id)
         if item:
@@ -262,14 +267,18 @@ class TelegramService:
             return
         source = self.database.get_source(chat_id) if chat_id else None
         if source and (source["selected"] or source["kind"] in {"channel", "bot"}):
-            self.database.mark_unavailable(chat_id, [str(value) for value in event.deleted_ids])
+            self.database.mark_unavailable(
+                chat_id, [str(value) for value in event.deleted_ids]
+            )
 
     async def _discard_flows(self) -> None:
         flows, self.flows = list(self.flows.values()), {}
         for flow in flows:
             if flow.task:
                 flow.task.cancel()
-        await asyncio.gather(*(flow.task for flow in flows if flow.task), return_exceptions=True)
+        await asyncio.gather(
+            *(flow.task for flow in flows if flow.task), return_exceptions=True
+        )
         for flow in flows:
             if flow.client is not self.client:
                 await flow.client.disconnect()
@@ -286,8 +295,15 @@ class TelegramService:
         return {"flowId": flow.id, "svg": svg, "expiresAt": int(qr.expires.timestamp())}
 
     async def _wait_for_qr(self, flow: LoginFlow) -> None:
+        # The wait must track the token's own lifetime, not a fixed 60s: a hardcoded timeout
+        # can outlive a short-lived token (Telegram then reports it invalid while Turntable
+        # still waits) or undershoot one that Telegram allows to live longer.
+        remaining = max(
+            1.0,
+            (flow.qr.expires - datetime.datetime.now(datetime.timezone.utc)).total_seconds(),
+        )
         try:
-            await flow.qr.wait(timeout=60)
+            await flow.qr.wait(timeout=remaining)
             await self._complete_flow(flow)
         except SessionPasswordNeededError:
             flow.state = "password_required"
@@ -391,21 +407,32 @@ class TelegramService:
         self.jobs.spawn(self.sync_all())
 
     async def countries(self) -> list[dict[str, str]]:
-        if self._countries is not None and time.monotonic() - self._countries_updated < 3600:
+        if (
+            self._countries is not None
+            and time.monotonic() - self._countries_updated < 3600
+        ):
             return self._countries
         client = self._new_client()
         await client.connect()
         try:
-            result = await client(functions.help.GetCountriesListRequest(lang_code="en", hash=0))
+            result = await client(
+                functions.help.GetCountriesListRequest(lang_code="en", hash=0)
+            )
         finally:
             await client.disconnect()
         countries = [
-            {"iso2": country.iso2, "name": country.name or country.default_name, "dialCode": code.country_code}
+            {
+                "iso2": country.iso2,
+                "name": country.name or country.default_name,
+                "dialCode": code.country_code,
+            }
             for country in result.countries
             if not country.hidden
             for code in country.country_codes
         ]
-        self._countries = sorted(countries, key=lambda item: (item["name"].casefold(), item["dialCode"]))
+        self._countries = sorted(
+            countries, key=lambda item: (item["name"].casefold(), item["dialCode"])
+        )
         self._countries_updated = time.monotonic()
         return self._countries
 
@@ -425,13 +452,17 @@ class TelegramService:
                 return value
         return "Telegram could not complete the login. Try QR login or start again."
 
-    async def disconnect_account(self) -> None:
+    async def logout_account(self) -> None:
+        """Sign out of Telegram, keeping the local library and media cache intact."""
         if self.client:
             try:
                 await self.client.log_out()
             finally:
                 self.client = None
         self.database.clear_account()
+
+    async def disconnect_account(self) -> None:
+        await self.logout_account()
         self.clear_media_cache()
         self.database.clear_sources()
 
@@ -454,24 +485,34 @@ class TelegramService:
             if entity.is_self:
                 return "saved"
             return "bot" if entity.bot else "private"
-        if isinstance(entity, types.Channel) and not entity.megagroup and not getattr(entity, "gigagroup", False):
+        if (
+            isinstance(entity, types.Channel)
+            and not entity.megagroup
+            and not getattr(entity, "gigagroup", False)
+        ):
             return "channel"
         return None
 
     async def discover_sources(self) -> list[dict[str, Any]]:
         now = time.monotonic()
         if self.discovery_cache and now - self.discovery_cache[0] < 60:
-            known = {source["chatId"]: source for source in self.database.list_sources(False)}
+            known = {
+                source["chatId"]: source for source in self.database.list_sources(False)
+            }
             return [
                 {
                     **source,
                     "selected": bool(known.get(source["chatId"], {}).get("selected")),
-                    "trackCount": int(known.get(source["chatId"], {}).get("trackCount", 0)),
+                    "trackCount": int(
+                        known.get(source["chatId"], {}).get("trackCount", 0)
+                    ),
                 }
                 for source in self.discovery_cache[1]
             ]
         client = self.require_client()
-        known = {source["chatId"]: source for source in self.database.list_sources(False)}
+        known = {
+            source["chatId"]: source for source in self.database.list_sources(False)
+        }
         discovered: list[dict[str, Any]] = []
         # asyncio.wait_for() takes an awaitable, but iter_dialogs() returns an async ITERATOR, so
         # the old wrapping raised TypeError and broke discovery outright. Bound the whole walk with
@@ -491,11 +532,15 @@ class TelegramService:
                     "username": getattr(dialog.entity, "username", None),
                     "selected": bool(known.get(str(dialog.id), {}).get("selected")),
                     "lastPostAt": int(dialog.date.timestamp()) if dialog.date else None,
-                    "trackCount": int(known.get(str(dialog.id), {}).get("trackCount", 0)),
+                    "trackCount": int(
+                        known.get(str(dialog.id), {}).get("trackCount", 0)
+                    ),
                     "avatarUrl": f"/api/sources/{dialog.id}/avatar",
                 }
             )
-        discovered = sorted(discovered, key=lambda item: (item["kind"], item["title"].casefold()))
+        discovered = sorted(
+            discovered, key=lambda item: (item["kind"], item["title"].casefold())
+        )
         self.discovery_cache = (now, [{**item} for item in discovered])
         return discovered
 
@@ -507,8 +552,7 @@ class TelegramService:
         async with self.global_search_lock:
             client = self.require_client()
             known = {
-                source["chatId"]: source
-                for source in self.database.list_sources(False)
+                source["chatId"]: source for source in self.database.list_sources(False)
             }
             track_sources: dict[str, dict[str, Any]] = {}
             tracks: list[dict[str, Any]] = []
@@ -533,7 +577,9 @@ class TelegramService:
                     "title": utils.get_display_name(entity) or "Untitled chat",
                     "username": getattr(entity, "username", None),
                     "selected": bool(existing.get("selected")),
-                    "lastPostAt": int(message.date.timestamp()) if message.date else None,
+                    "lastPostAt": int(message.date.timestamp())
+                    if message.date
+                    else None,
                 }
                 tracks.append(item)
                 if len(tracks) >= limit:
@@ -577,8 +623,12 @@ class TelegramService:
             raise KeyError("Source not found")
         if active := self.jobs.active("preview", chat_id):
             return active.public()
-        job = BackgroundJob(secrets.token_urlsafe(12), "preview", chat_id=chat_id, mode="full")
-        return self.jobs.start(job, self._run_preview(job), error_mapper=self._friendly_sync_error)
+        job = BackgroundJob(
+            secrets.token_urlsafe(12), "preview", chat_id=chat_id, mode="full"
+        )
+        return self.jobs.start(
+            job, self._run_preview(job), error_mapper=self._friendly_sync_error
+        )
 
     async def _run_preview(self, job: BackgroundJob) -> None:
         # Only scan the whole history the first time. Once a preview has completed,
@@ -590,7 +640,11 @@ class TelegramService:
 
     async def add_source(self, chat_id: str) -> dict[str, Any]:
         source = next(
-            (item for item in await self.discover_sources() if item["chatId"] == chat_id),
+            (
+                item
+                for item in await self.discover_sources()
+                if item["chatId"] == chat_id
+            ),
             None,
         )
         if not source:
@@ -615,7 +669,10 @@ class TelegramService:
             self.jobs.cancel("sync", chat_id)
             self.jobs.cancel("preview", chat_id)
             return {"source": self.database.get_source(chat_id), "job": None}
-        return {"source": self.database.get_source(chat_id), "job": self.start_sync(chat_id, True)}
+        return {
+            "source": self.database.get_source(chat_id),
+            "job": self.start_sync(chat_id, True),
+        }
 
     async def sync_all(self) -> None:
         for source in self.database.list_sources():
@@ -628,9 +685,14 @@ class TelegramService:
         if active := self.jobs.active("sync", chat_id):
             return active.public()
         job = BackgroundJob(
-            secrets.token_urlsafe(12), "sync", chat_id=chat_id, mode="full" if full else "incremental"
+            secrets.token_urlsafe(12),
+            "sync",
+            chat_id=chat_id,
+            mode="full" if full else "incremental",
         )
-        return self.jobs.start(job, self._run_sync(job, full), error_mapper=self._friendly_sync_error)
+        return self.jobs.start(
+            job, self._run_sync(job, full), error_mapper=self._friendly_sync_error
+        )
 
     async def _run_sync(self, job: BackgroundJob, full: bool) -> None:
         await self.sync_source(job.chat_id, full=full, job=job)
@@ -638,7 +700,10 @@ class TelegramService:
         self.maybe_enrich()
 
     async def sync_source(
-        self, chat_id: str, full: bool = False, job: BackgroundJob | None = None,
+        self,
+        chat_id: str,
+        full: bool = False,
+        job: BackgroundJob | None = None,
         temporary: bool = False,
     ) -> dict[str, Any]:
         client = self.require_client()
@@ -659,7 +724,9 @@ class TelegramService:
                 try:
                     if job:
                         job.state = "running"
-                    entity = await asyncio.wait_for(client.get_entity(int(chat_id)), timeout=30)
+                    entity = await asyncio.wait_for(
+                        client.get_entity(int(chat_id)), timeout=30
+                    )
                     # Single-pass scan: one iter_messages over the history, filtering
                     # audio/document in Python. Halves API round-trips vs the old
                     # two-pass (Music + Document). Kept simple — no filter= arg so
@@ -676,9 +743,13 @@ class TelegramService:
                         if job:
                             job.found = len(seen)
                         if len(items) >= 100:
-                            await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
+                            await asyncio.to_thread(
+                                self.database.upsert_tracks, list(items.values())
+                            )
                             items.clear()
-                    await asyncio.to_thread(self.database.upsert_tracks, list(items.values()))
+                    await asyncio.to_thread(
+                        self.database.upsert_tracks, list(items.values())
+                    )
                     if full and not temporary:
                         self.database.mark_missing_unavailable(chat_id, seen)
                     highest = max(highest_scanned, minimum)
@@ -693,7 +764,9 @@ class TelegramService:
                     raise
                 except Exception as error:
                     self.database.finish_sync(
-                        chat_id, int(source["lastMessageId"] or 0), self._friendly_sync_error(error)
+                        chat_id,
+                        int(source["lastMessageId"] or 0),
+                        self._friendly_sync_error(error),
                     )
                     raise
 
@@ -709,9 +782,14 @@ class TelegramService:
         disabled-suggestions setting or a transient RPC error took it down.
         """
         try:
-            result = await self.require_client()(functions.contacts.GetTopPeersRequest(
-                offset=0, limit=TOP_PEER_LIMIT, hash=0, forward_users=True,
-            ))
+            result = await self.require_client()(
+                functions.contacts.GetTopPeersRequest(
+                    offset=0,
+                    limit=TOP_PEER_LIMIT,
+                    hash=0,
+                    forward_users=True,
+                )
+            )
         except Exception:
             # Includes TopPeersDisabled surfacing as an error, flood waits and offline blips.
             return {}
@@ -728,26 +806,36 @@ class TelegramService:
         return ranking
 
     async def contacts(self) -> list[dict[str, Any]]:
-        result = await self.require_client()(functions.contacts.GetContactsRequest(hash=0))
+        result = await self.require_client()(
+            functions.contacts.GetContactsRequest(hash=0)
+        )
         ranking = await self._forward_ranking()
         contacts = []
         for user in result.users:
-            if getattr(user, "deleted", False) or getattr(user, "bot", False) or getattr(user, "is_self", False):
+            if (
+                getattr(user, "deleted", False)
+                or getattr(user, "bot", False)
+                or getattr(user, "is_self", False)
+            ):
                 continue
             user_id = str(user.id)
-            contacts.append({
-                "id": user_id,
-                "name": utils.get_display_name(user) or "Unnamed contact",
-                "username": getattr(user, "username", None),
-                "avatarUrl": f"/api/sources/{user.id}/avatar",
-                # Intersected with real contacts on purpose: top peers include bots and people
-                # who were never added, but forward_track() only accepts ids from this list, so
-                # ranking stays an ordering hint and never widens who can receive a track.
-                "forwardRank": ranking.get(user_id),
-            })
+            contacts.append(
+                {
+                    "id": user_id,
+                    "name": utils.get_display_name(user) or "Unnamed contact",
+                    "username": getattr(user, "username", None),
+                    "avatarUrl": f"/api/sources/{user.id}/avatar",
+                    # Intersected with real contacts on purpose: top peers include bots and people
+                    # who were never added, but forward_track() only accepts ids from this list, so
+                    # ranking stays an ordering hint and never widens who can receive a track.
+                    "forwardRank": ranking.get(user_id),
+                }
+            )
         return sorted(contacts, key=lambda item: item["name"].casefold())
 
-    async def forward_track(self, track: dict[str, Any], recipient_id: str | None = None) -> dict[str, Any]:
+    async def forward_track(
+        self, track: dict[str, Any], recipient_id: str | None = None
+    ) -> dict[str, Any]:
         client = self.require_client()
         destination: Any = "me"
         if recipient_id is not None:
@@ -797,7 +885,9 @@ class TelegramService:
         if is_voice or not is_audio_file(file_name, document.mime_type):
             return None
         if not file_name:
-            file_name = f"telegram-{message.id}{utils.get_extension(document) or '.audio'}"
+            file_name = (
+                f"telegram-{message.id}{utils.get_extension(document) or '.audio'}"
+            )
         if not title:
             title = Path(file_name).stem or "Unknown title"
         return {
@@ -813,7 +903,9 @@ class TelegramService:
             "documentId": str(document.id),
         }
 
-    async def thumbnail(self, chat_id: str, message_id: str, quality: str = "default") -> bytes | None:
+    async def thumbnail(
+        self, chat_id: str, message_id: str, quality: str = "default"
+    ) -> bytes | None:
         client = self.require_client()
         track = self.database.get_track(chat_id, message_id)
         if not track or not track["available"]:
@@ -822,8 +914,12 @@ class TelegramService:
         quality_tag = "hi" if quality == "high" else "lo"
         fingerprint = f"{media_identity(track.get('documentId'), track['file']['size'])}:{quality}"
         version = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
-        destination = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.jpg"
-        missing = self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.missing"
+        destination = (
+            self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.jpg"
+        )
+        missing = (
+            self.thumbnail_directory / f"{key_digest}-{quality_tag}-{version}.missing"
+        )
         if destination.is_file():
             return destination.read_bytes()
         if missing.is_file() and time.time() - missing.stat().st_mtime < 24 * 60 * 60:
@@ -836,12 +932,17 @@ class TelegramService:
             missing.touch()
             return None
         if quality == "high":
-            sizes = [(t.type, t.w * t.h if hasattr(t, "w") and t.w else 0, t) for t in document.thumbs]
+            sizes = [
+                (t.type, t.w * t.h if hasattr(t, "w") and t.w else 0, t)
+                for t in document.thumbs
+            ]
             sizes.sort(key=lambda s: s[1], reverse=True)
             thumb_type = sizes[0][0] if sizes else -1
         else:
             thumb_type = -1
-        result = await asyncio.wait_for(client.download_media(message, thumb=thumb_type, file=bytes), timeout=30)
+        result = await asyncio.wait_for(
+            client.download_media(message, thumb=thumb_type, file=bytes), timeout=30
+        )
         if not result:
             missing.touch()
             return None
@@ -861,7 +962,9 @@ class TelegramService:
         if missing.is_file() and time.time() - missing.stat().st_mtime < 24 * 60 * 60:
             return None
         entity = await client.get_entity(int(chat_id))
-        result = await client.download_profile_photo(entity, file=bytes, download_big=False)
+        result = await client.download_profile_photo(
+            entity, file=bytes, download_big=False
+        )
         if not result:
             missing.touch()
             return None
@@ -875,9 +978,15 @@ class TelegramService:
         if active := self.jobs.active("source-counts"):
             return active.public()
         job = BackgroundJob(secrets.token_urlsafe(12), "source-counts")
-        return self.jobs.start(job, self._run_source_counts(job, sources), error_mapper=self._friendly_sync_error)
+        return self.jobs.start(
+            job,
+            self._run_source_counts(job, sources),
+            error_mapper=self._friendly_sync_error,
+        )
 
-    async def _run_source_counts(self, job: BackgroundJob, sources: list[dict[str, Any]]) -> None:
+    async def _run_source_counts(
+        self, job: BackgroundJob, sources: list[dict[str, Any]]
+    ) -> None:
         job.result = {}
         client = self.require_client()
         for source in sources:
@@ -917,7 +1026,9 @@ class TelegramService:
         if not self.enrich_worker:
             job.state = "complete"
             return self.jobs.register(job)
-        return self.jobs.start(job, self._run_enrich(job, manual), error_mapper=self._friendly_enrich_error)
+        return self.jobs.start(
+            job, self._run_enrich(job, manual), error_mapper=self._friendly_enrich_error
+        )
 
     async def _run_enrich(self, job: BackgroundJob, manual: bool) -> None:
         result = await self.enrich_worker(manual)
@@ -947,7 +1058,11 @@ class TelegramService:
         if not selected:
             job.state = "complete"
             return self.jobs.register(job)
-        return self.jobs.start(job, self._run_prefetch(job, selected), error_mapper=self._friendly_sync_error)
+        return self.jobs.start(
+            job,
+            self._run_prefetch(job, selected),
+            error_mapper=self._friendly_sync_error,
+        )
 
     async def _run_prefetch(self, job: BackgroundJob, keys: list[str]) -> None:
         async def _prefetch_one(key):

@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import tempfile
 import unittest
 from pathlib import Path
@@ -935,6 +936,8 @@ class FakeQrClient:
     def __init__(self):
         self.disconnects = 0
         self.session = SimpleNamespace(save=lambda: "1" + "A" * 32)
+        self.connect = AsyncMock()
+        self.qr_login = AsyncMock()
 
     def add_event_handler(self, *_, **__):
         pass
@@ -964,20 +967,22 @@ class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
     def make_flow(self, qr_wait: AsyncMock) -> LoginFlow:
         client = FakeQrClient()
         flow = LoginFlow("flow", "qr", client)
-        flow.qr = SimpleNamespace(wait=qr_wait)
+        flow.qr = SimpleNamespace(
+            wait=qr_wait,
+            expires=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=30),
+        )
         return flow
 
     async def test_qr_wait_success_reaches_ready(self):
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
-            service.jobs.spawn = lambda job: (
-                job.close()
-            )  # sync_all must not run in the test loop
+            service.jobs.spawn = lambda coroutine: coroutine.close()  # sync_all must not run in the test loop
             flow = self.make_flow(AsyncMock(return_value=None))
             await service._wait_for_qr(flow)
             self.assertEqual("ready", flow.state)
             self.assertEqual("", flow.error)
             account = service.database.get_account()
+            assert account is not None
             self.assertEqual("123", account["telegram_user_id"])
             self.assertIs(flow.client, service.client)
             service.database.close()
@@ -1011,6 +1016,58 @@ class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
             await service._wait_for_qr(flow)
             self.assertEqual("error", flow.state)
             self.assertEqual("The Telegram login code is incorrect", flow.error)
+            service.database.close()
+
+
+    async def test_qr_wait_timeout_derives_from_token_expiry(self):
+        # The wait must track the token's own lifetime. A hardcoded 60s can outlive a
+        # short-lived token (Telegram shows "invalid/expired" while Turntable still waits)
+        # or undershoot it, so the timeout passed to qr.wait must come from qr.expires.
+        import datetime
+
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            wait = AsyncMock(side_effect=asyncio.TimeoutError())
+            flow = self.make_flow(wait)
+            flow.qr.expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=10)
+            await service._wait_for_qr(flow)
+            self.assertEqual("expired", flow.state)
+            wait.assert_awaited_once()
+            self.assertIsNotNone(wait.await_args)
+            assert wait.await_args is not None
+            timeout = wait.await_args.kwargs.get("timeout")
+            self.assertIsNotNone(timeout, "timeout must be passed to qr.wait")
+            assert timeout is not None
+            self.assertGreaterEqual(timeout, 9.0)
+            self.assertLess(timeout, 60.0, "timeout must come from the token expiry, not a hardcoded 60s")
+            service.database.close()
+
+    async def test_start_qr_login_starts_the_wait_task_before_returning(self):
+        # Branch C guard: the wait task must be alive before the QR SVG is handed to the
+        # browser, otherwise a scanned QR can never complete the login.
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            client = FakeQrClient()
+            gate = asyncio.Event()
+            fake_qr = SimpleNamespace(
+                url="tg://login?token=TestToken",
+                expires=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=30),
+                wait=lambda timeout: gate.wait(),
+            )
+            client.qr_login.return_value = fake_qr
+            service._new_client = lambda session="": client
+            service.jobs.spawn = lambda coroutine: coroutine.close()
+            result = await service.start_qr_login()
+            flow = service.flows[result["flowId"]]
+            self.assertIsNotNone(flow.task)
+            task = flow.task
+            assert task is not None
+            self.assertFalse(task.done())
+            self.assertIn("viewBox", result["svg"])
+            # Let the waiter finish cleanly so the test loop has no pending tasks.
+            gate.set()
+            await task
+            self.assertEqual("ready", flow.state)
             service.database.close()
 
 
@@ -1152,6 +1209,7 @@ class QueueWindowTests(unittest.TestCase):
                     current_key=current, window_before=50, window_after=300
                 )
                 self.assertIsInstance(result, dict)
+                assert isinstance(result, dict)
                 self.assertEqual(5001, result["total"])
                 self.assertEqual(2450, result["offset"])
                 # The window is a contiguous slice of the full ordering, current track inside.
@@ -1165,12 +1223,14 @@ class QueueWindowTests(unittest.TestCase):
                 first = database.playback_queue(
                     current_key="1:4999", window_before=50, window_after=300
                 )
+                assert isinstance(first, dict)
                 self.assertEqual(0, first["offset"])
                 self.assertEqual("1:5000", first["keys"][0])
                 self.assertIn("1:4999", first["keys"][:2])
                 last = database.playback_queue(
                     current_key="1:0", window_before=50, window_after=300
                 )
+                assert isinstance(last, dict)
                 self.assertLessEqual(last["offset"] + len(last["keys"]), 5001)
             finally:
                 database.close()
@@ -1204,6 +1264,7 @@ class QueueWindowTests(unittest.TestCase):
                     window_before=5,
                     window_after=5,
                 )
+                assert isinstance(result, dict)
                 self.assertEqual(len(full), result["total"])
                 self.assertEqual(6, len(result["keys"]))
                 self.assertEqual(0, result["offset"])
