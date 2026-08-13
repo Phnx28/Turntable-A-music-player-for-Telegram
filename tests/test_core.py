@@ -5,22 +5,34 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from core import (
+    Database,
+    RangeNotSatisfiable,
+    now_ts,
+    parse_lrc,
+    parse_range_header,
+    weighted_shuffle_tracks,
+)
 from cryptography.fernet import Fernet
-from telethon.errors import RPCError
+from media import MEDIA_CHUNK_SIZE
+from telegram_service import QR_QUIET_MODULES, LoginFlow, TelegramService, render_qr_svg
+from telethon.errors import RPCError, SessionPasswordNeededError
 from telethon.tl import functions
 from telethon.tl.types import User
 from telethon.tl.types import contacts as contacts_types
-
-from core import Database, RangeNotSatisfiable, now_ts, parse_lrc, parse_range_header, weighted_shuffle_tracks
-from media import MEDIA_CHUNK_SIZE
-from telegram_service import QR_QUIET_MODULES, LoginFlow, TelegramService, render_qr_svg
 
 
 class CoreTests(unittest.TestCase):
     def test_ranges(self):
         value = parse_range_header("bytes=0-99", 1000)
         self.assertEqual((0, 99, True), (value.start, value.end, value.partial))
-        self.assertEqual((900, 999), (parse_range_header("bytes=-100", 1000).start, parse_range_header("bytes=-100", 1000).end))
+        self.assertEqual(
+            (900, 999),
+            (
+                parse_range_header("bytes=-100", 1000).start,
+                parse_range_header("bytes=-100", 1000).end,
+            ),
+        )
         value = parse_range_header(None, 1000)
         self.assertEqual((0, 999, False), (value.start, value.end, value.partial))
         with self.assertRaises(RangeNotSatisfiable):
@@ -45,11 +57,17 @@ class CoreTests(unittest.TestCase):
         self.assertIn(f'viewBox="0 0 {extent} {extent}"', svg)
         self.assertNotRegex(svg, r"<svg[^>]*\swidth=")
         # The quiet zone must be inside the artwork, so it cannot be lost by the surrounding CSS.
-        self.assertGreaterEqual(QR_QUIET_MODULES, 2, "below this the code stops decoding")
+        self.assertGreaterEqual(
+            QR_QUIET_MODULES, 2, "below this the code stops decoding"
+        )
         # Every drawn module must sit within the quiet margin on all four sides.
-        coordinates = [float(value) for value in re.findall(r"[MHV](-?\d+(?:\.\d+)?)", svg)]
+        coordinates = [
+            float(value) for value in re.findall(r"[MHV](-?\d+(?:\.\d+)?)", svg)
+        ]
         drawn = [value for value in coordinates if value != 0.0]
-        self.assertGreater(min(drawn), 0, "a module touches the edge, leaving no quiet zone")
+        self.assertGreater(
+            min(drawn), 0, "a module touches the edge, leaving no quiet zone"
+        )
         self.assertLessEqual(max(drawn), extent - QR_QUIET_MODULES)
 
     def test_database_files_are_not_world_readable(self):
@@ -61,9 +79,17 @@ class CoreTests(unittest.TestCase):
             database.list_sources(False)
             try:
                 self.assertEqual(0o700, path.parent.stat().st_mode & 0o777)
-                for target in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+                for target in (
+                    path,
+                    path.with_name(path.name + "-wal"),
+                    path.with_name(path.name + "-shm"),
+                ):
                     self.assertTrue(target.exists(), f"{target.name} missing")
-                    self.assertEqual(0, target.stat().st_mode & 0o077, f"{target.name} is group/world readable")
+                    self.assertEqual(
+                        0,
+                        target.stat().st_mode & 0o077,
+                        f"{target.name} is group/world readable",
+                    )
             finally:
                 database.close()
 
@@ -83,12 +109,24 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            track = {"chatId": "1", "messageId": "2", "fileName": "song.mp3", "mimeType": "audio/mpeg", "title": "Telegram title", "artist": "Telegram artist"}
+            track = {
+                "chatId": "1",
+                "messageId": "2",
+                "fileName": "song.mp3",
+                "mimeType": "audio/mpeg",
+                "title": "Telegram title",
+                "artist": "Telegram artist",
+            }
             database.upsert_tracks([track])
             database.save_metadata_patch("1", "2", {"title": "My title"}, [])
             database.upsert_tracks([{**track, "title": "Changed upstream"}])
-            self.assertEqual("My title", database.get_track("1", "2")["metadata"]["title"])
-            self.assertEqual("Changed upstream", database.get_track("1", "2")["telegramMetadata"]["title"])
+            self.assertEqual(
+                "My title", database.get_track("1", "2")["metadata"]["title"]
+            )
+            self.assertEqual(
+                "Changed upstream",
+                database.get_track("1", "2")["telegramMetadata"]["title"],
+            )
             database.close()
 
     def test_unselect_search_and_unlimited_library(self):
@@ -96,7 +134,14 @@ class CoreTests(unittest.TestCase):
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
             tracks = [
-                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3", "mimeType": "audio/mpeg", "title": f"Telegram title {index}", "artist": "Artist"}
+                {
+                    "chatId": "1",
+                    "messageId": str(index),
+                    "fileName": f"song-{index}.mp3",
+                    "mimeType": "audio/mpeg",
+                    "title": f"Telegram title {index}",
+                    "artist": "Artist",
+                }
                 for index in range(5001)
             ]
             database.upsert_tracks(tracks)
@@ -111,14 +156,26 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(5001, len(set(keys)))
             self.assertEqual(5001, len(database.playback_queue("1")))
             self.assertEqual(5001, len(database.playback_queue("1", shuffle=True)))
-            self.assertEqual("1:2", database.list_tracks(query="Needle")["items"][0]["key"])
+            self.assertEqual(
+                "1:2", database.list_tracks(query="Needle")["items"][0]["key"]
+            )
             self.assertEqual(4998, database.track_position("1:2"))
             database.set_liked("1:2", True)
-            self.assertEqual(["1:2"], [item["key"] for item in database.list_tracks(liked=True)["items"]])
+            self.assertEqual(
+                ["1:2"],
+                [item["key"] for item in database.list_tracks(liked=True)["items"]],
+            )
             database.set_source_selected("1", False)
             self.assertEqual([], database.list_tracks()["items"])
-            self.assertEqual("1:2", database.list_tracks(query="Needle", include_unselected=True)["items"][0]["key"])
-            self.assertEqual("Needle Remix", database.get_track("1", "2")["metadata"]["title"])
+            self.assertEqual(
+                "1:2",
+                database.list_tracks(query="Needle", include_unselected=True)["items"][
+                    0
+                ]["key"],
+            )
+            self.assertEqual(
+                "Needle Remix", database.get_track("1", "2")["metadata"]["title"]
+            )
             database.close()
 
     def test_library_rows_report_liked_the_same_as_queue_rows(self):
@@ -128,8 +185,18 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([{"chatId": "1", "messageId": "2", "fileName": "song.mp3",
-                                     "mimeType": "audio/mpeg", "title": "T", "artist": "A"}])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": "2",
+                        "fileName": "song.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "T",
+                        "artist": "A",
+                    }
+                ]
+            )
             database.set_liked("1:2", True)
 
             self.assertIs(True, database.list_tracks()["items"][0]["liked"])
@@ -147,10 +214,24 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg", "title": "Zebra"},
-                {"chatId": "1", "messageId": "2", "fileName": "b.mp3", "mimeType": "audio/mpeg", "title": "Walrus"},
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": "1",
+                        "fileName": "a.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Zebra",
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "2",
+                        "fileName": "b.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Walrus",
+                    },
+                ]
+            )
             database.save_metadata_patch("1", "2", {"title": "Zeppelin"}, [])
             for query, expected in (("z", 2), ("ze", 2), ("wa", 0), ("zeb", 1)):
                 page = database.list_tracks(query=query)
@@ -162,19 +243,47 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": "1", "fileName": "z.mp3", "mimeType": "audio/mpeg",
-                 "title": "Zebra", "artist": "Beta", "durationMs": 300_000, "sentAt": 300},
-                {"chatId": "1", "messageId": "2", "fileName": "a.mp3", "mimeType": "audio/mpeg",
-                 "title": "apple", "artist": "Alpha", "durationMs": 100_000, "sentAt": 200},
-                {"chatId": "1", "messageId": "3", "fileName": "m.mp3", "mimeType": "audio/mpeg",
-                 "title": "Mango", "artist": "Gamma", "durationMs": 200_000, "sentAt": 100},
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": "1",
+                        "fileName": "z.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Zebra",
+                        "artist": "Beta",
+                        "durationMs": 300_000,
+                        "sentAt": 300,
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "2",
+                        "fileName": "a.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "apple",
+                        "artist": "Alpha",
+                        "durationMs": 100_000,
+                        "sentAt": 200,
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "3",
+                        "fileName": "m.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Mango",
+                        "artist": "Gamma",
+                        "durationMs": 200_000,
+                        "sentAt": 100,
+                    },
+                ]
+            )
             # The displayed title wins over the Telegram one, so sorting must follow the override.
             database.save_metadata_patch("1", "1", {"title": "Aardvark override"}, [])
 
             def keys(sort):
-                return [item["key"] for item in database.list_tracks(sort=sort)["items"]]
+                return [
+                    item["key"] for item in database.list_tracks(sort=sort)["items"]
+                ]
 
             self.assertEqual(["1:1", "1:2", "1:3"], keys("posted"))
             # Aardvark override first, then apple -- COLLATE NOCASE, or "apple" would follow "Mango".
@@ -183,8 +292,16 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(["1:1", "1:3", "1:2"], keys("duration"))
 
             # Anything not on the allowlist degrades to posted rather than reaching SQL.
-            for hostile in ["title; DROP TABLE tracks", "t.sent_at ASC", "", "nonsense", None]:
-                self.assertEqual(keys("posted"), keys(hostile), f"{hostile!r} was not rejected")
+            for hostile in [
+                "title; DROP TABLE tracks",
+                "t.sent_at ASC",
+                "",
+                "nonsense",
+                None,
+            ]:
+                self.assertEqual(
+                    keys("posted"), keys(hostile), f"{hostile!r} was not rejected"
+                )
             # And the table is still there.
             self.assertEqual(3, database.list_tracks()["total"])
             database.close()
@@ -192,26 +309,68 @@ class CoreTests(unittest.TestCase):
     def test_track_pages_report_authoritative_all_music_total_and_utc_day_breaks(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
-            database.upsert_source({"chatId": "1", "kind": "channel", "title": "Selected"})
-            database.upsert_source({"chatId": "2", "kind": "channel", "title": "Hidden"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg", "title": "Needle", "sentAt": 1753835400},
-                {"chatId": "1", "messageId": "2", "fileName": "b.mp3", "mimeType": "audio/mpeg", "title": "Other", "sentAt": 1753749000},
-                {"chatId": "1", "messageId": "3", "fileName": "c.mp3", "mimeType": "audio/mpeg", "title": "Unknown date", "sentAt": 0},
-                {"chatId": "2", "messageId": "1", "fileName": "d.mp3", "mimeType": "audio/mpeg", "title": "Hidden", "sentAt": 1753835400},
-            ])
+            database.upsert_source(
+                {"chatId": "1", "kind": "channel", "title": "Selected"}
+            )
+            database.upsert_source(
+                {"chatId": "2", "kind": "channel", "title": "Hidden"}
+            )
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": "1",
+                        "fileName": "a.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Needle",
+                        "sentAt": 1753835400,
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "2",
+                        "fileName": "b.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Other",
+                        "sentAt": 1753749000,
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "3",
+                        "fileName": "c.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Unknown date",
+                        "sentAt": 0,
+                    },
+                    {
+                        "chatId": "2",
+                        "messageId": "1",
+                        "fileName": "d.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Hidden",
+                        "sentAt": 1753835400,
+                    },
+                ]
+            )
             database.set_source_selected("2", False)
 
             page = database.list_tracks(query="Needle")
-            self.assertEqual(1, page["total"], "active-view total remains query-specific")
-            self.assertEqual(3, page["allMusicTotal"], "selected, available tracks are authoritative")
+            self.assertEqual(
+                1, page["total"], "active-view total remains query-specific"
+            )
+            self.assertEqual(
+                3, page["allMusicTotal"], "selected, available tracks are authoritative"
+            )
             self.assertEqual([{"index": 0, "dayKey": "2025-07-30"}], page["dayBreaks"])
 
             full = database.list_tracks()
-            self.assertEqual([
-                {"index": 0, "dayKey": "2025-07-30"},
-                {"index": 1, "dayKey": "2025-07-29"},
-            ], full["dayBreaks"], "invalid/non-positive timestamps do not create rules")
+            self.assertEqual(
+                [
+                    {"index": 0, "dayKey": "2025-07-30"},
+                    {"index": 1, "dayKey": "2025-07-29"},
+                ],
+                full["dayBreaks"],
+                "invalid/non-positive timestamps do not create rules",
+            )
             database.mark_unavailable("1", ["2"])
             self.assertEqual(2, database.list_tracks()["allMusicTotal"])
 
@@ -223,20 +382,54 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": "1", "fileName": "z.mp3", "mimeType": "audio/mpeg",
-                 "title": "Zebra", "artist": "Beta", "durationMs": 300_000, "sentAt": 300},
-                {"chatId": "1", "messageId": "2", "fileName": "a.mp3", "mimeType": "audio/mpeg",
-                 "title": "apple", "artist": "Alpha", "durationMs": 100_000, "sentAt": 200},
-                {"chatId": "1", "messageId": "3", "fileName": "m.mp3", "mimeType": "audio/mpeg",
-                 "title": "Mango", "artist": "Gamma", "durationMs": 200_000, "sentAt": 100},
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": "1",
+                        "fileName": "z.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Zebra",
+                        "artist": "Beta",
+                        "durationMs": 300_000,
+                        "sentAt": 300,
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "2",
+                        "fileName": "a.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "apple",
+                        "artist": "Alpha",
+                        "durationMs": 100_000,
+                        "sentAt": 200,
+                    },
+                    {
+                        "chatId": "1",
+                        "messageId": "3",
+                        "fileName": "m.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": "Mango",
+                        "artist": "Gamma",
+                        "durationMs": 200_000,
+                        "sentAt": 100,
+                    },
+                ]
+            )
             database.save_metadata_patch("1", "1", {"title": "Aardvark override"}, [])
 
-            self.assertEqual(0, database.track_position("1:1", chat_id="1", sort="posted"))
-            self.assertEqual(1, database.track_position("1:2", chat_id="1", sort="title"))
-            self.assertEqual(1, database.track_position("1:1", chat_id="1", sort="artist"))
-            self.assertEqual(2, database.track_position("1:2", chat_id="1", sort="duration"))
+            self.assertEqual(
+                0, database.track_position("1:1", chat_id="1", sort="posted")
+            )
+            self.assertEqual(
+                1, database.track_position("1:2", chat_id="1", sort="title")
+            )
+            self.assertEqual(
+                1, database.track_position("1:1", chat_id="1", sort="artist")
+            )
+            self.assertEqual(
+                2, database.track_position("1:2", chat_id="1", sort="duration")
+            )
             # Position uses the same allowlist fallback as list_tracks, never client SQL.
             self.assertEqual(
                 database.track_position("1:1", chat_id="1", sort="posted"),
@@ -251,12 +444,31 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Kept"})
-            database.upsert_source({"chatId": "2", "kind": "channel", "title": "Dropped"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": "1", "fileName": "a.mp3", "mimeType": "audio/mpeg"},
-                {"chatId": "2", "messageId": "1", "fileName": "b.mp3", "mimeType": "audio/mpeg"},
-                {"chatId": "2", "messageId": "2", "fileName": "c.mp3", "mimeType": "audio/mpeg"},
-            ])
+            database.upsert_source(
+                {"chatId": "2", "kind": "channel", "title": "Dropped"}
+            )
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": "1",
+                        "fileName": "a.mp3",
+                        "mimeType": "audio/mpeg",
+                    },
+                    {
+                        "chatId": "2",
+                        "messageId": "1",
+                        "fileName": "b.mp3",
+                        "mimeType": "audio/mpeg",
+                    },
+                    {
+                        "chatId": "2",
+                        "messageId": "2",
+                        "fileName": "c.mp3",
+                        "mimeType": "audio/mpeg",
+                    },
+                ]
+            )
             database.set_source_selected("2", False)
 
             page = database.list_tracks(chat_id="2")
@@ -270,7 +482,12 @@ class CoreTests(unittest.TestCase):
     def test_weighted_shuffle_has_no_duplicates_and_tails_recent_tracks(self):
         current = now_ts()
         items = [
-            {"key": str(index), "playCount": index, "lastStartedAt": current - index if index < 20 else 0, "lastPlayedAt": 0}
+            {
+                "key": str(index),
+                "playCount": index,
+                "lastStartedAt": current - index if index < 20 else 0,
+                "lastPlayedAt": 0,
+            }
             for index in range(30)
         ]
         values = iter((index + 1) / 31 for index in range(30))
@@ -346,11 +563,15 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
             client = FakeLoginClient()
-            service.flows["flow"] = LoginFlow("flow", "phone", client, state="password_required")
+            service.flows["flow"] = LoginFlow(
+                "flow", "phone", client, state="password_required"
+            )
             for _ in range(2):
                 result = await service.submit_password("flow", "wrong")
                 self.assertEqual("password_required", result["state"])
-                self.assertEqual("The Telegram 2FA password is incorrect", result["error"])
+                self.assertEqual(
+                    "The Telegram 2FA password is incorrect", result["error"]
+                )
             self.assertEqual(2, client.password_attempts)
             service.database.close()
 
@@ -360,32 +581,44 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         # partial scan would make the next incremental sync skip every older message.
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
-            service.database.upsert_source({"chatId": "55", "kind": "channel", "title": "Preview"})
+            service.database.upsert_source(
+                {"chatId": "55", "kind": "channel", "title": "Preview"}
+            )
             messages = [SimpleNamespace(id=index) for index in (40, 30, 20, 10)]
             service.client = FakeCancellingSyncClient(messages, cancel_after=2)
             service._message_to_track = lambda message, chat_id: {
-                "chatId": chat_id, "messageId": str(message.id),
-                "fileName": f"{message.id}.mp3", "mimeType": "audio/mpeg",
+                "chatId": chat_id,
+                "messageId": str(message.id),
+                "fileName": f"{message.id}.mp3",
+                "mimeType": "audio/mpeg",
             }
             with self.assertRaises(asyncio.CancelledError):
                 await service.sync_source("55", full=True, temporary=True)
             source = service.database.get_source("55")
-            self.assertEqual(0, int(source["lastMessageId"] or 0), "cursor must not advance")
+            self.assertEqual(
+                0, int(source["lastMessageId"] or 0), "cursor must not advance"
+            )
             self.assertEqual(2, service.database.list_tracks(chat_id="55")["total"])
             service.database.close()
 
     async def test_completed_sync_advances_the_cursor(self):
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
-            service.database.upsert_source({"chatId": "56", "kind": "channel", "title": "Done"})
+            service.database.upsert_source(
+                {"chatId": "56", "kind": "channel", "title": "Done"}
+            )
             messages = [SimpleNamespace(id=index) for index in (40, 30, 20, 10)]
             service.client = FakeCancellingSyncClient(messages, cancel_after=None)
             service._message_to_track = lambda message, chat_id: {
-                "chatId": chat_id, "messageId": str(message.id),
-                "fileName": f"{message.id}.mp3", "mimeType": "audio/mpeg",
+                "chatId": chat_id,
+                "messageId": str(message.id),
+                "fileName": f"{message.id}.mp3",
+                "mimeType": "audio/mpeg",
             }
             await service.sync_source("56", full=True, temporary=True)
-            self.assertEqual(40, int(service.database.get_source("56")["lastMessageId"] or 0))
+            self.assertEqual(
+                40, int(service.database.get_source("56")["lastMessageId"] or 0)
+            )
             self.assertEqual(4, service.database.list_tracks(chat_id="56")["total"])
             service.database.close()
 
@@ -412,16 +645,24 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             service.client = client
             service.classify_entity = lambda _: "channel"
             service._message_to_track = lambda *_: {
-                "chatId": "22", "messageId": "7", "fileName": "result.mp3",
-                "mimeType": "audio/mpeg", "title": "Search result", "artist": "Artist",
+                "chatId": "22",
+                "messageId": "7",
+                "fileName": "result.mp3",
+                "mimeType": "audio/mpeg",
+                "title": "Search result",
+                "artist": "Artist",
             }
             first = await asyncio.wait_for(service.global_music_search("result", 10), 2)
-            second = await asyncio.wait_for(service.global_music_search("result", 10), 2)
+            second = await asyncio.wait_for(
+                service.global_music_search("result", 10), 2
+            )
             self.assertEqual(2, client.searches)
             self.assertEqual("22:7", first["tracks"][0]["key"])
             self.assertEqual("22:7", second["tracks"][0]["key"])
             self.assertFalse(service.database.get_source("22")["selected"])
-            self.assertEqual("Result archive", service.database.get_source("23")["title"])
+            self.assertEqual(
+                "Result archive", service.database.get_source("23")["title"]
+            )
             service.database.close()
 
     async def test_tagged_download_uses_local_metadata_without_touching_original(self):
@@ -431,7 +672,10 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             original.write_bytes(b"original")
             service.media.cache_media = AsyncMock(return_value=original)
             track = {
-                "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
+                "key": "1:2",
+                "chatId": "1",
+                "messageId": "2",
+                "documentId": "3",
                 "file": {"name": "song.mp3", "size": 8},
                 "metadata": {"title": "Edited title", "artist": "Edited artist"},
                 "overrides": {"title": "Edited title"},
@@ -441,7 +685,9 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             async def fake_exec(*command, **_):
                 commands.append(command)
                 Path(command[-1]).write_bytes(b"tagged")
-                return SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b"", b"")))
+                return SimpleNamespace(
+                    returncode=0, communicate=AsyncMock(return_value=(b"", b""))
+                )
 
             with patch("asyncio.create_subprocess_exec", fake_exec):
                 result = await service.media.tagged_download(track)
@@ -461,7 +707,10 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             original.write_bytes(b"original")
             service.media.cache_media = AsyncMock(return_value=original)
             track = {
-                "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
+                "key": "1:2",
+                "chatId": "1",
+                "messageId": "2",
+                "documentId": "3",
                 "file": {"name": "song.mp3", "size": 8},
                 "metadata": {"title": "Edited title"},
                 "overrides": {"title": "Edited title"},
@@ -487,7 +736,10 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             original.write_bytes(b"original")
             service.media.cache_media = AsyncMock(return_value=original)
             track = {
-                "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "3",
+                "key": "1:2",
+                "chatId": "1",
+                "messageId": "2",
+                "documentId": "3",
                 "file": {"name": "song.mp3", "size": 8},
                 "metadata": {"title": "Edited title"},
                 "overrides": {"title": "Edited title"},
@@ -520,10 +772,15 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             media = service.media
             total = MEDIA_CHUNK_SIZE + 17
             track = {
-                "key": "1:2", "chatId": "1", "messageId": "2", "documentId": "9",
+                "key": "1:2",
+                "chatId": "1",
+                "messageId": "2",
+                "documentId": "9",
                 "file": {"name": "song.mp3", "size": total},
             }
-            media.get_message_document = AsyncMock(return_value=(None, SimpleNamespace(id=9, size=total)))
+            media.get_message_document = AsyncMock(
+                return_value=(None, SimpleNamespace(id=9, size=total))
+            )
 
             async def interrupted(_, start, length):
                 self.assertEqual((0, total), (start, length))
@@ -546,7 +803,9 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([], list(media.media_directory.glob("*.part")))
 
             changed = {**track, "documentId": "10"}
-            media.get_message_document = AsyncMock(return_value=(None, SimpleNamespace(id=10, size=total)))
+            media.get_message_document = AsyncMock(
+                return_value=(None, SimpleNamespace(id=10, size=total))
+            )
 
             async def fresh(_, start, length):
                 self.assertEqual((0, total), (start, length))
@@ -570,7 +829,12 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             # 4 sources, semaphore(3) means 3 run concurrently and the 4th waits.
             for chat_id in ("1", "2", "3", "4"):
                 service.database.upsert_source(
-                    {"chatId": chat_id, "kind": "channel", "title": f"S{chat_id}", "selected": True}
+                    {
+                        "chatId": chat_id,
+                        "kind": "channel",
+                        "title": f"S{chat_id}",
+                        "selected": True,
+                    }
                 )
             in_flight = 0
             peak = 0
@@ -591,13 +855,20 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
                 if False:  # pragma: no cover - keep this an async generator
                     yield None
 
-            service.database.get_source = lambda chat_id: {"chatId": chat_id, "selected": True, "lastMessageId": 0}
+            service.database.get_source = lambda chat_id: {
+                "chatId": chat_id,
+                "selected": True,
+                "lastMessageId": 0,
+            }
             service.require_client = lambda: SimpleNamespace(
                 is_connected=lambda: True,
                 get_entity=AsyncMock(side_effect=fake_get_entity),
                 iter_messages=fake_iter_messages,
             )
-            tasks = [asyncio.create_task(service.sync_source(chat_id)) for chat_id in ("1", "2", "3", "4")]
+            tasks = [
+                asyncio.create_task(service.sync_source(chat_id))
+                for chat_id in ("1", "2", "3", "4")
+            ]
             # wait until 3 have entered iter_messages; the 4th must be parked on the semaphore.
             await asyncio.wait_for(started.wait(), 2)
             for _ in range(50):
@@ -623,7 +894,11 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             started = asyncio.Event()
             proceed = asyncio.Event()
             service.client = SimpleNamespace(is_connected=lambda: True)
-            service.database.get_source = lambda _chat_id: {"chatId": "1", "selected": True, "lastMessageId": 0}
+            service.database.get_source = lambda _chat_id: {
+                "chatId": "1",
+                "selected": True,
+                "lastMessageId": 0,
+            }
 
             async def fake_get_entity(_chat_id: int) -> int:
                 return 1
@@ -648,7 +923,94 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(started.wait(), 2)
             proceed.set()
             await asyncio.wait_for(asyncio.gather(t1, t2), 2)
-            self.assertLessEqual(peak, 1, "per-source lock must serialize the same chat_id")
+            self.assertLessEqual(
+                peak, 1, "per-source lock must serialize the same chat_id"
+            )
+            service.database.close()
+
+
+class FakeQrClient:
+    """Minimal client surface _wait_for_qr/_complete_flow touch; never talks to Telegram."""
+
+    def __init__(self):
+        self.disconnects = 0
+        self.session = SimpleNamespace(save=lambda: "1" + "A" * 32)
+
+    def add_event_handler(self, *_, **__):
+        pass
+
+    async def disconnect(self):
+        self.disconnects += 1
+
+    async def log_out(self):
+        self.disconnects += 1
+
+    async def get_me(self):
+        return User(id=123, first_name="Test", last_name=None, username="test")
+
+
+class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
+    """Characterize _wait_for_qr state transitions with fakes; no Telegram connection."""
+
+    def service(self, directory: str) -> TelegramService:
+        return TelegramService(
+            Database(Path(directory) / "library.sqlite3"),
+            api_id=1,
+            api_hash="test",
+            encryption_key=Fernet.generate_key().decode(),
+            data_directory=Path(directory),
+        )
+
+    def make_flow(self, qr_wait: AsyncMock) -> LoginFlow:
+        client = FakeQrClient()
+        flow = LoginFlow("flow", "qr", client)
+        flow.qr = SimpleNamespace(wait=qr_wait)
+        return flow
+
+    async def test_qr_wait_success_reaches_ready(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            service.jobs.spawn = lambda job: (
+                job.close()
+            )  # sync_all must not run in the test loop
+            flow = self.make_flow(AsyncMock(return_value=None))
+            await service._wait_for_qr(flow)
+            self.assertEqual("ready", flow.state)
+            self.assertEqual("", flow.error)
+            account = service.database.get_account()
+            self.assertEqual("123", account["telegram_user_id"])
+            self.assertIs(flow.client, service.client)
+            service.database.close()
+
+    async def test_qr_wait_password_needed_marks_password_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            flow = self.make_flow(
+                AsyncMock(side_effect=SessionPasswordNeededError(None))
+            )
+            await service._wait_for_qr(flow)
+            self.assertEqual("password_required", flow.state)
+            self.assertIsNone(service.database.get_account())
+            service.database.close()
+
+    async def test_qr_wait_timeout_marks_expired_and_disconnects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            flow = self.make_flow(AsyncMock(side_effect=asyncio.TimeoutError()))
+            await service._wait_for_qr(flow)
+            self.assertEqual("expired", flow.state)
+            self.assertEqual(1, flow.client.disconnects)
+            service.database.close()
+
+    async def test_qr_wait_generic_error_marks_error_with_friendly_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.service(directory)
+            flow = self.make_flow(
+                AsyncMock(side_effect=RuntimeError("PHONE_CODE_INVALID"))
+            )
+            await service._wait_for_qr(flow)
+            self.assertEqual("error", flow.state)
+            self.assertEqual("The Telegram login code is incorrect", flow.error)
             service.database.close()
 
 
@@ -669,7 +1031,14 @@ class ContactRankingTests(unittest.IsolatedAsyncioTestCase):
         # Real User instances: utils.get_display_name() type-checks its argument, so a
         # SimpleNamespace silently degrades every name to "Unnamed contact".
         return [
-            User(id=1, first_name="Ada", username="ada", bot=False, deleted=False, is_self=False),
+            User(
+                id=1,
+                first_name="Ada",
+                username="ada",
+                bot=False,
+                deleted=False,
+                is_self=False,
+            ),
             User(id=2, first_name="Bo", bot=False, deleted=False, is_self=False),
             User(id=3, first_name="Cy", bot=False, deleted=False, is_self=False),
         ]
@@ -687,34 +1056,46 @@ class ContactRankingTests(unittest.IsolatedAsyncioTestCase):
     async def test_ranks_only_saved_contacts_and_keeps_alphabetical_order(self):
         # Top peers include a bot (99) and a non-contact (42). Neither may appear: forward_track()
         # validates the recipient against this same list, so ranking must not widen it.
-        peers = SimpleNamespace(peers=[
-            SimpleNamespace(peer=SimpleNamespace(user_id=3), rating=9.0),
-            SimpleNamespace(peer=SimpleNamespace(user_id=99), rating=8.0),
-            SimpleNamespace(peer=SimpleNamespace(user_id=1), rating=2.0),
-            SimpleNamespace(peer=SimpleNamespace(user_id=42), rating=1.0),
-        ])
+        peers = SimpleNamespace(
+            peers=[
+                SimpleNamespace(peer=SimpleNamespace(user_id=3), rating=9.0),
+                SimpleNamespace(peer=SimpleNamespace(user_id=99), rating=8.0),
+                SimpleNamespace(peer=SimpleNamespace(user_id=1), rating=2.0),
+                SimpleNamespace(peer=SimpleNamespace(user_id=42), rating=1.0),
+            ]
+        )
         result = contacts_types.TopPeers(
-            categories=[SimpleNamespace(category=None, peers=peers.peers)], chats=[], users=[])
+            categories=[SimpleNamespace(category=None, peers=peers.peers)],
+            chats=[],
+            users=[],
+        )
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
             service.require_client = lambda: self._client(result)
             people = await service.contacts()
             self.assertEqual(["Ada", "Bo", "Cy"], [item["name"] for item in people])
-            self.assertEqual({"Ada": 2.0, "Bo": None, "Cy": 9.0},
-                             {item["name"]: item["forwardRank"] for item in people})
+            self.assertEqual(
+                {"Ada": 2.0, "Bo": None, "Cy": 9.0},
+                {item["name"]: item["forwardRank"] for item in people},
+            )
             service.database.close()
 
     async def test_disabled_or_failing_top_peers_still_returns_contacts(self):
         # Frequent contacts are a nicety. A user who turned off suggestions, or a flood wait,
         # must not take down the whole share picker.
-        for outcome in (contacts_types.TopPeersDisabled(), RPCError("req", "FLOOD_WAIT_5", 420)):
+        for outcome in (
+            contacts_types.TopPeersDisabled(),
+            RPCError("req", "FLOOD_WAIT_5", 420),
+        ):
             with tempfile.TemporaryDirectory() as directory:
                 service = self.service(directory)
                 service.require_client = lambda: self._client(outcome)
                 people = await service.contacts()
                 self.assertEqual(["Ada", "Bo", "Cy"], [item["name"] for item in people])
-                self.assertTrue(all(item["forwardRank"] is None for item in people),
-                                f"{type(outcome).__name__} must degrade to an unranked list")
+                self.assertTrue(
+                    all(item["forwardRank"] is None for item in people),
+                    f"{type(outcome).__name__} must degrade to an unranked list",
+                )
                 service.database.close()
 
 
@@ -729,11 +1110,19 @@ class QueueWindowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
-                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
-                for index in range(5001)
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": str(index),
+                        "fileName": f"song-{index}.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": f"Track {index}",
+                        "artist": "Artist",
+                    }
+                    for index in range(5001)
+                ]
+            )
             try:
                 self.assertEqual(5001, len(database.playback_queue("1")))
             finally:
@@ -743,28 +1132,45 @@ class QueueWindowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
-                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
-                for index in range(5001)
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": str(index),
+                        "fileName": f"song-{index}.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": f"Track {index}",
+                        "artist": "Artist",
+                    }
+                    for index in range(5001)
+                ]
+            )
             try:
                 full = self._full(database, 5001)
                 current = "1:2500"
-                result = database.playback_queue(current_key=current, window_before=50, window_after=300)
+                result = database.playback_queue(
+                    current_key=current, window_before=50, window_after=300
+                )
                 self.assertIsInstance(result, dict)
                 self.assertEqual(5001, result["total"])
                 self.assertEqual(2450, result["offset"])
                 # The window is a contiguous slice of the full ordering, current track inside.
-                self.assertEqual(full[result["offset"]:result["offset"] + len(result["keys"])], result["keys"])
+                self.assertEqual(
+                    full[result["offset"] : result["offset"] + len(result["keys"])],
+                    result["keys"],
+                )
                 self.assertEqual(current, result["keys"][50])
                 self.assertEqual(351, len(result["keys"]))
                 # Slices must never reach past the ends of the library.
-                first = database.playback_queue(current_key="1:4999", window_before=50, window_after=300)
+                first = database.playback_queue(
+                    current_key="1:4999", window_before=50, window_after=300
+                )
                 self.assertEqual(0, first["offset"])
                 self.assertEqual("1:5000", first["keys"][0])
                 self.assertIn("1:4999", first["keys"][:2])
-                last = database.playback_queue(current_key="1:0", window_before=50, window_after=300)
+                last = database.playback_queue(
+                    current_key="1:0", window_before=50, window_after=300
+                )
                 self.assertLessEqual(last["offset"] + len(last["keys"]), 5001)
             finally:
                 database.close()
@@ -776,15 +1182,27 @@ class QueueWindowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
-                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
-                for index in range(50)
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": str(index),
+                        "fileName": f"song-{index}.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": f"Track {index}",
+                        "artist": "Artist",
+                    }
+                    for index in range(50)
+                ]
+            )
             try:
                 full = database.playback_queue("1", shuffle=True, current_key="1:25")
                 result = database.playback_queue(
-                    "1", shuffle=True, current_key="1:25", window_before=5, window_after=5
+                    "1",
+                    shuffle=True,
+                    current_key="1:25",
+                    window_before=5,
+                    window_after=5,
                 )
                 self.assertEqual(len(full), result["total"])
                 self.assertEqual(6, len(result["keys"]))
@@ -801,11 +1219,19 @@ class SearchReconcileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
-                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
-                for index in range(40)
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": str(index),
+                        "fileName": f"song-{index}.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": f"Track {index}",
+                        "artist": "Artist",
+                    }
+                    for index in range(40)
+                ]
+            )
             # Simulate a crash that dropped the in-memory dirty set: rows missing from FTS and
             # no pending flush left to restore them. Any search between upsert and flush would
             # have re-inserted them, so clear the set to mimic process death.
@@ -825,11 +1251,19 @@ class SearchReconcileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "library.sqlite3")
             database.upsert_source({"chatId": "1", "kind": "channel", "title": "Music"})
-            database.upsert_tracks([
-                {"chatId": "1", "messageId": str(index), "fileName": f"song-{index}.mp3",
-                 "mimeType": "audio/mpeg", "title": f"Track {index}", "artist": "Artist"}
-                for index in range(10)
-            ])
+            database.upsert_tracks(
+                [
+                    {
+                        "chatId": "1",
+                        "messageId": str(index),
+                        "fileName": f"song-{index}.mp3",
+                        "mimeType": "audio/mpeg",
+                        "title": f"Track {index}",
+                        "artist": "Artist",
+                    }
+                    for index in range(10)
+                ]
+            )
             # The dirty set is the index's working memory: flush it, then the counts agree and
             # reconcile must find nothing to do.
             database._flush_search()
@@ -854,8 +1288,12 @@ class ArtworkEnrichmentTests(unittest.TestCase):
 
     def _track(self, message_id, title="Song", artist="Artist"):
         return {
-            "chatId": "1", "messageId": str(message_id), "fileName": f"song-{message_id}.mp3",
-            "mimeType": "audio/mpeg", "title": title, "artist": artist,
+            "chatId": "1",
+            "messageId": str(message_id),
+            "fileName": f"song-{message_id}.mp3",
+            "mimeType": "audio/mpeg",
+            "title": title,
+            "artist": artist,
         }
 
     def test_needing_artwork_is_oldest_first_and_respects_limit(self):
@@ -869,7 +1307,9 @@ class ArtworkEnrichmentTests(unittest.TestCase):
 
     def test_needing_artwork_skips_edited_and_artworked_tracks(self):
         database = self._database()
-        database.upsert_tracks([self._track(1), self._track(2), self._track(3), self._track(4)])
+        database.upsert_tracks(
+            [self._track(1), self._track(2), self._track(3), self._track(4)]
+        )
         database.save_metadata_patch("1", "1", {"title": "Edited"}, [])
         database.save_metadata_patch("1", "2", {"artworkPath": "abc.jpg"}, [])
         database.mark_artwork_miss("1:3")
