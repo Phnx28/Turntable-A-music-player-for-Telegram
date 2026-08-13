@@ -14,21 +14,76 @@ except ImportError:  # pragma: no cover - the suite must still run without a bro
 ROOT = Path(__file__).resolve().parent.parent
 
 SOURCES = [
-    {"chatId": "-1001", "kind": "channel", "title": "Hyperdub", "username": "hyperdub", "selected": True,
-     "sortOrder": 0, "lastPostAt": 1753800000, "trackCount": 412, "lastMessageId": 9001,
-     "lastSyncedAt": 1753830000, "syncError": None, "pinnedAt": 1753000000},
-    {"chatId": "-1003", "kind": "private", "title": "ambient dumps", "username": None, "selected": True,
-     "sortOrder": 1, "lastPostAt": 1753600000, "trackCount": 96, "lastMessageId": 220,
-     "lastSyncedAt": 1753810000, "syncError": None, "pinnedAt": None},
-    {"chatId": "-1004", "kind": "saved", "title": "Saved Messages", "username": None, "selected": True,
-     "sortOrder": 2, "lastPostAt": 1753500000, "trackCount": 54, "lastMessageId": 800,
-     "lastSyncedAt": 1753700000, "syncError": None, "pinnedAt": None},
-    {"chatId": "-1005", "kind": "bot", "title": "@deepcuts_bot", "username": "deepcuts_bot", "selected": True,
-     "sortOrder": 3, "lastPostAt": 1753400000, "trackCount": 31, "lastMessageId": 90,
-     "lastSyncedAt": 1753600000, "syncError": "Flood wait: retry in 42s", "pinnedAt": None},
-    {"chatId": "-1006", "kind": "channel", "title": "Nyege Nyege Tapes", "username": "nyegenyege", "selected": True,
-     "sortOrder": 4, "lastPostAt": 1753300000, "trackCount": 0, "lastMessageId": 0,
-     "lastSyncedAt": None, "syncError": None, "pinnedAt": None},
+    {
+        "chatId": "-1001",
+        "kind": "channel",
+        "title": "Hyperdub",
+        "username": "hyperdub",
+        "selected": True,
+        "sortOrder": 0,
+        "lastPostAt": 1753800000,
+        "trackCount": 412,
+        "lastMessageId": 9001,
+        "lastSyncedAt": 1753830000,
+        "syncError": None,
+        "pinnedAt": 1753000000,
+    },
+    {
+        "chatId": "-1003",
+        "kind": "private",
+        "title": "ambient dumps",
+        "username": None,
+        "selected": True,
+        "sortOrder": 1,
+        "lastPostAt": 1753600000,
+        "trackCount": 96,
+        "lastMessageId": 220,
+        "lastSyncedAt": 1753810000,
+        "syncError": None,
+        "pinnedAt": None,
+    },
+    {
+        "chatId": "-1004",
+        "kind": "saved",
+        "title": "Saved Messages",
+        "username": None,
+        "selected": True,
+        "sortOrder": 2,
+        "lastPostAt": 1753500000,
+        "trackCount": 54,
+        "lastMessageId": 800,
+        "lastSyncedAt": 1753700000,
+        "syncError": None,
+        "pinnedAt": None,
+    },
+    {
+        "chatId": "-1005",
+        "kind": "bot",
+        "title": "@deepcuts_bot",
+        "username": "deepcuts_bot",
+        "selected": True,
+        "sortOrder": 3,
+        "lastPostAt": 1753400000,
+        "trackCount": 31,
+        "lastMessageId": 90,
+        "lastSyncedAt": 1753600000,
+        "syncError": "Flood wait: retry in 42s",
+        "pinnedAt": None,
+    },
+    {
+        "chatId": "-1006",
+        "kind": "channel",
+        "title": "Nyege Nyege Tapes",
+        "username": "nyegenyege",
+        "selected": True,
+        "sortOrder": 4,
+        "lastPostAt": 1753300000,
+        "trackCount": 0,
+        "lastMessageId": 0,
+        "lastSyncedAt": None,
+        "syncError": None,
+        "pinnedAt": None,
+    },
 ]
 
 TITLES = [
@@ -36,7 +91,12 @@ TITLES = [
     ("Rival Dealer", "Burial", "-1001", 602000),
     ("Sines", "Kode9 & The Spaceape", "-1001", 258000),
     ("An Empty Bliss Beyond This World", "The Caretaker", "-1003", 225000),
-    ("03 - untitled draft mixdown FINAL v2 (do not distribute).mp3", "Unknown artist", "-1004", 764000),
+    (
+        "03 - untitled draft mixdown FINAL v2 (do not distribute).mp3",
+        "Unknown artist",
+        "-1004",
+        764000,
+    ),
     ("Kabuubi", "Otim Alpha", "-1006", 245000),
 ]
 
@@ -46,24 +106,35 @@ def _tracks(count=48):
     for index in range(count):
         title, artist, chat_id, duration = TITLES[index % len(TITLES)]
         source = next(item for item in SOURCES if item["chatId"] == chat_id)
-        items.append({
-            "key": f"{chat_id}:{1000 + index}",
-            "title": title if index < len(TITLES) else f"{title} (take {index // len(TITLES) + 1})",
-            "artist": artist,
-            "durationMs": duration,
-            "sentAt": 1753800000 - index * 3600,
-            "artworkVersion": f"v{index}",
-            "liked": index % 5 == 1,
-            "source": {"chatId": chat_id, "title": source["title"], "kind": source["kind"], "selected": True},
-        })
+        items.append(
+            {
+                "key": f"{chat_id}:{1000 + index}",
+                "title": title
+                if index < len(TITLES)
+                else f"{title} (take {index // len(TITLES) + 1})",
+                "artist": artist,
+                "durationMs": duration,
+                "sentAt": 1753800000 - index * 3600,
+                "artworkVersion": f"v{index}",
+                "liked": index % 5 == 1,
+                "source": {
+                    "chatId": chat_id,
+                    "title": source["title"],
+                    "kind": source["kind"],
+                    "selected": True,
+                },
+            }
+        )
     return items
 
 
 def _rel_lum(rgb):
     """Relative luminance (WCAG) for an [r, g, b] byte triple."""
+
     def chan(v):
         v /= 255
         return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
     r, g, b = rgb
     return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
 
@@ -74,7 +145,7 @@ class Handler(SimpleHTTPRequestHandler):
     # unstyled markup, which is how you get a green test that proves nothing.
     def translate_path(self, path):
         if path.startswith("/assets/"):
-            path = path[len("/assets"):]
+            path = path[len("/assets") :]
         return super().translate_path(path)
 
     def log_message(self, *args):
@@ -85,7 +156,9 @@ class Handler(SimpleHTTPRequestHandler):
 class LayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Handler, directory=str(ROOT / "static")))
+        cls.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0), partial(Handler, directory=str(ROOT / "static"))
+        )
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -106,42 +179,72 @@ class LayoutTests(unittest.TestCase):
         if path.endswith("/cover") or path.endswith("/avatar"):
             # A 404 here is not neutral: a missing cover triggers the img error handler, which
             # replaces the element and changes the geometry being measured.
-            return route.fulfill(status=200, content_type="image/svg+xml", body=(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">'
-                '<rect width="300" height="300" fill="#8c2f24"/></svg>'))
+            return route.fulfill(
+                status=200,
+                content_type="image/svg+xml",
+                body=(
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">'
+                    '<rect width="300" height="300" fill="#8c2f24"/></svg>'
+                ),
+            )
         if path.endswith("/audio"):
             return route.fulfill(status=200, content_type="audio/wav", body=b"")
         if path == "/api/auth/status":
-            return route.fulfill(status=200, content_type="application/json",
-                                 body='{"passwordEnabled": true, "authenticated": true}')
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"passwordEnabled": true, "authenticated": true}',
+            )
         if path == "/api/status":
-            return route.fulfill(status=200, content_type="application/json",
-                                 body='{"unlocked": true, "telegram": {"linked": true, "userId": 777, "displayName": "test"}, "startupError": null}')
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": true, "userId": 777, "displayName": "test"}, "startupError": null}',
+            )
         if path == "/api/sources":
-            return route.fulfill(status=200, content_type="application/json", body=json.dumps(SOURCES))
+            return route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(SOURCES)
+            )
         if path == "/api/library/stats":
-            return route.fulfill(status=200, content_type="application/json", body='{"likedCount": 27}')
+            return route.fulfill(
+                status=200, content_type="application/json", body='{"likedCount": 27}'
+            )
         if path == "/api/cache/status":
             # "files", not "count". The producer returns bytes, files and states.
-            return route.fulfill(status=200, content_type="application/json",
-                                 body='{"bytes": 184320000, "files": 41, "states": {}}')
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"bytes": 184320000, "files": 41, "states": {}}',
+            )
         if path == "/api/tracks":
             items = _tracks()
-            return route.fulfill(status=200, content_type="application/json",
-                                 body=json.dumps({"items": items, "offset": 0, "total": len(items)}))
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"items": items, "offset": 0, "total": len(items)}),
+            )
         if path == "/api/settings":
-            return route.fulfill(status=200, content_type="application/json",
-                                 body='{"musicbrainzContact": "", "coverQuality": "1200", "prefetchCount": 1, "bindHost": "127.0.0.1"}')
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"musicbrainzContact": "", "coverQuality": "1200", "prefetchCount": 1, "bindHost": "127.0.0.1"}',
+            )
         if path == "/api/network":
-            return route.fulfill(status=200, content_type="application/json",
-                                 body='{"bindHost": "127.0.0.1", "activeHost": "127.0.0.1", "managed": false, "inDocker": false}')
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"bindHost": "127.0.0.1", "activeHost": "127.0.0.1", "managed": false, "inDocker": false}',
+            )
         if path.endswith("/metadata/search"):
             # metadata_candidates is a bare list, not {"candidates": [...]}.
             return route.fulfill(status=200, content_type="application/json", body="[]")
         if path.startswith("/api/jobs/"):
             # Job.public() exposes processed, found, state and result.
-            return route.fulfill(status=200, content_type="application/json",
-                                 body='{"jobId": "job-1", "kind": "sync", "chatId": "-1001", "mode": "incremental", "state": "complete", "processed": 48, "found": 6, "error": null, "result": null}')
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"jobId": "job-1", "kind": "sync", "chatId": "-1001", "mode": "incremental", "state": "complete", "processed": 48, "found": 6, "error": null, "result": null}',
+            )
         return route.fulfill(status=200, content_type="application/json", body="{}")
 
     def page(self, width, height):
@@ -173,7 +276,52 @@ class LayoutTests(unittest.TestCase):
             ".qr-stage.paused::after",
             "@keyframes qr-progress",
         ):
-            self.assertNotIn(obsolete, css, f"obsolete QR progress rule still served: {obsolete}")
+            self.assertNotIn(
+                obsolete, css, f"obsolete QR progress rule still served: {obsolete}"
+            )
+
+    def test_login_methods_order_phone_first_in_dom_qr_left_on_desktop(self):
+        # DOM must be phone-first for mobile and assistive reading order; the desktop grid
+        # then places QR visually left of the phone method.
+        page = self.page(1440, 900)
+        page.evaluate(
+            """() => {
+          document.getElementById('telegram-view').hidden = false;
+          document.getElementById('app-shell').hidden = true;
+          document.getElementById('lock-view').hidden = true;
+        }"""
+        )
+        page.wait_for_timeout(200)
+        phone_before_qr = page.evaluate(
+            """() => {
+          const phone = document.querySelector('.phone-method');
+          const qr = document.querySelector('.qr-method');
+          return Boolean(phone && qr) &&
+            (phone.compareDocumentPosition(qr) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+        }"""
+        )
+        self.assertTrue(phone_before_qr, "phone method must precede QR in document order")
+        phone_box = page.locator(".phone-method").bounding_box()
+        qr_box = page.locator(".qr-method").bounding_box()
+        self.assertIsNotNone(phone_box)
+        self.assertIsNotNone(qr_box)
+        self.assertLess(qr_box["x"], phone_box["x"], "desktop must place QR left of phone")
+
+    def test_login_methods_stack_phone_above_qr_on_mobile(self):
+        page = self.page(390, 844)
+        page.evaluate(
+            """() => {
+          document.getElementById('telegram-view').hidden = false;
+          document.getElementById('app-shell').hidden = true;
+          document.getElementById('lock-view').hidden = true;
+        }"""
+        )
+        page.wait_for_timeout(200)
+        phone_box = page.locator(".phone-method").bounding_box()
+        qr_box = page.locator(".qr-method").bounding_box()
+        self.assertIsNotNone(phone_box)
+        self.assertIsNotNone(qr_box)
+        self.assertLess(phone_box["y"], qr_box["y"], "mobile must stack phone above QR")
 
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
@@ -190,10 +338,16 @@ class LayoutTests(unittest.TestCase):
           file: { name: 'rival-dealer.mp3', mimeType: 'audio/mpeg', size: 14_680_064 },
           durationMs: 602_000, sentAt: 1753800000,
         })""")
-        labels = page.evaluate("() => [...document.querySelectorAll('#track-details dt')].map((d) => d.textContent)")
+        labels = page.evaluate(
+            "() => [...document.querySelectorAll('#track-details dt')].map((d) => d.textContent)"
+        )
         for expected in ["Duration", "Posted", "Track", "Disc", "Format"]:
-            self.assertIn(expected, labels, f"{expected} is indexed but not shown: {labels}")
-        values = page.evaluate("() => [...document.querySelectorAll('#track-details dd')].map((d) => d.textContent)")
+            self.assertIn(
+                expected, labels, f"{expected} is indexed but not shown: {labels}"
+            )
+        values = page.evaluate(
+            "() => [...document.querySelectorAll('#track-details dd')].map((d) => d.textContent)"
+        )
         self.assertIn("10:02", values, f"duration not formatted: {values}")
         self.assertIn("MPEG", values, f"audio mime type not formatted: {values}")
         self.assertIn("14.0 MB", values, f"file size not formatted: {values}")
@@ -210,7 +364,9 @@ class LayoutTests(unittest.TestCase):
         # means the list comes after the actions.
         position = page.evaluate("""() => document.querySelector('.detail-actions')
           .compareDocumentPosition(document.getElementById('track-details'))""")
-        self.assertEqual(4, position & 4, "the action buttons must precede the detail list")
+        self.assertEqual(
+            4, position & 4, "the action buttons must precede the detail list"
+        )
 
         page.evaluate("""() => window.__renderDetailsForTest({
           key: '-1001:1001', source: { title: 'Hyperdub' },
@@ -220,10 +376,26 @@ class LayoutTests(unittest.TestCase):
           labels: [...document.querySelectorAll('#track-details dt')].map((d) => d.textContent),
           values: [...document.querySelectorAll('#track-details dd')].map((d) => d.textContent),
         })""")
-        for absent in ["Album", "Year", "Duration", "Posted", "Track", "Disc", "Format", "Size"]:
-            self.assertNotIn(absent, sparse["labels"], f"sparse track rendered absent row: {sparse}")
-        self.assertNotIn("0", sparse["values"], f"sparse track rendered a zero value: {sparse}")
-        self.assertTrue(all(value for value in sparse["values"]), f"sparse track rendered an empty dd: {sparse}")
+        for absent in [
+            "Album",
+            "Year",
+            "Duration",
+            "Posted",
+            "Track",
+            "Disc",
+            "Format",
+            "Size",
+        ]:
+            self.assertNotIn(
+                absent, sparse["labels"], f"sparse track rendered absent row: {sparse}"
+            )
+        self.assertNotIn(
+            "0", sparse["values"], f"sparse track rendered a zero value: {sparse}"
+        )
+        self.assertTrue(
+            all(value for value in sparse["values"]),
+            f"sparse track rendered an empty dd: {sparse}",
+        )
 
     def test_now_playing_does_not_cover_the_transport_on_a_phone(self):
         page = self.page(390, 844)
@@ -234,7 +406,11 @@ class LayoutTests(unittest.TestCase):
           const target = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
           return target === button || button.contains(target) ? 'play' : target.tagName + '#' + target.id;
         }""")
-        self.assertEqual("play", hit, "the Now Playing panel covers the play button, so playback is unreachable")
+        self.assertEqual(
+            "play",
+            hit,
+            "the Now Playing panel covers the play button, so playback is unreachable",
+        )
 
         # Geometry too, not just the hit test: a future z-index change must not silently re-break
         # this while elementFromPoint still happens to pass.
@@ -242,17 +418,25 @@ class LayoutTests(unittest.TestCase):
           document.getElementById('now-panel').getBoundingClientRect().bottom,
           document.getElementById('player').getBoundingClientRect().top,
         ]""")
-        self.assertLessEqual(panel_bottom, player_top + 1, "the panel overlaps the player box")
+        self.assertLessEqual(
+            panel_bottom, player_top + 1, "the panel overlaps the player box"
+        )
 
     def test_collapsed_rail_does_not_overflow_horizontally(self):
         page = self.page(1440, 900)
-        page.evaluate("() => document.querySelector('.app-shell').classList.add('sidebar-collapsed')")
+        page.evaluate(
+            "() => document.querySelector('.app-shell').classList.add('sidebar-collapsed')"
+        )
         page.wait_for_timeout(120)
         client, scroll = page.evaluate("""() => {
           const nav = document.getElementById('source-list').closest('nav');
           return [nav.clientWidth, nav.scrollWidth];
         }""")
-        self.assertEqual(client, scroll, "collapsed rail overflows horizontally, which spawns a scrollbar with arrows")
+        self.assertEqual(
+            client,
+            scroll,
+            "collapsed rail overflows horizontally, which spawns a scrollbar with arrows",
+        )
 
     def test_expanded_source_rail_uses_rhythm_without_decorative_row_rules(self):
         page = self.page(1440, 900)
@@ -273,7 +457,13 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         self.assertTrue(shape["rows"])
-        self.assertTrue(all(row["border"] == "0px" and row["minHeight"] >= 54 and row["radius"] > 0 for row in shape["rows"]), shape)
+        self.assertTrue(
+            all(
+                row["border"] == "0px" and row["minHeight"] >= 54 and row["radius"] > 0
+                for row in shape["rows"]
+            ),
+            shape,
+        )
         self.assertNotEqual(shape["rail"], shape["active"], shape)
         self.assertNotEqual("dashed", shape["add"]["borderStyle"], shape)
 
@@ -307,13 +497,17 @@ class LayoutTests(unittest.TestCase):
         self.assertGreaterEqual(shape["playerMarginBottom"], 10, shape)
         self.assertLessEqual(shape["playerMarginBottom"], 14, shape)
         self.assertEqual("1px", shape["utilityBorder"], shape)
-        self.assertGreaterEqual(shape["syncTop"] - shape["utilityTop"], shape["utilityPaddingTop"], shape)
+        self.assertGreaterEqual(
+            shape["syncTop"] - shape["utilityTop"], shape["utilityPaddingTop"], shape
+        )
         self.assertGreaterEqual(shape["addGap"], 0, shape)
         self.assertLessEqual(shape["addGap"], 12, shape)
         self.assertGreaterEqual(shape["settingsGap"], 8, shape)
         self.assertLessEqual(shape["settingsGap"], 30, shape)
         self.assertEqual("0px", shape["collapsedBorder"], shape)
-        self.assertEqual(shape["collapsedNav"]["client"], shape["collapsedNav"]["scroll"], shape)
+        self.assertEqual(
+            shape["collapsedNav"]["client"], shape["collapsedNav"]["scroll"], shape
+        )
 
     def test_select_controls_are_compact_and_do_not_compete_with_primary_actions(self):
         page = self.page(1440, 900)
@@ -329,8 +523,11 @@ class LayoutTests(unittest.TestCase):
         }""")
         self.assertLessEqual(shape["sourceSort"], 34, shape)
         self.assertLessEqual(shape["trackSort"], 36, shape)
-        self.assertGreater(shape["play"], shape["trackSort"],
-                           "the Play button must stay visually stronger than the sort control")
+        self.assertGreater(
+            shape["play"],
+            shape["trackSort"],
+            "the Play button must stay visually stronger than the sort control",
+        )
 
     def test_rail_utility_rows_share_one_optical_grid_and_collapse_unaffected(self):
         page = self.page(1440, 900)
@@ -350,9 +547,15 @@ class LayoutTests(unittest.TestCase):
         }""")
         self.assertAlmostEqual(shape["icons"][0], shape["icons"][1], delta=1, msg=shape)
         self.assertAlmostEqual(shape["icons"][1], shape["icons"][2], delta=1, msg=shape)
-        self.assertAlmostEqual(shape["labels"][0], shape["labels"][1], delta=1, msg=shape)
-        self.assertAlmostEqual(shape["labels"][1], shape["labels"][2], delta=1,
-                               msg="Settings text must land under the utility labels")
+        self.assertAlmostEqual(
+            shape["labels"][0], shape["labels"][1], delta=1, msg=shape
+        )
+        self.assertAlmostEqual(
+            shape["labels"][1],
+            shape["labels"][2],
+            delta=1,
+            msg="Settings text must land under the utility labels",
+        )
         for width in shape["widths"]:
             self.assertGreater(width, 0)
 
@@ -368,9 +571,19 @@ class LayoutTests(unittest.TestCase):
             nav: { client: nav.clientWidth, scroll: nav.scrollWidth },
           };
         }""")
-        self.assertEqual(46, collapsed["sync"], "collapsed sync button must stay a centered icon square")
-        self.assertEqual(46, collapsed["add"], "collapsed add button must stay a centered icon square")
-        self.assertEqual(collapsed["nav"]["client"], collapsed["nav"]["scroll"], collapsed)
+        self.assertEqual(
+            46,
+            collapsed["sync"],
+            "collapsed sync button must stay a centered icon square",
+        )
+        self.assertEqual(
+            46,
+            collapsed["add"],
+            "collapsed add button must stay a centered icon square",
+        )
+        self.assertEqual(
+            collapsed["nav"]["client"], collapsed["nav"]["scroll"], collapsed
+        )
 
     def test_metadata_dialog_buttons_are_not_stretched(self):
         page = self.page(1440, 900)
@@ -381,22 +594,34 @@ class LayoutTests(unittest.TestCase):
           [...document.querySelectorAll('#metadata-form .form-actions .button')].map((b) => Math.round(b.getBoundingClientRect().height)),
         ]""")
         self.assertIn(display, {"flex", "inline-flex"})
-        self.assertTrue(all(h == 40 for h in heights), f"buttons stretched to {heights} instead of 40px")
+        self.assertTrue(
+            all(h == 40 for h in heights),
+            f"buttons stretched to {heights} instead of 40px",
+        )
 
     def test_failed_metadata_lookup_clears_its_skeleton(self):
         page = self.page(1440, 900)
-        page.route("**/metadata/search", lambda route: route.fulfill(
-            status=429, content_type="application/json",
-            body='{"error": {"message": "Rate limited", "retryable": true}}'))
+        page.route(
+            "**/metadata/search",
+            lambda route: route.fulfill(
+                status=429,
+                content_type="application/json",
+                body='{"error": {"message": "Rate limited", "retryable": true}}',
+            ),
+        )
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
         page.click("#fetch-metadata")
-        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        page.wait_for_function(
+            "() => !document.getElementById('fetch-metadata').disabled"
+        )
         hidden, markup = page.evaluate("""() => [
           document.getElementById('candidate-section').hidden,
           document.getElementById('candidate-list').innerHTML,
         ]""")
         self.assertTrue(hidden, "candidate section stayed open after a failed lookup")
-        self.assertNotIn("list-skeleton", markup, "the loading skeleton outlived the failure")
+        self.assertNotIn(
+            "list-skeleton", markup, "the loading skeleton outlived the failure"
+        )
 
     def test_phones_can_filter_the_open_playlist(self):
         page = self.page(390, 844)
@@ -411,7 +636,11 @@ class LayoutTests(unittest.TestCase):
           };
           return { filter: shown(".search-control"), count: shown("#library-summary") };
         }""")
-        self.assertIs(True, visible["filter"], "the playlist filter is hidden on a phone, so narrowing is impossible")
+        self.assertIs(
+            True,
+            visible["filter"],
+            "the playlist filter is hidden on a phone, so narrowing is impossible",
+        )
         self.assertIs(True, visible["count"], "the track count is hidden on a phone")
 
     def test_narrow_rows_give_their_space_to_titles(self):
@@ -438,18 +667,38 @@ class LayoutTests(unittest.TestCase):
             menuOpacity: getComputedStyle(row.querySelector('.row-menu')).opacity,
           };
         }""")
-        self.assertEqual(["track-ordinal", "track-main", "row-menu"], shape["visibleCells"], shape)
-        self.assertTrue(shape["postedHidden"], "the date should yield before title space at 320px")
-        self.assertTrue(shape["durationHidden"], "duration should move to the row sheet at 320px")
-        self.assertTrue(shape["likeHidden"], "the like button should move to the row sheet at 320px")
-        self.assertEqual("1", shape["menuOpacity"], "the 320px row sheet trigger must remain reachable")
-        self.assertLessEqual(shape["ordinalWidth"], 30, "the ordinal should shrink to ~3ch")
-        self.assertGreater(shape["mainWidth"] / shape["rowWidth"], 0.7,
-                           f"the main column is still starved: {shape}")
+        self.assertEqual(
+            ["track-ordinal", "track-main", "row-menu"], shape["visibleCells"], shape
+        )
+        self.assertTrue(
+            shape["postedHidden"], "the date should yield before title space at 320px"
+        )
+        self.assertTrue(
+            shape["durationHidden"], "duration should move to the row sheet at 320px"
+        )
+        self.assertTrue(
+            shape["likeHidden"], "the like button should move to the row sheet at 320px"
+        )
+        self.assertEqual(
+            "1",
+            shape["menuOpacity"],
+            "the 320px row sheet trigger must remain reachable",
+        )
+        self.assertLessEqual(
+            shape["ordinalWidth"], 30, "the ordinal should shrink to ~3ch"
+        )
+        self.assertGreater(
+            shape["mainWidth"] / shape["rowWidth"],
+            0.7,
+            f"the main column is still starved: {shape}",
+        )
         # Text copy gets the main column after the measured 40px artwork and 12px gap;
         # the 2px tolerance covers integer rounding of the browser's layout rectangles.
-        self.assertGreaterEqual(shape["copyWidth"], shape["mainWidth"] - 54,
-                                f"text copy lost more than the artwork+gap budget: {shape}")
+        self.assertGreaterEqual(
+            shape["copyWidth"],
+            shape["mainWidth"] - 54,
+            f"text copy lost more than the artwork+gap budget: {shape}",
+        )
         page.click(".track-row:not(.track-placeholder) .row-menu")
         page.wait_for_selector("#context-menu:not([hidden])")
 
@@ -477,26 +726,53 @@ class LayoutTests(unittest.TestCase):
             playerTop: player.getBoundingClientRect().top,
           };
         }""")
-        self.assertEqual(["track-ordinal", "track-main", "track-posted", "row-menu"], shape["visibleCells"], shape)
+        self.assertEqual(
+            ["track-ordinal", "track-main", "track-posted", "row-menu"],
+            shape["visibleCells"],
+            shape,
+        )
         self.assertTrue(shape["sizes"], "the row menu opened empty")
-        self.assertTrue(all(height >= 44 for height in shape["sizes"]),
-                        f"sheet targets under 44px: {shape}")
-        like_labels = [label for label in shape["labels"] if label in {"Like", "Unlike"}]
-        self.assertEqual(1, len(like_labels), f"the narrow row menu must expose exactly one Like/Unlike branch: {shape}")
-        self.assertTrue(any(label.startswith("Duration ") for label in shape["labels"]),
-                        f"the narrow row menu lacks formatted duration: {shape}")
-        self.assertEqual("1", shape["menuOpacity"],
-                         f"the row sheet trigger must remain visible on a phone: {shape}")
-        self.assertGreaterEqual(shape["menuTop"], 0, f"sheet starts above the viewport: {shape}")
-        self.assertLessEqual(shape["menuBottom"], shape["playerTop"] + 1,
-                             f"sheet overlaps the player: {shape}")
+        self.assertTrue(
+            all(height >= 44 for height in shape["sizes"]),
+            f"sheet targets under 44px: {shape}",
+        )
+        like_labels = [
+            label for label in shape["labels"] if label in {"Like", "Unlike"}
+        ]
+        self.assertEqual(
+            1,
+            len(like_labels),
+            f"the narrow row menu must expose exactly one Like/Unlike branch: {shape}",
+        )
+        self.assertTrue(
+            any(label.startswith("Duration ") for label in shape["labels"]),
+            f"the narrow row menu lacks formatted duration: {shape}",
+        )
+        self.assertEqual(
+            "1",
+            shape["menuOpacity"],
+            f"the row sheet trigger must remain visible on a phone: {shape}",
+        )
+        self.assertGreaterEqual(
+            shape["menuTop"], 0, f"sheet starts above the viewport: {shape}"
+        )
+        self.assertLessEqual(
+            shape["menuBottom"],
+            shape["playerTop"] + 1,
+            f"sheet overlaps the player: {shape}",
+        )
 
     def test_narrow_sheet_like_propagates_canonical_state_and_rolls_back(self):
         page = self.page(390, 844)
         patches = []
-        tracks = {track["key"]: {**track, "metadata": {"title": track["title"], "artist": track["artist"]},
-                                  "file": {"name": f"{track['title']}.mp3", "mimeType": "audio/mpeg"}}
-                  for track in _tracks(2)}
+        tracks = {
+            track["key"]: {
+                **track,
+                "metadata": {"title": track["title"], "artist": track["artist"]},
+                "file": {"name": f"{track['title']}.mp3", "mimeType": "audio/mpeg"},
+            }
+            for track in _tracks(2)
+        }
 
         def detail_and_like(route):
             path = urlsplit(route.request.url).path
@@ -505,7 +781,11 @@ class LayoutTests(unittest.TestCase):
                 return
             if path.endswith("1000") or path.endswith("1001"):
                 key = "-1001:1000" if path.endswith("1000") else "-1001:1001"
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps(tracks[key]))
+                return route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(tracks[key]),
+                )
             return route.fallback()
 
         # Playing the row is the real getTrack consumer: its detail response is a distinct
@@ -515,7 +795,9 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_selector(".track-row:not(.track-placeholder)")
         rows = page.locator(".track-row:not(.track-placeholder)")
         rows.nth(0).locator(".track-main").click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Angels'"
+        )
 
         def close_fixture_audio_error():
             page.wait_for_timeout(150)
@@ -529,7 +811,9 @@ class LayoutTests(unittest.TestCase):
 
         close_fixture_audio_error()
         click_sheet_like()
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'"
+        )
         optimistic = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
           current: document.getElementById('like-current').getAttribute('aria-pressed'),
@@ -539,7 +823,9 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(1, len(patches), "the sheet Like action did not reach PATCH")
 
         # The server's canonical answer deliberately rejects the requested like.
-        patches.pop(0).fulfill(status=200, content_type="application/json", body='{"liked": false}')
+        patches.pop(0).fulfill(
+            status=200, content_type="application/json", body='{"liked": false}'
+        )
         page.wait_for_timeout(200)
         canonical = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
@@ -551,32 +837,51 @@ class LayoutTests(unittest.TestCase):
         # Re-consume the cached detail through the real row playback path; canonical success must
         # not leave the distinct detail copy stale and revive the optimistic liked state.
         rows.nth(1).locator(".track-main").click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Rival Dealer'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Rival Dealer'"
+        )
         close_fixture_audio_error()
         rows.nth(0).locator(".track-main").click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Angels'"
+        )
         close_fixture_audio_error()
-        self.assertEqual("false", page.locator("#like-current").get_attribute("aria-pressed"))
+        self.assertEqual(
+            "false", page.locator("#like-current").get_attribute("aria-pressed")
+        )
 
         click_sheet_like()
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'"
+        )
         self.assertEqual(1, len(patches), "the rollback PATCH was not captured")
-        patches.pop(0).fulfill(status=500, content_type="application/json",
-                               body='{"error": {"message": "like failed", "retryable": true}}')
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'false'")
+        patches.pop(0).fulfill(
+            status=500,
+            content_type="application/json",
+            body='{"error": {"message": "like failed", "retryable": true}}',
+        )
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'false'"
+        )
         rolled_back = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
           current: document.getElementById('like-current').getAttribute('aria-pressed'),
           count: document.getElementById('liked-count').textContent,
           errorOpen: document.getElementById('error-dialog').open,
         })""")
-        self.assertEqual({"row": "false", "current": "false", "count": "27", "errorOpen": True}, rolled_back)
+        self.assertEqual(
+            {"row": "false", "current": "false", "count": "27", "errorOpen": True},
+            rolled_back,
+        )
 
     def test_narrow_sheet_like_updates_current_created_while_patch_is_pending(self):
         page = self.page(390, 844)
         patches = []
-        track = {**_tracks(1)[0], "metadata": {"title": "Angels", "artist": "Burial"},
-                 "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"}}
+        track = {
+            **_tracks(1)[0],
+            "metadata": {"title": "Angels", "artist": "Burial"},
+            "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"},
+        }
 
         def detail_and_like(route):
             path = urlsplit(route.request.url).path
@@ -584,7 +889,9 @@ class LayoutTests(unittest.TestCase):
                 patches.append(route)
                 return
             if path.endswith("1000"):
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps(track))
+                return route.fulfill(
+                    status=200, content_type="application/json", body=json.dumps(track)
+                )
             return route.fallback()
 
         page.route("**/api/**", detail_and_like)
@@ -594,12 +901,16 @@ class LayoutTests(unittest.TestCase):
         row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
         page.get_by_role("menuitem", name="Like", exact=True).click()
-        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_function(
+            "() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'"
+        )
         self.assertEqual(1, len(patches), "the optimistic Like did not remain pending")
 
         # This creates the current clone after toggleRowLike captured its initial representations.
         row.locator(".track-main").click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Angels'"
+        )
         pending = page.evaluate("""() => {
           const rowLike = document.querySelector('.track-row:not(.track-placeholder) .row-like');
           const current = document.getElementById('like-current');
@@ -613,14 +924,25 @@ class LayoutTests(unittest.TestCase):
             count: document.getElementById('liked-count').textContent,
           };
         }""")
-        self.assertEqual({
-          "rowPressed": "true", "rowActive": True, "rowIcon": "#i-heart-filled",
-          "currentPressed": "true", "currentActive": True, "currentIcon": "#i-heart-filled",
-          "count": "28",
-        }, pending)
+        self.assertEqual(
+            {
+                "rowPressed": "true",
+                "rowActive": True,
+                "rowIcon": "#i-heart-filled",
+                "currentPressed": "true",
+                "currentActive": True,
+                "currentIcon": "#i-heart-filled",
+                "count": "28",
+            },
+            pending,
+        )
 
-        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        patches[0].fulfill(
+            status=200, content_type="application/json", body='{"liked": true}'
+        )
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'"
+        )
         settled = page.evaluate("""() => ({
           rowPressed: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
           rowActive: document.querySelector('.track-row:not(.track-placeholder) .row-like').classList.contains('active'),
@@ -630,17 +952,29 @@ class LayoutTests(unittest.TestCase):
           currentIcon: document.querySelector('#like-current use').getAttribute('href'),
           count: document.getElementById('liked-count').textContent,
         })""")
-        self.assertEqual({
-          "rowPressed": "true", "rowActive": True, "rowIcon": "#i-heart-filled",
-          "currentPressed": "true", "currentActive": True, "currentIcon": "#i-heart-filled",
-          "count": "28",
-        }, settled)
+        self.assertEqual(
+            {
+                "rowPressed": "true",
+                "rowActive": True,
+                "rowIcon": "#i-heart-filled",
+                "currentPressed": "true",
+                "currentActive": True,
+                "currentIcon": "#i-heart-filled",
+                "count": "28",
+            },
+            settled,
+        )
 
-    def test_pending_row_like_then_player_heart_toggles_from_authoritative_desired_state(self):
+    def test_pending_row_like_then_player_heart_toggles_from_authoritative_desired_state(
+        self,
+    ):
         page = self.page(390, 844)
         patches = []
-        track = {**_tracks(1)[0], "metadata": {"title": "Angels", "artist": "Burial"},
-                 "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"}}
+        track = {
+            **_tracks(1)[0],
+            "metadata": {"title": "Angels", "artist": "Burial"},
+            "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"},
+        }
 
         def detail_and_like(route):
             path = urlsplit(route.request.url).path
@@ -648,7 +982,9 @@ class LayoutTests(unittest.TestCase):
                 patches.append(route)
                 return
             if path.endswith("1000"):
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps(track))
+                return route.fulfill(
+                    status=200, content_type="application/json", body=json.dumps(track)
+                )
             return route.fallback()
 
         page.route("**/api/**", detail_and_like)
@@ -659,11 +995,15 @@ class LayoutTests(unittest.TestCase):
         row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
         page.get_by_role("menuitem", name="Like", exact=True).click()
-        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_function(
+            "() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'"
+        )
         self.assertEqual(1, len(patches), "the row Like request did not remain pending")
 
         row.locator(".track-main").click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Angels'"
+        )
         page.wait_for_timeout(150)
         if page.evaluate("() => document.getElementById('error-dialog').open"):
             page.locator("#error-dialog [data-close='error-dialog']").click()
@@ -672,18 +1012,32 @@ class LayoutTests(unittest.TestCase):
             if len(patches) == 2:
                 break
             page.wait_for_timeout(25)
-        self.assertEqual(2, len(patches), "the player heart did not issue the intended second operation")
+        self.assertEqual(
+            2,
+            len(patches),
+            "the player heart did not issue the intended second operation",
+        )
         self.assertEqual({"liked": True}, json.loads(patches[0].request.post_data))
-        self.assertEqual({"liked": False}, json.loads(patches[1].request.post_data),
-                         "the player heart must invert the pending desired state")
+        self.assertEqual(
+            {"liked": False},
+            json.loads(patches[1].request.post_data),
+            "the player heart must invert the pending desired state",
+        )
 
         # The older success is ignored by the latest-per-key guard; the newer failure rolls back
         # to the first operation's desired state rather than the stale detail/current clone.
-        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        patches[0].fulfill(
+            status=200, content_type="application/json", body='{"liked": true}'
+        )
         page.wait_for_timeout(80)
-        patches[1].fulfill(status=500, content_type="application/json",
-                           body='{"error": {"message": "like failed", "retryable": true}}')
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        patches[1].fulfill(
+            status=500,
+            content_type="application/json",
+            body='{"error": {"message": "like failed", "retryable": true}}',
+        )
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'"
+        )
         settled = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
           current: document.getElementById('like-current').getAttribute('aria-pressed'),
@@ -695,7 +1049,12 @@ class LayoutTests(unittest.TestCase):
             page.locator("#error-dialog [data-close='error-dialog']").click()
         page.locator(".track-row:not(.track-placeholder) .row-menu").nth(0).click()
         page.wait_for_selector("#context-menu:not([hidden])")
-        self.assertIn("Unlike", page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"))
+        self.assertIn(
+            "Unlike",
+            page.evaluate(
+                "() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"
+            ),
+        )
 
     def test_two_same_key_like_failures_roll_back_to_the_canonical_baseline(self):
         page = self.page(390, 844)
@@ -718,16 +1077,25 @@ class LayoutTests(unittest.TestCase):
             page.get_by_role("menuitem", name=label, exact=True).click()
             page.wait_for_timeout(100)
 
-        self.assertEqual(2, len(patches), "both rapid same-key operations must reach PATCH")
+        self.assertEqual(
+            2, len(patches), "both rapid same-key operations must reach PATCH"
+        )
         self.assertEqual({"liked": True}, json.loads(patches[0].request.post_data))
         self.assertEqual({"liked": False}, json.loads(patches[1].request.post_data))
-        self.assertEqual("false", row.locator(".row-like").get_attribute("aria-pressed"))
+        self.assertEqual(
+            "false", row.locator(".row-like").get_attribute("aria-pressed")
+        )
         self.assertEqual("27", page.locator("#liked-count").text_content())
 
         for patch in patches:
-            patch.fulfill(status=500, content_type="application/json",
-                          body='{"error": {"message": "like failed", "retryable": true}}')
-        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'false'")
+            patch.fulfill(
+                status=500,
+                content_type="application/json",
+                body='{"error": {"message": "like failed", "retryable": true}}',
+            )
+        page.wait_for_function(
+            "() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'false'"
+        )
         settled = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
           current: document.getElementById('like-current').getAttribute('aria-pressed'),
@@ -735,7 +1103,9 @@ class LayoutTests(unittest.TestCase):
         })""")
         self.assertEqual({"row": "false", "current": "false", "count": "27"}, settled)
 
-    def test_latest_row_like_operation_wins_when_patch_responses_arrive_out_of_order(self):
+    def test_latest_row_like_operation_wins_when_patch_responses_arrive_out_of_order(
+        self,
+    ):
         page = self.page(390, 844)
         patches = []
 
@@ -754,7 +1124,9 @@ class LayoutTests(unittest.TestCase):
         row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
         page.get_by_role("menuitem", name="Like", exact=True).click()
-        page.wait_for_function("() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_function(
+            "() => document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed') === 'true'"
+        )
         page.wait_for_timeout(150)
         row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
@@ -764,13 +1136,19 @@ class LayoutTests(unittest.TestCase):
                 break
             page.wait_for_timeout(25)
         self.assertEqual(2, len(patches), "both optimistic inversions must reach PATCH")
-        self.assertEqual("false", row.locator(".row-like").get_attribute("aria-pressed"))
+        self.assertEqual(
+            "false", row.locator(".row-like").get_attribute("aria-pressed")
+        )
         self.assertEqual("27", page.locator("#liked-count").text_content())
 
         # The newer request wins even when the older response arrives afterward.
-        patches[1].fulfill(status=200, content_type="application/json", body='{"liked": false}')
+        patches[1].fulfill(
+            status=200, content_type="application/json", body='{"liked": false}'
+        )
         page.wait_for_timeout(80)
-        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        patches[0].fulfill(
+            status=200, content_type="application/json", body='{"liked": true}'
+        )
         page.wait_for_timeout(150)
         settled = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
@@ -783,26 +1161,48 @@ class LayoutTests(unittest.TestCase):
         key = "-1009:77"
         patches = []
         detail = {
-            "key": key, "title": "Burial", "artist": "Burial", "liked": True, "durationMs": 242000,
+            "key": key,
+            "title": "Burial",
+            "artist": "Burial",
+            "liked": True,
+            "durationMs": 242000,
             "metadata": {"title": "Burial", "artist": "Burial"},
             "file": {"name": "burial.mp3", "mimeType": "audio/mpeg"},
-            "source": {"chatId": "-1009", "title": "Telegram Vault", "kind": "channel", "selected": False},
+            "source": {
+                "chatId": "-1009",
+                "title": "Telegram Vault",
+                "kind": "channel",
+                "selected": False,
+            },
         }
 
         def search_and_detail(route):
             path = urlsplit(route.request.url).path
             if path == "/api/search/telegram":
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps({
-                    "sources": [],
-                    # Search summaries can omit liked; the detail response is authoritative here.
-                    "tracks": [{key_name: value for key_name, value in detail.items()
-                                if key_name not in {"liked", "metadata", "file"}}],
-                }))
+                return route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "sources": [],
+                            # Search summaries can omit liked; the detail response is authoritative here.
+                            "tracks": [
+                                {
+                                    key_name: value
+                                    for key_name, value in detail.items()
+                                    if key_name not in {"liked", "metadata", "file"}
+                                }
+                            ],
+                        }
+                    ),
+                )
             if path.endswith("77/like"):
                 patches.append(route)
                 return
             if path.startswith("/api/tracks/") and path.endswith("77"):
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps(detail))
+                return route.fulfill(
+                    status=200, content_type="application/json", body=json.dumps(detail)
+                )
             return route.fallback()
 
         page.route("**/api/**", search_and_detail)
@@ -810,23 +1210,38 @@ class LayoutTests(unittest.TestCase):
         page.fill("#global-search", "burial")
         page.wait_for_selector("[data-global-track]")
         page.evaluate("() => document.querySelector('[data-global-track]').click()")
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Burial'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Burial'"
+        )
         page.wait_for_timeout(150)
         if page.evaluate("() => document.getElementById('error-dialog').open"):
             page.locator("#error-dialog [data-close='error-dialog']").click()
         page.click("#player-more")
         page.wait_for_selector("#context-menu:not([hidden])")
-        labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
-        self.assertIn("Unlike", labels, f"detail/current liked state was ignored: {labels}")
+        labels = page.evaluate(
+            "() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"
+        )
+        self.assertIn(
+            "Unlike", labels, f"detail/current liked state was ignored: {labels}"
+        )
         page.get_by_role("menuitem", name="Unlike", exact=True).click()
         page.wait_for_timeout(100)
         self.assertEqual(1, len(patches), "the menu action did not reach PATCH")
-        self.assertEqual({"liked": False}, json.loads(patches[0].request.post_data),
-                         "the menu payload must invert the authoritative detail/current state")
-        self.assertEqual("false", page.locator("#like-current").get_attribute("aria-pressed"))
+        self.assertEqual(
+            {"liked": False},
+            json.loads(patches[0].request.post_data),
+            "the menu payload must invert the authoritative detail/current state",
+        )
+        self.assertEqual(
+            "false", page.locator("#like-current").get_attribute("aria-pressed")
+        )
         self.assertEqual("26", page.locator("#liked-count").text_content())
-        patches[0].fulfill(status=200, content_type="application/json", body='{"liked": false}')
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'false'")
+        patches[0].fulfill(
+            status=200, content_type="application/json", body='{"liked": false}'
+        )
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'false'"
+        )
 
     def test_player_heart_synchronizes_distinct_row_summary_detail_and_current(self):
         page = self.page(390, 844)
@@ -834,20 +1249,33 @@ class LayoutTests(unittest.TestCase):
         key = "-1001:1000"
         row = _tracks(1)[0]
         summary = {**row, "liked": False, "artworkVersion": "search-copy"}
-        detail = {**row, "liked": False, "metadata": {"title": "Angels", "artist": "Burial"},
-                  "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"}}
+        detail = {
+            **row,
+            "liked": False,
+            "metadata": {"title": "Angels", "artist": "Burial"},
+            "file": {"name": "angels.mp3", "mimeType": "audio/mpeg"},
+        }
 
         def distinct_representations(route):
             path = urlsplit(route.request.url).path
             if path == "/api/search/telegram":
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps({
-                    "sources": [], "tracks": [summary],
-                }))
+                return route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "sources": [],
+                            "tracks": [summary],
+                        }
+                    ),
+                )
             if path.endswith("1000/like"):
                 patches.append(route)
                 return
             if path.endswith("1000"):
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps(detail))
+                return route.fulfill(
+                    status=200, content_type="application/json", body=json.dumps(detail)
+                )
             return route.fallback()
 
         page.route("**/api/**", distinct_representations)
@@ -856,13 +1284,17 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_selector("[data-global-track]")
         page.press("#global-search", "Escape")
         page.locator(".track-row:not(.track-placeholder) .track-main").nth(0).click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Angels'"
+        )
         page.wait_for_timeout(150)
         if page.evaluate("() => document.getElementById('error-dialog').open"):
             page.locator("#error-dialog [data-close='error-dialog']").click()
 
         page.click("#like-current")
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'"
+        )
         page.wait_for_timeout(100)
         self.assertEqual(1, len(patches), "the player heart did not reach PATCH")
         self.assertEqual({"liked": True}, json.loads(patches[0].request.post_data))
@@ -872,16 +1304,25 @@ class LayoutTests(unittest.TestCase):
           count: document.getElementById('liked-count').textContent,
         })""")
         self.assertEqual({"row": "true", "current": "true", "count": "28"}, optimistic)
-        patches.pop(0).fulfill(status=200, content_type="application/json", body='{"liked": true}')
+        patches.pop(0).fulfill(
+            status=200, content_type="application/json", body='{"liked": true}'
+        )
         page.wait_for_timeout(150)
 
         page.click("#like-current")
         page.wait_for_timeout(100)
-        self.assertEqual(1, len(patches), "the second player-heart operation did not reach PATCH")
+        self.assertEqual(
+            1, len(patches), "the second player-heart operation did not reach PATCH"
+        )
         self.assertEqual({"liked": False}, json.loads(patches[0].request.post_data))
-        patches[0].fulfill(status=500, content_type="application/json",
-                           body='{"error": {"message": "like failed", "retryable": true}}')
-        page.wait_for_function("() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'")
+        patches[0].fulfill(
+            status=500,
+            content_type="application/json",
+            body='{"error": {"message": "like failed", "retryable": true}}',
+        )
+        page.wait_for_function(
+            "() => document.getElementById('like-current').getAttribute('aria-pressed') === 'true'"
+        )
         rolled_back = page.evaluate("""() => ({
           row: document.querySelector('.track-row:not(.track-placeholder) .row-like').getAttribute('aria-pressed'),
           current: document.getElementById('like-current').getAttribute('aria-pressed'),
@@ -892,7 +1333,12 @@ class LayoutTests(unittest.TestCase):
             page.locator("#error-dialog [data-close='error-dialog']").click()
         page.locator(".track-row:not(.track-placeholder) .row-menu").nth(0).click()
         page.wait_for_selector("#context-menu:not([hidden])")
-        self.assertIn("Unlike", page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"))
+        self.assertIn(
+            "Unlike",
+            page.evaluate(
+                "() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"
+            ),
+        )
 
     def test_320px_library_heading_uses_title_token(self):
         page = self.page(320, 844)
@@ -907,7 +1353,9 @@ class LayoutTests(unittest.TestCase):
           expected.remove();
           return result;
         }""")
-        self.assertEqual(size[1], size[0], f"320px heading drifted from --text-title: {size}")
+        self.assertEqual(
+            size[1], size[0], f"320px heading drifted from --text-title: {size}"
+        )
 
     def test_desktop_track_menu_does_not_duplicate_row_controls(self):
         page = self.page(1440, 900)
@@ -929,25 +1377,43 @@ class LayoutTests(unittest.TestCase):
             expected,
           };
         }""")
-        self.assertEqual("1", rest["menuOpacity"], "desktop row menus must remain rendered at rest")
-        self.assertEqual("1", rest["actionsOpacity"], "desktop like actions must remain rendered at rest")
+        self.assertEqual(
+            "1", rest["menuOpacity"], "desktop row menus must remain rendered at rest"
+        )
+        self.assertEqual(
+            "1",
+            rest["actionsOpacity"],
+            "desktop like actions must remain rendered at rest",
+        )
         self.assertEqual(rest["expected"], rest["menuColor"])
         self.assertEqual(rest["expected"], rest["actionsColor"])
         row.hover()
         page.wait_for_timeout(150)
-        hover_color = row.locator(".row-menu").evaluate("(button) => getComputedStyle(button).color")
+        hover_color = row.locator(".row-menu").evaluate(
+            "(button) => getComputedStyle(button).color"
+        )
         ink = page.evaluate("""() => {
           const probe = document.createElement('span'); probe.style.color = 'var(--ink)'; document.body.append(probe);
           const color = getComputedStyle(probe).color; probe.remove(); return color;
         }""")
-        self.assertEqual(ink, hover_color, "desktop row actions should gain ink emphasis on hover")
+        self.assertEqual(
+            ink, hover_color, "desktop row actions should gain ink emphasis on hover"
+        )
         row.locator(".row-menu").click()
         page.wait_for_selector("#context-menu:not([hidden])")
-        labels = page.evaluate("() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)")
-        self.assertNotIn("Like", labels, f"desktop menu duplicated the row like control: {labels}")
-        self.assertNotIn("Unlike", labels, f"desktop menu duplicated the row like control: {labels}")
-        self.assertFalse(any(label.startswith("Duration ") for label in labels),
-                         f"desktop menu duplicated the row duration: {labels}")
+        labels = page.evaluate(
+            "() => [...document.querySelectorAll('#context-menu button')].map((button) => button.textContent)"
+        )
+        self.assertNotIn(
+            "Like", labels, f"desktop menu duplicated the row like control: {labels}"
+        )
+        self.assertNotIn(
+            "Unlike", labels, f"desktop menu duplicated the row like control: {labels}"
+        )
+        self.assertFalse(
+            any(label.startswith("Duration ") for label in labels),
+            f"desktop menu duplicated the row duration: {labels}",
+        )
 
     def test_rows_are_numbered_dated_and_64px(self):
         page = self.page(1440, 900)
@@ -964,10 +1430,17 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         self.assertEqual(64, shape["height"])
-        self.assertEqual("64px", shape["intrinsic"].split()[-1],
-                         "contain-intrinsic-size drifted from the row height, so off-screen rows reserve the wrong space")
+        self.assertEqual(
+            "64px",
+            shape["intrinsic"].split()[-1],
+            "contain-intrinsic-size drifted from the row height, so off-screen rows reserve the wrong space",
+        )
         self.assertEqual(48, shape["art"])
-        self.assertEqual("01", shape["ordinal"], "the ordinal is the real play position, zero-padded to the total")
+        self.assertEqual(
+            "01",
+            shape["ordinal"],
+            "the ordinal is the real play position, zero-padded to the total",
+        )
         self.assertTrue(shape["posted"], "rows must show when the track was posted")
 
     def test_track_secondary_metadata_uses_scoped_hierarchy(self):
@@ -999,7 +1472,7 @@ class LayoutTests(unittest.TestCase):
     def test_library_header_overlays_scroll_content_without_blocking_it(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
-        page.wait_for_selector('.track-row:not(.track-placeholder)')
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
         shape = page.evaluate("""() => {
           const library = document.getElementById('library');
           const header = document.querySelector('.library-header');
@@ -1033,19 +1506,40 @@ class LayoutTests(unittest.TestCase):
             inputId: input.id,
           };
         }""")
-        self.assertEqual(1, shape["blurCount"], "the header needs one shared blur plane")
-        self.assertAlmostEqual(shape["headerTop"], shape["libraryTop"], delta=1,
-                               msg=f"header should stay pinned to the library top: {shape}")
-        self.assertGreater(shape["scrollDelta"], 8, f"library-content did not scroll: {shape}")
-        self.assertGreater(shape["blurBottom"], shape["headerBottom"],
-                           f"blur must fade beyond the visible header: {shape}")
-        self.assertLess(shape["rowTop"], shape["headerBottom"],
-                        f"a track never moved behind the header: {shape}")
-        self.assertGreater(shape["rowBottom"], shape["headerTop"],
-                           f"the scrolled track disappeared completely: {shape}")
+        self.assertEqual(
+            1, shape["blurCount"], "the header needs one shared blur plane"
+        )
+        self.assertAlmostEqual(
+            shape["headerTop"],
+            shape["libraryTop"],
+            delta=1,
+            msg=f"header should stay pinned to the library top: {shape}",
+        )
+        self.assertGreater(
+            shape["scrollDelta"], 8, f"library-content did not scroll: {shape}"
+        )
+        self.assertGreater(
+            shape["blurBottom"],
+            shape["headerBottom"],
+            f"blur must fade beyond the visible header: {shape}",
+        )
+        self.assertLess(
+            shape["rowTop"],
+            shape["headerBottom"],
+            f"a track never moved behind the header: {shape}",
+        )
+        self.assertGreater(
+            shape["rowBottom"],
+            shape["headerTop"],
+            f"the scrolled track disappeared completely: {shape}",
+        )
         self.assertEqual("none", shape["blurPointerEvents"])
         page.locator("#track-search").click()
-        self.assertTrue(page.locator("#track-search").evaluate("(input) => document.activeElement === input"))
+        self.assertTrue(
+            page.locator("#track-search").evaluate(
+                "(input) => document.activeElement === input"
+            )
+        )
 
     def test_mixed_typography_roles_are_rendered_without_font_picker(self):
         page = self.page(1440, 900)
@@ -1085,10 +1579,38 @@ class LayoutTests(unittest.TestCase):
             dataFont: document.documentElement.dataset.font || null,
           };
         }""")
-        for name in ("title", "artist", "source", "heading", "tab", "button", "globalHeading", "discoverHeading"):
-            self.assertIn("Archivo", fonts[name], f"{name} must use the human-facing type: {fonts}")
-        for name in ("ordinal", "posted", "duration", "count", "time", "attribution", "summary", "globalCount", "bulkCount", "cacheUsage", "passwordStatus", "qrStatus"):
-            self.assertIn("IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}")
+        for name in (
+            "title",
+            "artist",
+            "source",
+            "heading",
+            "tab",
+            "button",
+            "globalHeading",
+            "discoverHeading",
+        ):
+            self.assertIn(
+                "Archivo",
+                fonts[name],
+                f"{name} must use the human-facing type: {fonts}",
+            )
+        for name in (
+            "ordinal",
+            "posted",
+            "duration",
+            "count",
+            "time",
+            "attribution",
+            "summary",
+            "globalCount",
+            "bulkCount",
+            "cacheUsage",
+            "passwordStatus",
+            "qrStatus",
+        ):
+            self.assertIn(
+                "IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}"
+            )
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
 
@@ -1127,7 +1649,9 @@ class LayoutTests(unittest.TestCase):
         for width, height in ((1440, 900), (1024, 768), (390, 844)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
-                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                page.evaluate(
+                    "() => { document.getElementById('app-shell').hidden = false; }"
+                )
                 bounds = page.evaluate("""() => {
                   const player = document.getElementById('player').getBoundingClientRect();
                   const offenders = [];
@@ -1157,7 +1681,9 @@ class LayoutTests(unittest.TestCase):
         # Trigger opens the existing context menu with all four modes.
         page.click("#sidebar-sort-trigger")
         page.wait_for_selector("#context-menu:not([hidden])")
-        items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
+        items = page.evaluate(
+            """() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)"""
+        )
         self.assertEqual(4, len(items), items)
         for label in ("Custom order", "Name", "Recent activity", "Track count"):
             self.assertTrue(any(label in item for item in items), (label, items))
@@ -1176,17 +1702,32 @@ class LayoutTests(unittest.TestCase):
           target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientY: target.getBoundingClientRect().top + 4 }));
           target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientY: target.getBoundingClientRect().top + 4 }));
         }""")
-        page.wait_for_function("() => document.getElementById('sidebar-sort').value === 'custom'")
-        self.assertEqual("Custom order", page.evaluate("() => document.getElementById('sidebar-sort-label').textContent"))
-        self.assertEqual("custom", page.evaluate("() => localStorage.getItem('tm-source-sort')"))
+        page.wait_for_function(
+            "() => document.getElementById('sidebar-sort').value === 'custom'"
+        )
+        self.assertEqual(
+            "Custom order",
+            page.evaluate(
+                "() => document.getElementById('sidebar-sort-label').textContent"
+            ),
+        )
+        self.assertEqual(
+            "custom", page.evaluate("() => localStorage.getItem('tm-source-sort')")
+        )
 
         # Choosing Name updates the hidden state source, the label and localStorage.
         page.click("#sidebar-sort-trigger")
         page.wait_for_selector("#context-menu:not([hidden])")
         page.click('#context-menu button:has-text("Name")')
-        page.wait_for_function("() => document.getElementById('sidebar-sort-label').textContent === 'Name'")
-        self.assertEqual("name", page.evaluate("() => document.getElementById('sidebar-sort').value"))
-        self.assertEqual("name", page.evaluate("() => localStorage.getItem('tm-source-sort')"))
+        page.wait_for_function(
+            "() => document.getElementById('sidebar-sort-label').textContent === 'Name'"
+        )
+        self.assertEqual(
+            "name", page.evaluate("() => document.getElementById('sidebar-sort').value")
+        )
+        self.assertEqual(
+            "name", page.evaluate("() => localStorage.getItem('tm-source-sort')")
+        )
 
     def test_collapse_expand_semantics_and_settings_visibility(self):
         page = self.page(1440, 900)
@@ -1207,7 +1748,9 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(expanded["settingsVisible"], expanded)
 
         page.click("#collapse-sidebar")
-        page.wait_for_function("() => document.getElementById('app-shell').classList.contains('sidebar-collapsed')")
+        page.wait_for_function(
+            "() => document.getElementById('app-shell').classList.contains('sidebar-collapsed')"
+        )
         collapsed = page.evaluate("""() => {
           const button = document.getElementById('collapse-sidebar');
           const settings = document.getElementById('open-settings');
@@ -1265,7 +1808,12 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(base["contentHeight"], 300, delta=8, msg=base)
 
         # No backdrop blur: the scrim dims, it never frosts.
-        self.assertNotIn("blur", page.evaluate("() => getComputedStyle(document.getElementById('settings-dialog')).backdrop || ''"))
+        self.assertNotIn(
+            "blur",
+            page.evaluate(
+                "() => getComputedStyle(document.getElementById('settings-dialog')).backdrop || ''"
+            ),
+        )
 
         # The frame must not shift when switching tabs.
         for tab in ("appearance", "playback", "metadata", "network", "account"):
@@ -1275,8 +1823,12 @@ class LayoutTests(unittest.TestCase):
               const dialog = document.getElementById('settings-dialog');
               return { width: dialog.getBoundingClientRect().width, height: dialog.getBoundingClientRect().height };
             }""")
-            self.assertLessEqual(abs(frame["width"] - base["width"]), 1, (tab, frame, base))
-            self.assertLessEqual(abs(frame["height"] - base["height"]), 1, (tab, frame, base))
+            self.assertLessEqual(
+                abs(frame["width"] - base["width"]), 1, (tab, frame, base)
+            )
+            self.assertLessEqual(
+                abs(frame["height"] - base["height"]), 1, (tab, frame, base)
+            )
 
         # Metadata overflows its pane scroll rather than growing the dialog.
         page.click('[data-settings-tab="metadata"]')
@@ -1301,13 +1853,17 @@ class LayoutTests(unittest.TestCase):
         }""")
         self.assertEqual(2, network["count"], network)
         self.assertTrue(network["marked"], network)
-        self.assertEqual(1, len([v for v in network["pressed"] if v == "true"]), network)
+        self.assertEqual(
+            1, len([v for v in network["pressed"] if v == "true"]), network
+        )
 
     def test_player_is_one_uniform_glass_surface_on_the_canvas(self):
         for width, height in ((1440, 900), (390, 844)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
-                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                page.evaluate(
+                    "() => { document.getElementById('app-shell').hidden = false; }"
+                )
                 shape = page.evaluate("""() => {
                   const player = document.getElementById('player');
                   const progress = document.querySelector('.progress-row');
@@ -1324,7 +1880,9 @@ class LayoutTests(unittest.TestCase):
                 }""")
                 self.assertIn("36px", shape["filter"], shape)
                 self.assertEqual("rgba(0, 0, 0, 0)", shape["progressBackground"], shape)
-                self.assertEqual(shape["shellBackground"], shape["bodyBackground"], shape)
+                self.assertEqual(
+                    shape["shellBackground"], shape["bodyBackground"], shape
+                )
                 self.assertGreater(shape["playerLeft"], 0, shape)
                 self.assertGreater(shape["playerRight"], 0, shape)
 
@@ -1386,9 +1944,13 @@ class LayoutTests(unittest.TestCase):
                   };
                 }""")
                 if wraps:
-                    self.assertGreater(shape["height"], shape["lineHeight"] * 1.4, shape)
+                    self.assertGreater(
+                        shape["height"], shape["lineHeight"] * 1.4, shape
+                    )
                 else:
-                    self.assertLessEqual(shape["height"], shape["lineHeight"] * 1.2, shape)
+                    self.assertLessEqual(
+                        shape["height"], shape["lineHeight"] * 1.2, shape
+                    )
                     self.assertTrue(shape["truncated"], shape)
 
     def test_sort_menu_trigger_replaces_the_visible_select(self):
@@ -1413,21 +1975,33 @@ class LayoutTests(unittest.TestCase):
         # Click the trigger: the existing context menu opens with all four options.
         page.click("#track-sort-trigger")
         page.wait_for_selector("#context-menu:not([hidden])")
-        items = page.evaluate("""() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)""")
+        items = page.evaluate(
+            """() => [...document.querySelectorAll('#context-menu button')].map((b) => b.textContent)"""
+        )
         self.assertEqual(4, len(items), items)
         self.assertTrue(any("Title · A–Z" in item for item in items), items)
         self.assertTrue(any("Posted · newest first" in item for item in items), items)
 
         # Choosing Title updates the hidden state source, the visible label and the request.
         page.click('#context-menu button:has-text("Title · A–Z")')
-        page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Title'")
-        self.assertEqual("title", page.evaluate("() => document.getElementById('track-sort').value"))
-        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+        page.wait_for_function(
+            "() => document.getElementById('track-sort-label').textContent === 'Title'"
+        )
+        self.assertEqual(
+            "title", page.evaluate("() => document.getElementById('track-sort').value")
+        )
+        page.wait_for_function(
+            "() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'"
+        )
 
         # The track-head sort still works and re-syncs the visible label.
         page.click('.head-sort[data-sort="posted"]')
-        page.wait_for_function("() => document.getElementById('track-sort-label').textContent === 'Posted'")
-        self.assertEqual("posted", page.evaluate("() => document.getElementById('track-sort').value"))
+        page.wait_for_function(
+            "() => document.getElementById('track-sort-label').textContent === 'Posted'"
+        )
+        self.assertEqual(
+            "posted", page.evaluate("() => document.getElementById('track-sort').value")
+        )
 
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
@@ -1470,8 +2044,13 @@ class LayoutTests(unittest.TestCase):
             blur: style?.filter ?? '',
           };
         }""")
-        self.assertEqual(1, shape["count"], "ambient artwork must be a single app-shell layer")
-        self.assertTrue(shape["hidden"], "ambient artwork should start clear without a current track")
+        self.assertEqual(
+            1, shape["count"], "ambient artwork must be a single app-shell layer"
+        )
+        self.assertTrue(
+            shape["hidden"],
+            "ambient artwork should start clear without a current track",
+        )
         self.assertEqual("true", shape["ariaHidden"])
         self.assertEqual("none", shape["pointerEvents"])
         self.assertIn("blur", shape["blur"])
@@ -1483,12 +2062,19 @@ class LayoutTests(unittest.TestCase):
           const layer = document.getElementById('ambient-art');
           return !layer.hidden && getComputedStyle(layer).backgroundImage !== 'none';
         }""")
-        self.assertIn("/api/tracks/", page.locator("#ambient-art").evaluate("(layer) => getComputedStyle(layer).backgroundImage"))
+        self.assertIn(
+            "/api/tracks/",
+            page.locator("#ambient-art").evaluate(
+                "(layer) => getComputedStyle(layer).backgroundImage"
+            ),
+        )
 
         page.evaluate("() => window.__updateAmbientArtworkForTest(null)")
         page.wait_for_function("() => document.getElementById('ambient-art').hidden")
 
-    def test_player_floating_dock_stays_inside_viewport_and_keeps_controls_reachable(self):
+    def test_player_floating_dock_stays_inside_viewport_and_keeps_controls_reachable(
+        self,
+    ):
         for width, height in ((1440, 900), (390, 844)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
@@ -1521,24 +2107,55 @@ class LayoutTests(unittest.TestCase):
                   };
                 }""")
                 self.assertGreater(shape["player"]["left"], 0, shape)
-                self.assertLess(shape["player"]["right"], shape["viewport"]["width"], shape)
-                self.assertLessEqual(shape["player"]["bottom"], shape["viewport"]["height"] + 1, shape)
-                self.assertLessEqual(shape["transport"]["bottom"], shape["viewport"]["height"] + 1, shape)
-                self.assertLessEqual(shape["transport"]["playBottom"], shape["viewport"]["height"] + 1, shape)
-                self.assertGreater(shape["progress"]["top"], shape["player"]["top"] + 0.5 * (shape["player"]["bottom"] - shape["player"]["top"]), shape)
+                self.assertLess(
+                    shape["player"]["right"], shape["viewport"]["width"], shape
+                )
+                self.assertLessEqual(
+                    shape["player"]["bottom"], shape["viewport"]["height"] + 1, shape
+                )
+                self.assertLessEqual(
+                    shape["transport"]["bottom"], shape["viewport"]["height"] + 1, shape
+                )
+                self.assertLessEqual(
+                    shape["transport"]["playBottom"],
+                    shape["viewport"]["height"] + 1,
+                    shape,
+                )
+                self.assertGreater(
+                    shape["progress"]["top"],
+                    shape["player"]["top"]
+                    + 0.5 * (shape["player"]["bottom"] - shape["player"]["top"]),
+                    shape,
+                )
                 self.assertTrue(shape["playAboveDivider"], shape)
-                self.assertLessEqual(abs(shape["progress"]["bottom"] - shape["player"]["bottom"]), 2, shape)
+                self.assertLessEqual(
+                    abs(shape["progress"]["bottom"] - shape["player"]["bottom"]),
+                    2,
+                    shape,
+                )
                 self.assertGreater(shape["player"]["radius"], 0, shape)
-                self.assertLessEqual(shape["content"]["bottom"], shape["player"]["top"] + 1, shape)
-                self.assertTrue(shape["content"]["scrollable"] and shape["content"]["atEnd"], shape)
+                self.assertLessEqual(
+                    shape["content"]["bottom"], shape["player"]["top"] + 1, shape
+                )
+                self.assertTrue(
+                    shape["content"]["scrollable"] and shape["content"]["atEnd"], shape
+                )
                 self.assertEqual("play", shape["playHit"], shape)
                 self.assertEqual("progress", shape["progressHit"], shape)
 
     def test_desktop_transport_is_physically_centered_and_resets_on_mobile(self):
-        for width, height in ((1440, 900), (1280, 720), (1024, 768), (861, 900), (390, 844)):
+        for width, height in (
+            (1440, 900),
+            (1280, 720),
+            (1024, 768),
+            (861, 900),
+            (390, 844),
+        ):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
-                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                page.evaluate(
+                    "() => { document.getElementById('app-shell').hidden = false; }"
+                )
                 # A long title must not shift the transport.
                 page.evaluate("""() => {
                   document.getElementById('player-title').textContent =
@@ -1567,7 +2184,9 @@ class LayoutTests(unittest.TestCase):
         for width, height in ((1440, 900), (1024, 768), (390, 844)):
             with self.subTest(viewport=(width, height)):
                 page = self.page(width, height)
-                page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+                page.evaluate(
+                    "() => { document.getElementById('app-shell').hidden = false; }"
+                )
                 shape = page.evaluate("""() => {
                   const box = selector => document.querySelector(selector).getBoundingClientRect();
                   const track = box('.player-track');
@@ -1589,10 +2208,16 @@ class LayoutTests(unittest.TestCase):
                     lyricsVisible: getComputedStyle(document.getElementById('show-lyrics')).display !== 'none',
                   };
                 }""")
-                self.assertLessEqual(shape["actions"]["right"], shape["track"]["right"], shape)
-                self.assertGreaterEqual(shape["actions"]["left"], shape["copyRight"] - 2, shape)
+                self.assertLessEqual(
+                    shape["actions"]["right"], shape["track"]["right"], shape
+                )
+                self.assertGreaterEqual(
+                    shape["actions"]["left"], shape["copyRight"] - 2, shape
+                )
                 self.assertGreaterEqual(shape["actionsVisible"], 2, shape)
-                self.assertLessEqual(shape["utilitiesRight"], shape["playerRight"] + 1, shape)
+                self.assertLessEqual(
+                    shape["utilitiesRight"], shape["playerRight"] + 1, shape
+                )
                 self.assertTrue(shape["volumeVisible"] or width <= 1120, shape)
                 self.assertTrue(shape["lyricsVisible"] or width <= 480, shape)
 
@@ -1601,11 +2226,17 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
         # All music: the source is the one thing distinguishing otherwise similar rows.
-        self.assertTrue(page.evaluate("() => !!document.querySelector('.track-source')"))
-        across = page.evaluate("() => getComputedStyle(document.querySelector('.track-source')).display")
+        self.assertTrue(
+            page.evaluate("() => !!document.querySelector('.track-source')")
+        )
+        across = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.track-source')).display"
+        )
         self.assertNotEqual("none", across)
         # Inside one source it repeats the h1 on every row and is the widest column (audit D5).
-        page.evaluate("() => document.querySelector('.library').classList.add('single-source')")
+        page.evaluate(
+            "() => document.querySelector('.library').classList.add('single-source')"
+        )
         page.wait_for_timeout(80)
         within = page.evaluate("""() => {
           const row = document.querySelector('.track-row:not(.track-placeholder)');
@@ -1619,10 +2250,32 @@ class LayoutTests(unittest.TestCase):
             rowColumns: getComputedStyle(row).gridTemplateColumns,
           };
         }""")
-        self.assertEqual("none", within["source"], "the source column repeats the page title inside a single source")
-        self.assertEqual("none", within["headSource"], "the desktop header must hide Source with its cells")
-        self.assertEqual(["track-ordinal", "track-main", "track-posted", "track-duration", "track-row-actions", "row-menu"], within["rowCells"])
-        self.assertEqual(6, len(within["rowColumns"].split()), "hidden Source must not leave a dead grid track")
+        self.assertEqual(
+            "none",
+            within["source"],
+            "the source column repeats the page title inside a single source",
+        )
+        self.assertEqual(
+            "none",
+            within["headSource"],
+            "the desktop header must hide Source with its cells",
+        )
+        self.assertEqual(
+            [
+                "track-ordinal",
+                "track-main",
+                "track-posted",
+                "track-duration",
+                "track-row-actions",
+                "row-menu",
+            ],
+            within["rowCells"],
+        )
+        self.assertEqual(
+            6,
+            len(within["rowColumns"].split()),
+            "hidden Source must not leave a dead grid track",
+        )
 
     def test_locate_current_sends_the_active_sort_to_position(self):
         page = self.page(1440, 900)
@@ -1638,7 +2291,11 @@ class LayoutTests(unittest.TestCase):
             query = parse_qs(urlsplit(route.request.url).query)
             decoded_path = unquote(path)
             if decoded_path == "/api/playback/queue":
-                return route.fulfill(status=200, content_type="application/json", body='{"keys": ["-1001:1000"]}')
+                return route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"keys": ["-1001:1000"]}',
+                )
             if decoded_path == "/api/tracks":
                 # Locate only pages to /position when the current track is outside the
                 # rendered window: a 300-track library keeps "Angels" (title-sorted at
@@ -1646,18 +2303,29 @@ class LayoutTests(unittest.TestCase):
                 items = _tracks(300)
                 if query.get("sort", ["posted"])[0] == "title":
                     items = sorted(items, key=lambda item: item["title"].lower())
-                return route.fulfill(status=200, content_type="application/json",
-                                     body=json.dumps({"items": items, "offset": 0, "total": len(items)}))
+                return route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({"items": items, "offset": 0, "total": len(items)}),
+                )
             if decoded_path.startswith("/api/tracks/") and decoded_path.count("/") == 3:
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps(current))
+                return route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(current),
+                )
             if path.endswith("/position"):
                 positions.append(route.request.url)
-                return route.fulfill(status=200, content_type="application/json", body='{"index": 100}')
+                return route.fulfill(
+                    status=200, content_type="application/json", body='{"index": 100}'
+                )
             return route.fallback()
 
         page.route("**/api/**", locate_route)
         page.locator(".track-row:not(.track-placeholder) .track-main").nth(0).click()
-        page.wait_for_function("() => document.getElementById('player-title').textContent === 'Angels'")
+        page.wait_for_function(
+            "() => document.getElementById('player-title').textContent === 'Angels'"
+        )
         if page.evaluate("() => document.getElementById('error-dialog').open"):
             page.locator("#error-dialog [data-close='error-dialog']").click()
         page.evaluate("""() => {
@@ -1666,7 +2334,9 @@ class LayoutTests(unittest.TestCase):
           select.dispatchEvent(new Event('change', { bubbles: true }));
           document.getElementById('player-locate').click();
         }""")
-        page.wait_for_function("() => document.querySelector('#player-locate').getAttribute('aria-busy') === null")
+        page.wait_for_function(
+            "() => document.querySelector('#player-locate').getAttribute('aria-busy') === null"
+        )
         self.assertTrue(positions, "locate did not request the current track position")
         self.assertIn("sort=title", positions[-1])
         self.assertIn("source=-1001", positions[-1])
@@ -1806,8 +2476,12 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("loading", labels["cache"], labels)
 
         # No cache state at all: the row renders without a badge, not with a default label.
-        page.evaluate("""() => window.__setQueueForTest(['-1001:1', '-1001:2'], 0, {})""")
-        bare = page.evaluate("""() => [...document.querySelectorAll('.queue-row .cache-state')].map((el) => el.textContent)""")
+        page.evaluate(
+            """() => window.__setQueueForTest(['-1001:1', '-1001:2'], 0, {})"""
+        )
+        bare = page.evaluate(
+            """() => [...document.querySelectorAll('.queue-row .cache-state')].map((el) => el.textContent)"""
+        )
         self.assertEqual([], bare, bare)
 
     def test_expanded_now_identity_block_has_artwork_clearance(self):
@@ -1828,8 +2502,12 @@ class LayoutTests(unittest.TestCase):
                     panelRight: panel.right,
                   };
                 }""")
-                self.assertAlmostEqual(shape["artWidth"], shape["artHeight"], delta=1, msg=shape)
-                self.assertGreaterEqual(shape["titleTop"] - shape["artBottom"], 16, shape)
+                self.assertAlmostEqual(
+                    shape["artWidth"], shape["artHeight"], delta=1, msg=shape
+                )
+                self.assertGreaterEqual(
+                    shape["titleTop"] - shape["artBottom"], 16, shape
+                )
                 self.assertGreaterEqual(shape["artWidth"], 180, shape)
                 self.assertLessEqual(shape["artWidth"], 188, shape)
 
@@ -1861,14 +2539,27 @@ class LayoutTests(unittest.TestCase):
 
     def test_non_classifying_eyebrows_are_removed(self):
         page = self.page(1440, 900)
-        page.route("**/api/tracks*", lambda route: route.fulfill(
-            status=200, content_type="application/json",
-            body='{"items": [], "offset": 0, "total": 0}'))
+        page.route(
+            "**/api/tracks*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"items": [], "offset": 0, "total": 0}',
+            ),
+        )
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.fill("#track-search", "qqqqq")
         page.wait_for_selector("#empty-library:not([hidden])")
-        self.assertEqual(0, page.locator("#empty-eyebrow").count(), "No matches is not a classifying eyebrow")
-        self.assertEqual(0, page.locator(".now-header .eyebrow").count(), "Now playing repeats the panel label")
+        self.assertEqual(
+            0,
+            page.locator("#empty-eyebrow").count(),
+            "No matches is not a classifying eyebrow",
+        )
+        self.assertEqual(
+            0,
+            page.locator(".now-header .eyebrow").count(),
+            "Now playing repeats the panel label",
+        )
         self.assertIn("qqqqq", page.text_content("#empty-title"))
 
     def test_responsive_rows_keep_four_cells_at_800px(self):
@@ -1888,11 +2579,26 @@ class LayoutTests(unittest.TestCase):
             visibleClasses: visible(row).map((child) => child.classList.contains('row-menu') ? 'row-menu' : child.classList[0]),
           };
         }""")
-        self.assertEqual("none", shape["headDisplay"], "the column head should hide on a narrow layout")
-        self.assertEqual(4, shape["rowCells"], "800px rows should expose ordinal, main, posted and menu")
-        self.assertEqual(["track-ordinal", "track-main", "track-posted", "row-menu"], shape["visibleClasses"])
-        self.assertEqual(4, shape["rowColumns"], "the grid must have four visible tracks at 800px")
-        self.assertEqual(1, shape["rowRows"], "a row cell wrapped into an implicit second grid row")
+        self.assertEqual(
+            "none",
+            shape["headDisplay"],
+            "the column head should hide on a narrow layout",
+        )
+        self.assertEqual(
+            4,
+            shape["rowCells"],
+            "800px rows should expose ordinal, main, posted and menu",
+        )
+        self.assertEqual(
+            ["track-ordinal", "track-main", "track-posted", "row-menu"],
+            shape["visibleClasses"],
+        )
+        self.assertEqual(
+            4, shape["rowColumns"], "the grid must have four visible tracks at 800px"
+        )
+        self.assertEqual(
+            1, shape["rowRows"], "a row cell wrapped into an implicit second grid row"
+        )
 
     def test_sort_control_changes_the_requested_order(self):
         page = self.page(1440, 900)
@@ -1908,53 +2614,96 @@ class LayoutTests(unittest.TestCase):
         page.reload(wait_until="load")
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector(".track-row:not(.track-placeholder)")
-        self.assertTrue(any("sort=posted" in url for url in requested),
-                        f"the default sort is not sent: {requested}")
+        self.assertTrue(
+            any("sort=posted" in url for url in requested),
+            f"the default sort is not sent: {requested}",
+        )
 
         requested.clear()
         page.select_option("#track-sort", "title")
-        page.wait_for_function("() => document.querySelectorAll('.track-row').length > 0")
-        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
+        page.wait_for_function(
+            "() => document.querySelectorAll('.track-row').length > 0"
+        )
+        page.wait_for_function(
+            "() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'"
+        )
         # It must reach the network, not a cache entry keyed without sort.
-        self.assertTrue(any("sort=title" in url for url in requested),
-                        f"changing sort served a stale cache entry instead of refetching: {requested}")
+        self.assertTrue(
+            any("sort=title" in url for url in requested),
+            f"changing sort served a stale cache entry instead of refetching: {requested}",
+        )
 
         marked = page.evaluate("""() => [...document.querySelectorAll('.track-head [aria-sort]')]
           .map((cell) => [cell.textContent.trim(), cell.getAttribute('aria-sort')])""")
-        self.assertIn(["Track", "ascending"], marked,
-                      f"the active sort key is not marked in the column header: {marked}")
+        self.assertIn(
+            ["Track", "ascending"],
+            marked,
+            f"the active sort key is not marked in the column header: {marked}",
+        )
 
         requested.clear()
         page.click('.head-sort[data-sort="posted"]')
-        page.wait_for_function("() => document.querySelector('.track-head [data-sort=posted]')?.getAttribute('aria-sort') === 'descending'")
-        self.assertTrue(any("sort=posted" in url for url in requested),
-                        f"clicking the Posted head did not use the sort request path: {requested}")
+        page.wait_for_function(
+            "() => document.querySelector('.track-head [data-sort=posted]')?.getAttribute('aria-sort') === 'descending'"
+        )
+        self.assertTrue(
+            any("sort=posted" in url for url in requested),
+            f"clicking the Posted head did not use the sort request path: {requested}",
+        )
 
         requested.clear()
         page.select_option("#track-sort", "title")
-        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
-        self.assertTrue(any("sort=title" in url for url in requested),
-                        f"returning to Title did not refetch the cached sort key: {requested}")
+        page.wait_for_function(
+            "() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'"
+        )
+        self.assertTrue(
+            any("sort=title" in url for url in requested),
+            f"returning to Title did not refetch the cached sort key: {requested}",
+        )
 
     def test_all_music_count_uses_server_total_and_starts_neutral(self):
         static_page = self.browser.new_page(viewport={"width": 1440, "height": 900})
         static_page.route("**/app.js", lambda route: route.abort())
         static_page.goto(f"http://127.0.0.1:{self.port}/index.html", wait_until="load")
         self.addCleanup(static_page.close)
-        self.assertEqual("—", static_page.text_content("#all-count"), "pre-response state must not claim zero")
+        self.assertEqual(
+            "—",
+            static_page.text_content("#all-count"),
+            "pre-response state must not claim zero",
+        )
 
         page = self.page(1440, 900)
-        page.route("**/api/tracks*", lambda route: route.fulfill(
-            status=200, content_type="application/json",
-            body=json.dumps({"items": _tracks(1), "offset": 0, "total": 1,
-                             "allMusicTotal": 7, "dayBreaks": []})))
+        page.route(
+            "**/api/tracks*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "items": _tracks(1),
+                        "offset": 0,
+                        "total": 1,
+                        "allMusicTotal": 7,
+                        "dayBreaks": [],
+                    }
+                ),
+            ),
+        )
         page.reload(wait_until="load")
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
-        page.wait_for_function("() => document.getElementById('all-count').textContent === '7'")
-        self.assertEqual("1 track", page.text_content("#library-summary"),
-                         "active-view total must remain query-specific")
-        self.assertNotEqual(7, sum(source["trackCount"] for source in SOURCES),
-                            "fixture must intentionally disagree with source.trackCount")
+        page.wait_for_function(
+            "() => document.getElementById('all-count').textContent === '7'"
+        )
+        self.assertEqual(
+            "1 track",
+            page.text_content("#library-summary"),
+            "active-view total must remain query-specific",
+        )
+        self.assertNotEqual(
+            7,
+            sum(source["trackCount"] for source in SOURCES),
+            "fixture must intentionally disagree with source.trackCount",
+        )
 
     def test_all_music_day_rules_virtualize_without_duplicate_rows_or_spacer_gaps(self):
         page = self.page(1440, 900)
@@ -1968,16 +2717,28 @@ class LayoutTests(unittest.TestCase):
         def paged(route):
             query = parse_qs(urlsplit(route.request.url).query)
             offset = int(query.get("offset", [0])[0])
-            return route.fulfill(status=200, content_type="application/json", body=json.dumps({
-                "items": tracks[offset:offset + 100], "offset": offset, "total": len(tracks),
-                "allMusicTotal": len(tracks), "dayBreaks": day_breaks,
-            }))
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "items": tracks[offset : offset + 100],
+                        "offset": offset,
+                        "total": len(tracks),
+                        "allMusicTotal": len(tracks),
+                        "dayBreaks": day_breaks,
+                    }
+                ),
+            )
 
         page.route("**/api/tracks*", paged)
         page.reload(wait_until="load")
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.wait_for_selector('.day-separator[data-day-key="2025-07-30"]')
-        self.assertEqual("── 30 JUL ──", page.text_content('.day-separator[data-day-key="2025-07-30"]'))
+        self.assertEqual(
+            "── 30 JUL ──",
+            page.text_content('.day-separator[data-day-key="2025-07-30"]'),
+        )
 
         page.evaluate("""() => {
           const library = document.getElementById('library-content');
@@ -1999,13 +2760,27 @@ class LayoutTests(unittest.TestCase):
             accounted: spacer + rows.length * 64 + separators.length * 28,
           };
         }""")
-        self.assertLessEqual(geometry["rows"], 80, "separator rows must not consume the 80-track budget")
-        self.assertEqual(geometry["keyed"], geometry["unique"], "a boundary duplicated a track row")
-        self.assertEqual(121 * 64 + 3 * 28, geometry["accounted"], "separator height drifted out of spacers")
+        self.assertLessEqual(
+            geometry["rows"], 80, "separator rows must not consume the 80-track budget"
+        )
+        self.assertEqual(
+            geometry["keyed"], geometry["unique"], "a boundary duplicated a track row"
+        )
+        self.assertEqual(
+            121 * 64 + 3 * 28,
+            geometry["accounted"],
+            "separator height drifted out of spacers",
+        )
 
         page.select_option("#track-sort", "title")
-        page.wait_for_function("() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'")
-        self.assertEqual(0, page.locator(".day-separator").count(), "non-posted sorts must suppress rules")
+        page.wait_for_function(
+            "() => document.querySelector('.track-head [data-sort=title]')?.getAttribute('aria-sort') === 'ascending'"
+        )
+        self.assertEqual(
+            0,
+            page.locator(".day-separator").count(),
+            "non-posted sorts must suppress rules",
+        )
 
     def test_expanded_now_header_keeps_its_contents_visible(self):
         for width, height in ((1440, 900), (1280, 720), (390, 844)):
@@ -2025,8 +2800,17 @@ class LayoutTests(unittest.TestCase):
                   return { ratio: header.height / panel.height, overflow: document.querySelector('.now-header').scrollHeight > document.querySelector('.now-header').clientHeight + 1, boxes };
                 }""")
                 self.assertLess(geometry["ratio"], 0.6, geometry)
-                self.assertFalse(geometry["overflow"], f"expanded header overflowed at {width}x{height}")
-                self.assertTrue(all(item["visible"] and item["contained"] for item in geometry["boxes"]), geometry["boxes"])
+                self.assertFalse(
+                    geometry["overflow"],
+                    f"expanded header overflowed at {width}x{height}",
+                )
+                self.assertTrue(
+                    all(
+                        item["visible"] and item["contained"]
+                        for item in geometry["boxes"]
+                    ),
+                    geometry["boxes"],
+                )
 
     def test_search_results_reuse_the_library_row_system(self):
         page = self.page(1440, 900)
@@ -2039,18 +2823,36 @@ class LayoutTests(unittest.TestCase):
                 tracks = _tracks(30)
                 sources = []
             else:
-                sources = [{
-                    "chatId": "-1005", "kind": "bot", "title": "@deepcuts_bot", "username": "deepcuts_bot",
-                    "selected": True, "trackCount": 31,
-                }]
-                tracks = [{
-                    "key": "-1009:77", "title": "Burial", "artist": "Burial", "durationMs": 242000,
-                    "artworkVersion": "search-v1", "source": {
-                        "chatId": "-1009", "title": "Telegram Vault", "kind": "channel", "selected": False,
-                    },
-                }]
-            return route.fulfill(status=200, content_type="application/json",
-                                 body=json.dumps({"sources": sources, "tracks": tracks}))
+                sources = [
+                    {
+                        "chatId": "-1005",
+                        "kind": "bot",
+                        "title": "@deepcuts_bot",
+                        "username": "deepcuts_bot",
+                        "selected": True,
+                        "trackCount": 31,
+                    }
+                ]
+                tracks = [
+                    {
+                        "key": "-1009:77",
+                        "title": "Burial",
+                        "artist": "Burial",
+                        "durationMs": 242000,
+                        "artworkVersion": "search-v1",
+                        "source": {
+                            "chatId": "-1009",
+                            "title": "Telegram Vault",
+                            "kind": "channel",
+                            "selected": False,
+                        },
+                    }
+                ]
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"sources": sources, "tracks": tracks}),
+            )
 
         # This route must be registered before filling the input: the generic fallback in _stub
         # returns {}, which would exercise the empty state rather than either result template.
@@ -2084,32 +2886,69 @@ class LayoutTests(unittest.TestCase):
             count: document.getElementById('global-results-count')?.textContent.trim() ?? null,
           };
         }""")
-        self.assertEqual(40, shape["trackArt"], "the track result must use the library's 40px artwork")
-        self.assertTrue(shape["trackSrc"], "track result artwork must use src so it can load in the dropdown")
-        self.assertIsNone(shape["trackDataSrc"], "dropdown artwork must not depend on the library-only observer")
+        self.assertEqual(
+            40,
+            shape["trackArt"],
+            "the track result must use the library's 40px artwork",
+        )
+        self.assertTrue(
+            shape["trackSrc"],
+            "track result artwork must use src so it can load in the dropdown",
+        )
+        self.assertIsNone(
+            shape["trackDataSrc"],
+            "dropdown artwork must not depend on the library-only observer",
+        )
         self.assertEqual("lazy", shape["trackLoading"])
-        self.assertGreater(shape["trackNaturalWidth"], 0, "the track cover did not load")
-        self.assertEqual("15px", shape["titlePx"], "result titles should match library rows (--text-body)")
+        self.assertGreater(
+            shape["trackNaturalWidth"], 0, "the track cover did not load"
+        )
+        self.assertEqual(
+            "15px",
+            shape["titlePx"],
+            "result titles should match library rows (--text-body)",
+        )
         self.assertEqual("In your library", shape["sourceProvenance"])
         self.assertEqual("On Telegram", shape["trackProvenance"])
-        self.assertEqual("Bot · 31 known tracks", shape["sourceKind"], "source kind should use sourceKindLabel")
-        self.assertEqual("50%", shape["sourceAvatarRadius"], "source results retain circular avatars")
-        self.assertEqual("", shape["sourceDurationCell"], "source results keep an empty duration cell")
+        self.assertEqual(
+            "Bot · 31 known tracks",
+            shape["sourceKind"],
+            "source kind should use sourceKindLabel",
+        )
+        self.assertEqual(
+            "50%", shape["sourceAvatarRadius"], "source results retain circular avatars"
+        )
+        self.assertEqual(
+            "",
+            shape["sourceDurationCell"],
+            "source results keep an empty duration cell",
+        )
         self.assertEqual("4:02", shape["trackDuration"])
-        self.assertEqual(0, shape["marks"], "the four-meaning 8px mark column still exists")
+        self.assertEqual(
+            0, shape["marks"], "the four-meaning 8px mark column still exists"
+        )
         self.assertEqual("2 results", shape["count"])
 
         page.fill("#global-search", "cap")
-        page.wait_for_function("() => document.getElementById('global-results-count')?.textContent.trim() === 'First 30 results'")
+        page.wait_for_function(
+            "() => document.getElementById('global-results-count')?.textContent.trim() === 'First 30 results'"
+        )
         self.assertTrue(requested, "the search route was not called")
-        self.assertTrue(all(request.get("limit") == 30 for request in requested),
-                        f"search requests drifted from the server cap: {requested}")
+        self.assertTrue(
+            all(request.get("limit") == 30 for request in requested),
+            f"search requests drifted from the server cap: {requested}",
+        )
 
     def test_zero_results_drop_the_column_head_and_disable_play(self):
         page = self.page(1440, 900)
-        page.route("**/api/tracks*", lambda route: route.fulfill(
-            status=200, content_type="application/json",
-            body='{"items": [], "offset": 0, "total": 0}'))
+        page.route(
+            "**/api/tracks*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"items": [], "offset": 0, "total": 0}',
+            ),
+        )
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.fill("#track-search", "qqqqq")
         page.wait_for_selector("#empty-library:not([hidden])")
@@ -2118,9 +2957,13 @@ class LayoutTests(unittest.TestCase):
           play: document.getElementById('play-playlist').disabled,
           shuffle: document.getElementById('shuffle-playlist').disabled,
         })""")
-        self.assertEqual("none", state["head"], "the TRACK/SOURCE/TIME head sits above an empty list")
+        self.assertEqual(
+            "none", state["head"], "the TRACK/SOURCE/TIME head sits above an empty list"
+        )
         self.assertIs(True, state["play"], "Play is enabled with nothing to play")
-        self.assertIs(True, state["shuffle"], "Shuffle is enabled with nothing to shuffle")
+        self.assertIs(
+            True, state["shuffle"], "Shuffle is enabled with nothing to shuffle"
+        )
 
     def test_label_disc_holds_while_paused_and_rotates_only_while_playing(self):
         page = self.page(1440, 900)
@@ -2151,14 +2994,22 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         self.assertIn("label-disc", paused["classes"])
-        self.assertTrue(paused["square"], "a label must be a circle, so the box has to be square")
+        self.assertTrue(
+            paused["square"], "a label must be a circle, so the box has to be square"
+        )
         self.assertEqual("50%", paused["radius"])
         self.assertEqual("label-spin", paused["name"])
         self.assertEqual("20s", paused["duration"])
-        self.assertEqual("paused", paused["playState"], "a paused disc must hold its current angle")
-        self.assertEqual(paused["ruleColor"], paused["ringColor"], "the paused ring must use --rule")
+        self.assertEqual(
+            "paused", paused["playState"], "a paused disc must hold its current angle"
+        )
+        self.assertEqual(
+            paused["ruleColor"], paused["ringColor"], "the paused ring must use --rule"
+        )
 
-        page.evaluate("() => document.querySelector('.label-disc').classList.add('is-playing')")
+        page.evaluate(
+            "() => document.querySelector('.label-disc').classList.add('is-playing')"
+        )
         playing = page.evaluate("""() => {
           const disc = document.querySelector('.label-disc');
           const ring = getComputedStyle(disc, '::before');
@@ -2181,22 +3032,34 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual("label-spin", playing["name"])
         self.assertEqual("20s", playing["duration"])
         self.assertEqual("running", playing["playState"])
-        self.assertEqual(playing["stampColor"], playing["ringColor"], "the playing ring must use --stamp")
+        self.assertEqual(
+            playing["stampColor"],
+            playing["ringColor"],
+            "the playing ring must use --stamp",
+        )
 
     def test_label_disc_is_static_for_reduced_motion(self):
-        page = self.browser.new_page(viewport={"width": 1440, "height": 900}, reduced_motion="reduce")
+        page = self.browser.new_page(
+            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+        )
         page.route("**/api/**", self._stub)
         page.goto(f"http://127.0.0.1:{self.port}/index.html", wait_until="load")
         self.addCleanup(page.close)
         self.open_now_panel(page)
-        self.assertIn("label-disc", page.locator(".large-art-wrap").get_attribute("class"))
-        page.evaluate("() => document.querySelector('.large-art-wrap').classList.add('is-playing')")
+        self.assertIn(
+            "label-disc", page.locator(".large-art-wrap").get_attribute("class")
+        )
+        page.evaluate(
+            "() => document.querySelector('.large-art-wrap').classList.add('is-playing')"
+        )
         name = page.evaluate("""() => {
           const art = document.querySelector('#large-art');
           const face = art && !art.hidden ? art : document.querySelector('#large-art-placeholder');
           return getComputedStyle(face).animationName;
         }""")
-        self.assertEqual("none", name, "reduced-motion users must never get a spinning disc")
+        self.assertEqual(
+            "none", name, "reduced-motion users must never get a spinning disc"
+        )
 
     def test_header_flip_does_not_cancel_playing_label_spin(self):
         page = self.page(1440, 900)
@@ -2211,7 +3074,9 @@ class LayoutTests(unittest.TestCase):
           content.scrollTop = 100;
           content.dispatchEvent(new Event('scroll'));
         }""")
-        page.wait_for_function("() => document.querySelector('.now-header').classList.contains('is-compact')")
+        page.wait_for_function(
+            "() => document.querySelector('.now-header').classList.contains('is-compact')"
+        )
         animations = page.evaluate("""() => {
           const disc = document.querySelector('.label-disc');
           const art = document.querySelector('#large-art');
@@ -2226,21 +3091,40 @@ class LayoutTests(unittest.TestCase):
             spinState: spin[0]?.playState ?? null,
           };
         }""")
-        self.assertTrue(animations["compact"], "the real scroll path must compact the now-playing header")
-        self.assertGreaterEqual(animations["flipCount"], 1, "compaction should start the header FLIP animation")
-        self.assertEqual(1, animations["spinCount"], "FLIP must not cancel the CSS label-spin animation")
+        self.assertTrue(
+            animations["compact"],
+            "the real scroll path must compact the now-playing header",
+        )
+        self.assertGreaterEqual(
+            animations["flipCount"],
+            1,
+            "compaction should start the header FLIP animation",
+        )
+        self.assertEqual(
+            1,
+            animations["spinCount"],
+            "FLIP must not cancel the CSS label-spin animation",
+        )
         self.assertEqual("running", animations["spinState"])
 
     def test_headlines_take_no_terminal_period(self):
         page = self.page(1440, 900)
-        page.route("**/api/tracks*", lambda route: route.fulfill(
-            status=200, content_type="application/json",
-            body='{"items": [], "offset": 0, "total": 0}'))
+        page.route(
+            "**/api/tracks*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"items": [], "offset": 0, "total": 0}',
+            ),
+        )
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
         page.fill("#track-search", "qqqqq")
         page.wait_for_selector("#empty-library:not([hidden])")
         headline = page.text_content("#empty-title")
-        self.assertFalse(headline.rstrip().endswith("."), f"headline carries a terminal period: {headline!r}")
+        self.assertFalse(
+            headline.rstrip().endswith("."),
+            f"headline carries a terminal period: {headline!r}",
+        )
         # The best-written state in the app (audit F): it must still name the query.
         self.assertIn("qqqqq", headline)
 
@@ -2279,8 +3163,12 @@ class LayoutTests(unittest.TestCase):
             field = _rel_lum(colors["field"])
             raised = _rel_lum(colors["raised"])
             if theme == "dark":
-                self.assertGreaterEqual(field, paper + 0.004, (theme, paper, field, raised))
-                self.assertLessEqual(field, raised - 0.002, (theme, paper, field, raised))
+                self.assertGreaterEqual(
+                    field, paper + 0.004, (theme, paper, field, raised)
+                )
+                self.assertLessEqual(
+                    field, raised - 0.002, (theme, paper, field, raised)
+                )
             else:
                 self.assertLessEqual(field, paper - 0.03, (theme, paper, field))
                 self.assertGreaterEqual(field, raised - 0.25, (theme, field, raised))
