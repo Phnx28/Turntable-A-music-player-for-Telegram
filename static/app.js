@@ -736,7 +736,7 @@ function clearCountry({ focus = true } = {}) {
 	if (focus) $("country-search").focus();
 }
 
-async function startQr(phoneMessage = "Choose your country to continue.") {
+async function startQr(phoneMessage = "Pick your country, then enter your phone number.") {
 	clearTimeout(qrTimer);
 	const qrExit = clearQr();
 	state.flow = "";

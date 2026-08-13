@@ -379,11 +379,9 @@ svg [stroke] {
 	#bulk-count,
 	#cache-usage,
 	#password-state-label,
-	#qr-status,
 	.result-provenance,
 	.sync-strip,
 	.dialog-status,
-	.login-status,
 	.restart-notice,
 	.field-label,
 	.sort-trigger,
@@ -4344,23 +4342,8 @@ dialog.modal[open]::backdrop {
 }
 .method-heading p {
 	margin: 0;
-	color: var(--graphite);
+	color: var(--content-secondary);
 	font-size: 11px;
-}
-.method-mark {
-	display: grid;
-	min-width: 34px;
-	height: 25px;
-	place-items: center;
-	padding: 1px 7px 0;
-	border: 1px solid var(--rule);
-	border-radius: var(--radius-pill);
-	color: var(--graphite);
-	font-family: var(--font-data);
-	font-size: var(--text-micro);
-	letter-spacing: 0.05em;
-	line-height: 1;
-	text-indent: 0.05em;
 }
 .qr-stage {
 	position: relative;
@@ -4376,7 +4359,7 @@ dialog.modal[open]::backdrop {
 	display: grid;
 	place-items: center;
 	gap: 13px;
-	color: var(--graphite);
+	color: var(--content-secondary);
 	font-size: 11px;
 	opacity: 0.75;
 }
@@ -4531,6 +4514,9 @@ dialog.modal[open]::backdrop {
 	color: var(--graphite);
 	font-size: var(--text-micro);
 }
+.login-method .field-help {
+	color: var(--content-secondary);
+}
 
 .combo {
 	position: relative;
@@ -4657,8 +4643,10 @@ dialog.modal[open]::backdrop {
 .login-status {
 	min-height: 36px;
 	margin: 12px 0 0;
+	color: var(--content-secondary);
 }
 #qr-status {
+	color: var(--content-secondary);
 	transition: opacity var(--dur-2) var(--ease-out);
 }
 #qr-status.is-changing {

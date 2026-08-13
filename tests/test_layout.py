@@ -970,6 +970,129 @@ class LayoutTests(unittest.TestCase):
             "telegram-password", page.evaluate("() => document.activeElement.id")
         )
 
+    def test_login_method_pills_are_removed(self):
+        # Task 11 step 1: the TEL/QR pills are gone, so the heading text sits directly on
+        # the control column and can align with it (step 2) instead of hanging off a badge.
+        page = self.page(1440, 900)
+        self.assertEqual(0, page.locator(".method-mark").count())
+        page.evaluate(
+            """() => {
+          document.getElementById('telegram-view').hidden = false;
+          document.getElementById('app-shell').hidden = true;
+          document.getElementById('lock-view').hidden = true;
+        }"""
+        )
+        page.wait_for_timeout(300)
+        edges = page.evaluate("""() => {
+          // Measure the text itself (Range over the node), not the h2 box -- boxes can be
+          // equal while baselines drift.
+          const textLeft = (selector) => {
+            const element = document.querySelector(selector);
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return range.getBoundingClientRect().left;
+          };
+          return {
+            qrHeading: textLeft('.qr-method h2'),
+            qrStage: document.querySelector('.qr-stage').getBoundingClientRect().left,
+            phoneHeading: textLeft('.phone-method h2'),
+            country: document.querySelector('#country-search').getBoundingClientRect().left,
+          };
+        }""")
+        self.assertAlmostEqual(
+            edges["qrHeading"], edges["qrStage"], delta=1,
+            msg="QR heading text edge must line up with the QR frame edge",
+        )
+        self.assertAlmostEqual(
+            edges["phoneHeading"], edges["country"], delta=1,
+            msg="phone heading text edge must line up with the control edge",
+        )
+
+    def test_login_status_copy_uses_the_ui_font(self):
+        page = self.page(1440, 900)
+        page.wait_for_timeout(300)
+        fonts = page.evaluate("""() => ({
+          qr: getComputedStyle(document.querySelector('#qr-status')).fontFamily,
+          phone: getComputedStyle(document.querySelector('#phone-status')).fontFamily,
+        })""")
+        for name, family in fonts.items():
+            self.assertIn(
+                "Archivo",
+                family,
+                f"{name} is human status copy and must use the UI font: {fonts}",
+            )
+            self.assertNotIn(
+                "Mono",
+                family,
+                f"{name} must not use the data font: {fonts}",
+            )
+
+    def test_login_panel_no_overflow_or_clipped_cta_at_common_viewports(self):
+        # Task 11 step 6. The real renderer emits one square viewBox path, so inject a
+        # representative square SVG: geometry here is about the frame, not the payload.
+        for width, height in ((1440, 900), (900, 900), (720, 900), (390, 844), (320, 700)):
+            page = self.page(width, height)
+            page.evaluate(
+                """() => {
+              document.getElementById('telegram-view').hidden = false;
+              document.getElementById('app-shell').hidden = true;
+              document.getElementById('lock-view').hidden = true;
+              document.getElementById('qr-code').innerHTML =
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31 31">' +
+                '<path fill="#101010" d="M4 4h23v23H4zM10 10h11v11H10z"/></svg>';
+            }"""
+            )
+            page.wait_for_timeout(300)
+            metrics = page.evaluate("""() => {
+              const cta = document.querySelector('#send-telegram-code').getBoundingClientRect();
+              const qr = document.querySelector('#qr-code').getBoundingClientRect();
+              const phone = document.querySelector('.phone-method').getBoundingClientRect();
+              const qrMethod = document.querySelector('.qr-method').getBoundingClientRect();
+              return {
+                scrollWidth: document.documentElement.scrollWidth,
+                innerWidth: window.innerWidth,
+                ctaRight: cta.right, ctaLeft: cta.left,
+                qrWidth: qr.width, qrHeight: qr.height,
+                qrRight: qr.right, qrLeft: qr.left,
+                phoneY: phone.y, qrY: qrMethod.y,
+              };
+            }""")
+            self.assertLessEqual(
+                metrics["scrollWidth"],
+                metrics["innerWidth"],
+                f"{width}x{height}: horizontal overflow",
+            )
+            self.assertGreaterEqual(
+                metrics["ctaLeft"], 0, f"{width}x{height}: CTA clipped left"
+            )
+            self.assertLessEqual(
+                metrics["ctaRight"],
+                metrics["innerWidth"],
+                f"{width}x{height}: CTA clipped right",
+            )
+            self.assertGreater(metrics["qrWidth"], 0, f"{width}x{height}: QR not laid out")
+            self.assertGreater(metrics["qrHeight"], 0, f"{width}x{height}: QR not laid out")
+            self.assertAlmostEqual(
+                metrics["qrWidth"],
+                metrics["qrHeight"],
+                delta=2,
+                msg=f"{width}x{height}: QR must stay square to remain scannable",
+            )
+            self.assertGreaterEqual(
+                metrics["qrLeft"], 0, f"{width}x{height}: QR clipped left"
+            )
+            self.assertLessEqual(
+                metrics["qrRight"],
+                metrics["innerWidth"],
+                f"{width}x{height}: QR clipped right",
+            )
+            if width <= 720:
+                self.assertLess(
+                    metrics["phoneY"],
+                    metrics["qrY"],
+                    f"{width}x{height}: phone must stack above QR",
+                )
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
@@ -2234,6 +2357,7 @@ class LayoutTests(unittest.TestCase):
             "button",
             "globalHeading",
             "discoverHeading",
+            "qrStatus",
         ):
             self.assertIn(
                 "Archivo",
@@ -2252,7 +2376,6 @@ class LayoutTests(unittest.TestCase):
             "bulkCount",
             "cacheUsage",
             "passwordStatus",
-            "qrStatus",
         ):
             self.assertIn(
                 "IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}"
