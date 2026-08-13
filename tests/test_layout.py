@@ -323,6 +323,47 @@ class LayoutTests(unittest.TestCase):
         self.assertIsNotNone(qr_box)
         self.assertLess(phone_box["y"], qr_box["y"], "mobile must stack phone above QR")
 
+    def test_country_backspace_clears_the_committed_selection(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        country = page.locator("#country-search")
+        self.assertEqual("98", page.input_value("#telegram-country"))
+        self.assertIn("Iran", country.input_value())
+        # One Backspace on a committed selection clears the whole token, not one character.
+        country.focus()
+        country.press("Backspace")
+        self.assertEqual("", page.input_value("#country-search"))
+        self.assertEqual("", page.input_value("#telegram-country"))
+        self.assertEqual("+", page.locator("#dial-prefix").text_content().strip())
+        self.assertFalse(page.locator("#country-listbox").evaluate("(el) => el.hidden"))
+        # Typing after a committed selection replaces it with a fresh query.
+        country.type("g")
+        self.assertEqual("g", page.input_value("#country-search"))
+        self.assertIn("Germany", page.locator("#country-listbox").text_content())
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
@@ -779,7 +820,7 @@ class LayoutTests(unittest.TestCase):
             if path.endswith("1000/like"):
                 patches.append(route)
                 return
-            if path.endswith("1000") or path.endswith("1001"):
+            if path.endswith(("1000", "1001")):
                 key = "-1001:1000" if path.endswith("1000") else "-1001:1001"
                 return route.fulfill(
                     status=200,
@@ -1246,7 +1287,6 @@ class LayoutTests(unittest.TestCase):
     def test_player_heart_synchronizes_distinct_row_summary_detail_and_current(self):
         page = self.page(390, 844)
         patches = []
-        key = "-1001:1000"
         row = _tracks(1)[0]
         summary = {**row, "liked": False, "artworkVersion": "search-copy"}
         detail = {
