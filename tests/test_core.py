@@ -69,6 +69,10 @@ class CoreTests(unittest.TestCase):
         )
         # Corner rounding stays under half a module so modules remain squares, not pills.
         self.assertLess(QR_MODULE_RADIUS, 0.5)
+        # Decoder-verified ceiling: .34 lost OpenCV decodes at 180px and 216px (the latter in
+        # the real mobile render range) while .28 decoded every size; only raise it with a new
+        # decode-harness pass.
+        self.assertLessEqual(QR_MODULE_RADIUS, 0.28)
         # Every drawn module must sit within the quiet margin on all four sides.
         coordinates = [
             float(value) for value in re.findall(r"[MHV](-?\d+(?:\.\d+)?)", svg)

@@ -37,7 +37,11 @@ FLOW_TTL_SECONDS = 300
 TOP_PEER_LIMIT = 20
 # Corner radius of each QR module, as a fraction of the module size. Kept well under .5 (a full
 # circle) so the modules stay square enough for scanners to read reliably.
-QR_MODULE_RADIUS = 0.34
+# The decoder-verified ceiling: at .34, OpenCV's QRCodeDetector failed on 2 of 14 rendered sizes
+# (180px and 216px -- 216 is inside the real mobile render range) while .28 and the square
+# canonical renderer decoded every size tested. .28 is the softest radius that never lost a
+# decode; raise it only with a new decode-harness pass, never on looks alone.
+QR_MODULE_RADIUS = 0.28
 # Blank margin around the code, in modules. ISO/IEC 18004 asks for 4; measured against OpenCV,
 # 0 never decodes and 2 is already enough, so 3 sits comfortably above the floor while costing
 # less of a small box than 4 would.
