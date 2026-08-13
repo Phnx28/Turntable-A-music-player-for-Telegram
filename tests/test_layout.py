@@ -549,8 +549,241 @@ class LayoutTests(unittest.TestCase):
         self.assertFalse(page.locator("#twofa-form").evaluate("(el) => el.hidden"))
         self.assertEqual("telegram-password", page.evaluate("() => document.activeElement.id"))
         self.assertIn(
-            "QR accepted", page.locator("#qr-status").text_content()
+            "QR accepted · enter your Telegram password",
+            page.locator("#qr-status").text_content(),
         )
+
+    def test_qr_lifecycle_copy_pins_generate_expire_and_regenerate(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        qr_posts = []
+
+        def qr_route(route):
+            qr_posts.append(route.request.url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "flowId": f"flow-{len(qr_posts)}",
+                        "svg": "<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+                    }
+                ),
+            )
+
+        page.route("**/api/telegram/qr", qr_route)
+        # Delay the QR request in the page, not in the route handler: a blocking
+        # sleep in a Playwright route handler stalls the whole sync connection.
+        # With the request in flight for ~700ms the preparing state is a real,
+        # observable state instead of a cancelled animation.
+        page.add_init_script("""(() => {
+          const fetch_ = window.fetch.bind(window);
+          window.__qrFetches = 0;
+          window.fetch = async (...args) => {
+            if (String(args[0]).includes("/api/telegram/qr")) {
+              window.__qrFetches += 1;
+              await new Promise((resolve) => setTimeout(resolve, 700));
+            }
+            return fetch_(...args);
+          };
+        })()""")
+        # The auto-started flow on load settles into "waiting" (never expires),
+        # the manual-refresh flow expires, and the regenerated flow completes.
+        page.route(
+            "**/api/telegram/flow/flow-1",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "waiting"}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/flow/flow-2",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "expired"}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/flow/flow-3",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "ready"}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        # The preparing state is visible while the very first flow generates; it
+        # is brief (the stub answers instantly and the swap animates), so poll.
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('Preparing secure QR…')",
+            timeout=8000,
+        )
+        # Let the auto-started flow finish generating first so its late completion
+        # cannot overwrite the preparing state of the flow under test.
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('Ready to scan · refreshes automatically')",
+            timeout=8000,
+        )
+        # Start a fresh flow and catch the preparing state while its request is
+        # still in flight. Dispatch synchronously: Playwright's click() spends
+        # several hundred ms on actionability checks, which is long enough for
+        # the whole prepare->ready cycle to finish before it returns.
+        page.evaluate("() => document.querySelector('#error-dialog')?.close()")
+        page.evaluate("() => document.querySelector('#qr-start').click()")
+        # The status swap animates for 150ms; poll to catch the preparing state
+        # before the request resolves and flips it to ready.
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('Preparing secure QR…')",
+            timeout=8000,
+        )
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('Ready to scan · refreshes automatically')",
+            timeout=8000,
+        )
+        # Expiry is a real visible state, then the replacement flow is requested.
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('QR expired · generating a new one…')",
+            timeout=8000,
+        )
+        # The replacement flow (flow-3) is requested after expiry.
+        page.wait_for_function(
+            "() => window.__qrFetches === 3",
+            timeout=8000,
+        )
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('QR accepted · connecting…')",
+            timeout=8000,
+        )
+
+    def test_qr_generation_failure_emphasizes_the_refresh_control(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        page.route(
+            "**/api/telegram/qr",
+            lambda route: route.fulfill(
+                status=502,
+                content_type="application/json",
+                body='{"error": {"code": "external_error", "message": "The music service is unavailable. Try again shortly.", "retryable": true}}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        # The auto-started flow already failed once, which opened the dialog; close it
+        # and drive the refresh path under test.
+        page.evaluate("() => document.querySelector('#error-dialog')?.close()")
+        page.locator("#qr-start").click()
+        page.wait_for_timeout(500)
+        self.assertIn(
+            "Couldn’t refresh the QR code.",
+            page.locator("#qr-status").text_content(),
+        )
+        self.assertTrue(
+            page.locator("#qr-start").evaluate("(el) => el.classList.contains('is-recovery')")
+        )
+
+    def test_phone_login_pauses_qr_without_a_second_flow(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        qr_posts = []
+        page.route(
+            "**/api/telegram/qr",
+            lambda route: (
+                qr_posts.append(route.request.url),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"flowId": "flow-qr", "svg": "<svg xmlns=\'http://www.w3.org/2000/svg\'></svg>"}',
+                ),
+            )[1],
+        )
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"flowId": "flow-1", "delivery": "App", "state": "waiting"}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        # The auto-started QR flow is the only one; phone login must not spawn another.
+        page.locator("#telegram-phone").fill("09123456789")
+        page.locator("#send-telegram-code").click()
+        page.wait_for_timeout(200)
+        self.assertTrue(
+            page.locator("#qr-stage").evaluate("(el) => el.classList.contains('paused')")
+        )
+        self.assertEqual(
+            "Using phone login",
+            page.locator("#qr-stage").evaluate("(el) => el.dataset.pauseLabel"),
+        )
+        page.wait_for_timeout(2000)
+        self.assertEqual(1, len(qr_posts))
 
     def test_invalid_phone_stays_inline_without_the_error_dialog(self):
         page = self.page(1440, 900)

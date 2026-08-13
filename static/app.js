@@ -745,7 +745,7 @@ async function startQr(phoneMessage = "Choose your country to continue.") {
 	$("telegram-password").value = "";
 	$("qr-stage").classList.remove("paused");
 	$("qr-stage").setAttribute("aria-busy", "true");
-	setQrStatus("Generating a new code…");
+	setQrStatus("Preparing secure QR…");
 	$("qr-start").setAttribute("aria-busy", "true");
 	try {
 		const flow = await api("/api/telegram/qr", { method: "POST" });
@@ -753,11 +753,13 @@ async function startQr(phoneMessage = "Choose your country to continue.") {
 		state.flow = flow.flowId;
 		$("qr-code").innerHTML = flow.svg;
 		$("qr-stage").setAttribute("aria-busy", "false");
+		$("qr-start").classList.remove("is-recovery");
 		setQrStatus("Ready to scan · refreshes automatically");
 		pollQr(flow.flowId);
 	} catch (error) {
 		await qrExit;
-		setQrStatus("Couldn’t generate a QR code.");
+		setQrStatus("Couldn’t refresh the QR code.");
+		$("qr-start").classList.add("is-recovery");
 		showError(error, startQr);
 	} finally {
 		$("qr-start").removeAttribute("aria-busy");
@@ -772,16 +774,23 @@ function pollQr(flowId) {
 			const status = await api(
 				`/api/telegram/flow/${encodeURIComponent(flowId)}`,
 			);
-			if (status.state === "ready") return boot();
+			if (status.state === "ready") {
+				setQrStatus("QR accepted · connecting…");
+				return boot();
+			}
 			if (status.state === "password_required") {
 				pauseQr("QR accepted");
-				setQrStatus("QR accepted · enter your 2FA password");
+				setQrStatus("QR accepted · enter your Telegram password");
 				return setLoginStage(
 					"twofa",
 					"Enter your Telegram two-step verification password.",
 				);
 			}
-			if (status.state === "expired") return startQr();
+			if (status.state === "expired") {
+				setQrStatus("QR expired · generating a new one…");
+				qrTimer = setTimeout(startQr, 400);
+				return;
+			}
 			if (status.state === "error") {
 				setQrStatus("QR login stopped.");
 				return showError(
@@ -3846,6 +3855,8 @@ function restartPhoneLogin() {
 }
 $("change-number").addEventListener("click", restartPhoneLogin);
 $("change-number-2fa").addEventListener("click", restartPhoneLogin);
+
+$("qr-start").addEventListener("click", () => startQr());
 
 document
 	.querySelector('[data-source=""]')

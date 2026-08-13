@@ -394,6 +394,10 @@ svg [stroke] {
 	font-family: var(--font-data);
 }
 
+#qr-start.is-recovery {
+	color: var(--danger);
+}
+
 .login-status[data-tone="error"] {
 	color: var(--danger);
 }
