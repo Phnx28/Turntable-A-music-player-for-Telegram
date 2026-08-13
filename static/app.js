@@ -467,11 +467,27 @@ function applyPreferences() {
 	updateModes();
 }
 
+function setLoginFeedback(message, tone = "neutral") {
+	const status = $("phone-status");
+	status.textContent = message;
+	status.dataset.tone = tone;
+}
+
+// Expected auth failures (invalid phone/code/password, flood wait) stay inline at the
+// phone status line. Anything else -- network loss, non-auth server failures, malformed
+// responses -- is exceptional and still opens the error dialog.
+function expectedAuthFailure(error) {
+	return (
+		error instanceof AppError &&
+		["invalid_request", "telegram_error"].includes(error.code)
+	);
+}
+
 function setLoginStage(stage, message = "") {
 	for (const name of ["phone", "code", "twofa"])
 		$(`${name}-form`).hidden = name !== stage;
 	$("login-phone-context").hidden = !["code", "twofa"].includes(stage);
-	if (message) $("phone-status").textContent = message;
+	if (message) setLoginFeedback(message);
 	const field = {
 		phone: "country-search",
 		code: "telegram-code",
@@ -805,8 +821,12 @@ async function submitPhone(event) {
 		$("login-phone-context").textContent = `Code sent to ${phone}`;
 		setLoginStage("code", `Code sent via ${via}. Enter it to continue.`);
 	} catch (error) {
-		showError(error);
-		$("phone-status").textContent = error.message || "Could not send the code.";
+		if (expectedAuthFailure(error)) {
+			setLoginFeedback(error.message || "Could not send the code.", "error");
+		} else {
+			showError(error);
+			setLoginFeedback("Could not send the code.", "error");
+		}
 	} finally {
 		button.removeAttribute("aria-busy");
 		button.disabled = false;
@@ -829,9 +849,12 @@ async function submitPhoneCode(event) {
 		});
 		await applyPhoneStatus(status);
 	} catch (error) {
-		showError(error);
-		$("phone-status").textContent =
-			error.message || "Could not verify the code.";
+		if (expectedAuthFailure(error)) {
+			setLoginFeedback(error.message || "Could not verify the code.", "error");
+		} else {
+			showError(error);
+			setLoginFeedback("Could not verify the code.", "error");
+		}
 	} finally {
 		button.removeAttribute("aria-busy");
 		button.disabled = false;
@@ -853,9 +876,15 @@ async function submitPhonePassword(event) {
 		});
 		await applyPhoneStatus(status);
 	} catch (error) {
-		showError(error);
-		$("phone-status").textContent =
-			error.message || "Could not verify the password.";
+		if (expectedAuthFailure(error)) {
+			setLoginFeedback(
+				error.message || "Could not verify the password.",
+				"error",
+			);
+		} else {
+			showError(error);
+			setLoginFeedback("Could not verify the password.", "error");
+		}
 	} finally {
 		button.removeAttribute("aria-busy");
 		button.disabled = false;
@@ -867,10 +896,12 @@ async function applyPhoneStatus(status) {
 	if (status.state === "ready") return boot();
 	if (status.state === "password_required") {
 		$("telegram-password").value = "";
-		return setLoginStage(
+		setLoginStage(
 			"twofa",
-			"Enter your Telegram two-step verification password.",
+			status.error || "Enter your Telegram two-step verification password.",
 		);
+		if (status.error) setLoginFeedback(status.error, "error");
+		return;
 	}
 	if (status.state === "expired" || status.state === "error") {
 		const reason = status.error || "That login expired. Send a new code.";
@@ -881,8 +912,10 @@ async function applyPhoneStatus(status) {
 		return;
 	}
 	// "waiting" means Telegram rejected this attempt but the flow is still open, so stay put.
-	$("phone-status").textContent =
-		status.error || "That code was not accepted. Try again.";
+	setLoginFeedback(
+		status.error || "That code was not accepted. Try again.",
+		"error",
+	);
 }
 
 function enterTelegramLogin() {

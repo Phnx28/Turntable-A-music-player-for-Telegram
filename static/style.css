@@ -394,6 +394,10 @@ svg [stroke] {
 	font-family: var(--font-data);
 }
 
+.login-status[data-tone="error"] {
+	color: var(--danger);
+}
+
 .muted {
 	color: var(--graphite);
 }

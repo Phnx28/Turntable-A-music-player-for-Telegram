@@ -552,6 +552,191 @@ class LayoutTests(unittest.TestCase):
             "QR accepted", page.locator("#qr-status").text_content()
         )
 
+    def test_invalid_phone_stays_inline_without_the_error_dialog(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: route.fulfill(
+                status=400,
+                content_type="application/json",
+                body='{"error": {"code": "invalid_request", "message": "The phone number is invalid", "retryable": false}}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        page.locator("#telegram-phone").fill("09123456789")
+        page.locator("#send-telegram-code").click()
+        page.wait_for_timeout(200)
+        self.assertTrue(
+            page.locator("#error-dialog").evaluate("(el) => !el.open"),
+            "expected auth failures must not open the error dialog",
+        )
+        self.assertIn(
+            "The phone number is invalid",
+            page.locator("#phone-status").text_content(),
+        )
+        self.assertEqual(
+            "error",
+            page.locator("#phone-status").evaluate("(el) => el.dataset.tone"),
+        )
+        self.assertFalse(page.locator("#phone-form").evaluate("(el) => el.hidden"))
+
+    def test_invalid_code_stays_inline_without_the_error_dialog(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"flowId": "flow-1", "delivery": "App", "state": "waiting"}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/code",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "waiting", "error": "The Telegram login code is incorrect"}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        page.locator("#telegram-phone").fill("09123456789")
+        page.locator("#send-telegram-code").click()
+        page.wait_for_timeout(200)
+        page.locator("#telegram-code").fill("12345")
+        page.locator("#code-form button[type=submit]").click()
+        page.wait_for_timeout(200)
+        self.assertTrue(
+            page.locator("#error-dialog").evaluate("(el) => !el.open"),
+            "expected auth failures must not open the error dialog",
+        )
+        self.assertIn(
+            "The Telegram login code is incorrect",
+            page.locator("#phone-status").text_content(),
+        )
+        self.assertEqual(
+            "error",
+            page.locator("#phone-status").evaluate("(el) => el.dataset.tone"),
+        )
+        self.assertFalse(page.locator("#code-form").evaluate("(el) => el.hidden"))
+
+    def test_wrong_password_stays_inline_and_keeps_the_password_field(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"flowId": "flow-1", "delivery": "App", "state": "waiting"}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/code",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "password_required"}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/password",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "password_required", "error": "The Telegram 2FA password is incorrect"}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        page.locator("#telegram-phone").fill("09123456789")
+        page.locator("#send-telegram-code").click()
+        page.wait_for_timeout(200)
+        page.locator("#telegram-code").fill("12345")
+        page.locator("#code-form button[type=submit]").click()
+        page.wait_for_timeout(200)
+        page.locator("#telegram-password").fill("wrong-password")
+        page.locator("#twofa-form button[type=submit]").click()
+        page.wait_for_timeout(200)
+        self.assertTrue(
+            page.locator("#error-dialog").evaluate("(el) => !el.open"),
+            "expected auth failures must not open the error dialog",
+        )
+        self.assertIn(
+            "The Telegram 2FA password is incorrect",
+            page.locator("#phone-status").text_content(),
+        )
+        self.assertFalse(page.locator("#twofa-form").evaluate("(el) => el.hidden"))
+        self.assertEqual(
+            "telegram-password", page.evaluate("() => document.activeElement.id")
+        )
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
