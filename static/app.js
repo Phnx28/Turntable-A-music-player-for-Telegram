@@ -470,6 +470,7 @@ function applyPreferences() {
 function setLoginStage(stage, message = "") {
 	for (const name of ["phone", "code", "twofa"])
 		$(`${name}-form`).hidden = name !== stage;
+	$("login-phone-context").hidden = !["code", "twofa"].includes(stage);
 	if (message) $("phone-status").textContent = message;
 	const field = {
 		phone: "country-search",
@@ -801,6 +802,7 @@ async function submitPhone(event) {
 			{ App: "Telegram app", Sms: "SMS", Call: "a phone call" }[
 				flow.delivery
 			] || "Telegram";
+		$("login-phone-context").textContent = `Code sent to ${phone}`;
 		setLoginStage("code", `Code sent via ${via}. Enter it to continue.`);
 	} catch (error) {
 		showError(error);
@@ -817,11 +819,12 @@ async function submitPhoneCode(event) {
 	try {
 		button.setAttribute("aria-busy", "true");
 		button.disabled = true;
+		const code = $("telegram-code").value.replace(/[^\dA-Za-z]/g, "");
 		const status = await api("/api/telegram/code", {
 			method: "POST",
 			body: JSON.stringify({
 				flowId: state.flow,
-				code: $("telegram-code").value,
+				code,
 			}),
 		});
 		await applyPhoneStatus(status);

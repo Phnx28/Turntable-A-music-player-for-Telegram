@@ -592,14 +592,15 @@
                   Send Telegram code
                 </button>
               </form>
+              <p id="login-phone-context" class="login-phone-context" hidden></p>
               <form id="code-form" class="stack compact login-stage" hidden>
                 <p class="stage-kicker">Code sent</p>
-                <label for="telegram-code">Telegram code</label>
+                <label for="telegram-code">Enter the code Telegram sent you</label>
                 <input
                   id="telegram-code"
                   inputmode="numeric"
                   autocomplete="one-time-code"
-                  placeholder="Enter the code"
+                  placeholder="Code"
                   required
                 />
                 <button class="button primary" type="submit">Continue</button>
@@ -609,7 +610,7 @@
               </form>
               <form id="twofa-form" class="stack compact login-stage" hidden>
                 <p class="stage-kicker">Two-step verification</p>
-                <label for="telegram-password">Telegram 2FA password</label>
+                <label for="telegram-password">Telegram password</label>
                 <input
                   id="telegram-password"
                   type="password"
@@ -620,6 +621,10 @@
                 <button class="button primary" type="submit">
                   Finish linking
                 </button>
+                <p class="field-help">
+                  This is your Telegram two-step verification password.
+                  Turntable does not store it.
+                </p>
                 <button
                   id="change-number-2fa"
                   class="text-button"

@@ -423,6 +423,135 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_timeout(200)
         self.assertEqual([{"phone": "+989123456789"}], payloads)
 
+    def test_verification_stages_show_phone_context_and_normalized_code(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"flowId": "flow-1", "delivery": "App", "state": "waiting"}',
+            ),
+        )
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        code_payloads = []
+        page.route(
+            "**/api/telegram/code",
+            lambda route: (
+                code_payloads.append(json.loads(route.request.post_data or "{}")),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"state": "password_required"}',
+                ),
+            )[1],
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        page.locator("#telegram-phone").fill("09123456789")
+        page.locator("#send-telegram-code").click()
+        page.wait_for_timeout(200)
+        # The code stage names the number the code was sent to, from the normalized value.
+        context = page.locator("#login-phone-context")
+        self.assertFalse(context.evaluate("(el) => el.hidden"))
+        self.assertIn("+989123456789", context.text_content())
+        self.assertIn(
+            "Enter the code Telegram sent you",
+            page.locator("#code-form").text_content(),
+        )
+        # The code is normalized before submit: separators never reach the API.
+        page.locator("#telegram-code").fill("1-2 3")
+        page.locator("#code-form button[type=submit]").click()
+        page.wait_for_timeout(200)
+        self.assertEqual(
+            [{"flowId": "flow-1", "code": "123"}],
+            [
+                {"flowId": p["flowId"], "code": p["code"]}
+                for p in code_payloads
+            ],
+        )
+        # 2FA keeps the phone context and states what the password is for.
+        self.assertFalse(page.locator("#twofa-form").evaluate("(el) => el.hidden"))
+        self.assertFalse(context.evaluate("(el) => el.hidden"))
+        self.assertIn(
+            "Telegram password", page.locator("#twofa-form").text_content()
+        )
+        self.assertIn(
+            "Turntable does not store it", page.locator("#twofa-form").text_content()
+        )
+
+    def test_qr_password_required_opens_the_shared_twofa_stage(self):
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        page.route(
+            "**/api/telegram/qr",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"flowId": "flow-qr", "svg": "<svg xmlns=\'http://www.w3.org/2000/svg\'></svg>"}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/flow/flow-qr",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"state": "password_required"}',
+            ),
+        )
+        page.evaluate("localStorage.setItem('tm-country', 'IR')")
+        page.reload()
+        page.wait_for_timeout(500)
+        page.locator("#qr-start").click()
+        # The QR poller ticks at 1500ms and the status swap animates for 150ms.
+        page.wait_for_timeout(2000)
+        self.assertFalse(page.locator("#twofa-form").evaluate("(el) => el.hidden"))
+        self.assertEqual("telegram-password", page.evaluate("() => document.activeElement.id"))
+        self.assertIn(
+            "QR accepted", page.locator("#qr-status").text_content()
+        )
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
