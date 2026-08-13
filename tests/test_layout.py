@@ -1622,14 +1622,24 @@ class LayoutTests(unittest.TestCase):
 
         def locate_route(route):
             path = urlsplit(route.request.url).path
+            query = parse_qs(urlsplit(route.request.url).query)
             decoded_path = unquote(path)
             if decoded_path == "/api/playback/queue":
                 return route.fulfill(status=200, content_type="application/json", body='{"keys": ["-1001:1000"]}')
+            if decoded_path == "/api/tracks":
+                # Locate only pages to /position when the current track is outside the
+                # rendered window: a 300-track library keeps "Angels" (title-sorted at
+                # index ~100) off-screen, so the deep path really runs.
+                items = _tracks(300)
+                if query.get("sort", ["posted"])[0] == "title":
+                    items = sorted(items, key=lambda item: item["title"].lower())
+                return route.fulfill(status=200, content_type="application/json",
+                                     body=json.dumps({"items": items, "offset": 0, "total": len(items)}))
             if decoded_path.startswith("/api/tracks/") and decoded_path.count("/") == 3:
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps(current))
             if path.endswith("/position"):
                 positions.append(route.request.url)
-                return route.fulfill(status=200, content_type="application/json", body='{"index": 0}')
+                return route.fulfill(status=200, content_type="application/json", body='{"index": 100}')
             return route.fallback()
 
         page.route("**/api/**", locate_route)
@@ -1646,6 +1656,7 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_function("() => document.querySelector('#player-locate').getAttribute('aria-busy') === null")
         self.assertTrue(positions, "locate did not request the current track position")
         self.assertIn("sort=title", positions[-1])
+        self.assertIn("source=-1001", positions[-1])
 
     def test_now_playing_tabs_have_bidirectional_aria_relationships(self):
         page = self.page(1440, 900)
@@ -2105,6 +2116,11 @@ class LayoutTests(unittest.TestCase):
           const disc = document.querySelector('.large-art-wrap');
           const style = getComputedStyle(disc);
           const ring = getComputedStyle(disc, '::before');
+          // The spin lives on the art face, not the wrapper: FLIP measures the wrapper's box,
+          // and a rotating wrapper would inflate the measured rect (see style.css .label-disc).
+          const art = document.querySelector('#large-art');
+          const face = art && !art.hidden ? art : document.querySelector('#large-art-placeholder');
+          const faceStyle = getComputedStyle(face);
           const probe = document.createElement('span');
           probe.style.borderTop = '1px solid var(--rule)';
           document.body.append(probe);
@@ -2114,9 +2130,9 @@ class LayoutTests(unittest.TestCase):
             classes: disc.className,
             radius: style.borderRadius,
             square: Math.abs(disc.getBoundingClientRect().width - disc.getBoundingClientRect().height) < 1,
-            name: style.animationName,
-            duration: style.animationDuration,
-            playState: style.animationPlayState,
+            name: faceStyle.animationName,
+            duration: faceStyle.animationDuration,
+            playState: faceStyle.animationPlayState,
             ringColor: ring.borderTopColor,
             ruleColor,
           };
@@ -2132,17 +2148,19 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => document.querySelector('.label-disc').classList.add('is-playing')")
         playing = page.evaluate("""() => {
           const disc = document.querySelector('.label-disc');
-          const style = getComputedStyle(disc);
           const ring = getComputedStyle(disc, '::before');
+          const art = document.querySelector('#large-art');
+          const face = art && !art.hidden ? art : document.querySelector('#large-art-placeholder');
+          const faceStyle = getComputedStyle(face);
           const probe = document.createElement('span');
           probe.style.borderTop = '1px solid var(--stamp)';
           document.body.append(probe);
           const stampColor = getComputedStyle(probe).borderTopColor;
           probe.remove();
           return {
-            name: style.animationName,
-            duration: style.animationDuration,
-            playState: style.animationPlayState,
+            name: faceStyle.animationName,
+            duration: faceStyle.animationDuration,
+            playState: faceStyle.animationPlayState,
             ringColor: ring.borderTopColor,
             stampColor,
           };
@@ -2160,7 +2178,11 @@ class LayoutTests(unittest.TestCase):
         self.open_now_panel(page)
         self.assertIn("label-disc", page.locator(".large-art-wrap").get_attribute("class"))
         page.evaluate("() => document.querySelector('.large-art-wrap').classList.add('is-playing')")
-        name = page.evaluate("() => getComputedStyle(document.querySelector('.large-art-wrap')).animationName")
+        name = page.evaluate("""() => {
+          const art = document.querySelector('#large-art');
+          const face = art && !art.hidden ? art : document.querySelector('#large-art-placeholder');
+          return getComputedStyle(face).animationName;
+        }""")
         self.assertEqual("none", name, "reduced-motion users must never get a spinning disc")
 
     def test_header_flip_does_not_cancel_playing_label_spin(self):
@@ -2179,11 +2201,14 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_function("() => document.querySelector('.now-header').classList.contains('is-compact')")
         animations = page.evaluate("""() => {
           const disc = document.querySelector('.label-disc');
-          const all = disc.getAnimations();
-          const spin = all.filter((animation) => animation.animationName === 'label-spin');
+          const art = document.querySelector('#large-art');
+          const face = art && !art.hidden ? art : document.querySelector('#large-art-placeholder');
+          // FLIP morphs the wrapper (WAAPI), the spin runs on the art face (CSS animation).
+          const flip = disc.getAnimations().filter((animation) => animation.animationName !== 'label-spin');
+          const spin = face.getAnimations().filter((animation) => animation.animationName === 'label-spin');
           return {
             compact: document.querySelector('.now-header').classList.contains('is-compact'),
-            flipCount: all.filter((animation) => animation.animationName !== 'label-spin').length,
+            flipCount: flip.length,
             spinCount: spin.length,
             spinState: spin[0]?.playState ?? null,
           };
@@ -2225,7 +2250,11 @@ class LayoutTests(unittest.TestCase):
                     document.body.append(probe);
                     const value = getComputedStyle(probe).backgroundColor;
                     probe.remove();
-                    return value.match(/\\d+(\\.\\d+)?/g).slice(0, 3).map(Number);
+                    const parts = (value.match(/[\\d.]+/g) || []).map(Number);
+                    // Chromium serializes color-mix() results as `color(srgb 0..1 ...)` with
+                    // gamma-encoded 0..1 channels, not the rgb(r g b) byte form.
+                    if (value.startsWith('color(')) return parts.slice(0, 3).map((channel) => Math.round(channel * 255));
+                    return parts.slice(0, 3).map(Number);
                 };
                 return {
                     paper: read(root.getPropertyValue('--paper')),
