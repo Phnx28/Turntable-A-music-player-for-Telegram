@@ -51,6 +51,9 @@ ICON_EXPORTS: dict[str, str] = {
     "send": "SentIcon",
     "locate": "Location01Icon",
     "pin": "PinIcon",
+    # The source-rail Settings button references #i-settings, but the export was missing from
+    # the map, so the sprite generator dropped the symbol and the audit flagged the reference.
+    "settings": "Settings02Icon",
 }
 
 FILLED = {"play-filled", "heart-filled"}
