@@ -136,14 +136,16 @@ test("Turntable owns one mixed typographic system", () => {
 });
 
 test("mixed typography assigns human-facing and data-facing roles", () => {
-  assert.match(CSS, /\.brand-line, \.source-copy strong, \.track-copy strong[\s\S]*?font-family:\s*var\(--font-ui\)/);
+  // The selector lists are formatted one-per-line inside :where(); match across whitespace.
+  assert.match(CSS, /\.brand-line,[\s\S]*?\.source-copy strong,[\s\S]*?\.track-copy strong[\s\S]*?font-family:\s*var\(--font-ui\)/);
   assert.match(CSS, /\.utility,[\s\S]*?\.source-copy small,[\s\S]*?\.source-count[\s\S]*?font-family:\s*var\(--font-data\)/);
-  assert.match(CSS, /\.tab, \.button, \.text-button[\s\S]*?font-family:\s*var\(--font-ui\)/);
+  assert.match(CSS, /\.tab,[\s\S]*?\.button,[\s\S]*?\.text-button[\s\S]*?font-family:\s*var\(--font-ui\)/);
 });
 
 test("no hex literal outside the token blocks", () => {
   // The token blocks end before the first global component rule.
-  const firstComponentLine = LINES.findIndex((line) => /^\* \{ box-sizing: border-box; \}/.test(line));
+  // The universal reset is now written multi-line: `* {` / declaration / `}`.
+  const firstComponentLine = LINES.findIndex((line) => /^\* \{$/.test(line));
   assert.notEqual(firstComponentLine, -1, "could not locate the end of the token blocks");
   const strays = [];
   LINES.slice(firstComponentLine).forEach((line, offset) => {

@@ -1181,7 +1181,7 @@ class ContactRankingTests(unittest.IsolatedAsyncioTestCase):
         ):
             with tempfile.TemporaryDirectory() as directory:
                 service = self.service(directory)
-                service.require_client = lambda: self._client(outcome)
+                service.require_client = lambda outcome=outcome: self._client(outcome)
                 people = await service.contacts()
                 self.assertEqual(["Ada", "Bo", "Cy"], [item["name"] for item in people])
                 self.assertTrue(
