@@ -4310,6 +4310,23 @@ dialog.modal[open]::backdrop {
 .login-heading .gate-copy {
 	margin-bottom: 0;
 }
+.login-disclosure {
+	margin-top: 14px;
+	color: var(--graphite);
+	font-size: 11px;
+}
+.login-disclosure summary {
+	width: fit-content;
+	color: var(--content-secondary);
+	cursor: pointer;
+}
+.login-disclosure summary:hover {
+	color: var(--ink);
+}
+.login-disclosure p {
+	max-width: 52ch;
+	margin: 8px 0 0;
+}
 .login-columns {
 	grid-template-columns: 1fr 1fr;
 	grid-template-areas: "qr phone";

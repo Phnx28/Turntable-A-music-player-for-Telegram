@@ -1008,6 +1008,43 @@ class LayoutTests(unittest.TestCase):
             msg="phone heading text edge must line up with the control edge",
         )
 
+    def test_login_disclosure_states_only_supported_claims(self):
+        # Task 12. The disclosure may only claim what the implementation does: the login code
+        # and the 2FA password pass through Telethon's sign_in and are never persisted; the
+        # completed session is Fernet-encrypted before set_account; disconnect_account clears
+        # it. It must stay a compact details control, not a paragraph wall.
+        page = self.page(1440, 900)
+        page.evaluate(
+            """() => {
+          document.getElementById('telegram-view').hidden = false;
+          document.getElementById('app-shell').hidden = true;
+          document.getElementById('lock-view').hidden = true;
+        }"""
+        )
+        page.wait_for_timeout(200)
+        details = page.locator(".login-disclosure")
+        self.assertEqual(1, details.count())
+        summary = details.locator("summary")
+        self.assertEqual("Where your Telegram link lives", summary.text_content().strip())
+        self.assertIn("encrypted Telegram session", details.text_content())
+        self.assertIn("Disconnect Telegram removes", details.text_content())
+        self.assertFalse(
+            details.evaluate("(el) => el.open"), "disclosure starts closed and quiet"
+        )
+        # The top sentence stays the concise, verified one.
+        gate_copy = " ".join(
+            page.text_content("#telegram-view .gate-copy").split()
+        )
+        self.assertIn(
+            "Your Telegram password and login codes are never stored.", gate_copy
+        )
+        # Native details keyboard behavior is the accessibility contract (step 4).
+        summary.focus()
+        summary.press("Enter")
+        self.assertTrue(details.evaluate("(el) => el.open"))
+        summary.press("Enter")
+        self.assertFalse(details.evaluate("(el) => el.open"))
+
     def test_login_status_copy_uses_the_ui_font(self):
         page = self.page(1440, 900)
         page.wait_for_timeout(300)
