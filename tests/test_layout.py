@@ -162,6 +162,19 @@ class LayoutTests(unittest.TestCase):
         }""")
         page.wait_for_timeout(400)
 
+    def test_qr_stage_has_no_refresh_progress_bar(self):
+        # The QR lifetime is text-only: a countdown bar implies a client-side timer that can
+        # drift from the backend's authoritative expiry state. The served stylesheet must
+        # carry none of the old progress implementation.
+        css = (ROOT / "static" / "style.css").read_text()
+        for obsolete in (
+            ".qr-stage::after",
+            '.qr-stage[aria-busy="false"]::after',
+            ".qr-stage.paused::after",
+            "@keyframes qr-progress",
+        ):
+            self.assertNotIn(obsolete, css, f"obsolete QR progress rule still served: {obsolete}")
+
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
         self.open_now_panel(page)
@@ -1678,7 +1691,7 @@ class LayoutTests(unittest.TestCase):
         self.open_now_panel(page)
         attribution = page.locator("#lyrics-attribution")
         self.assertTrue(attribution.is_visible())
-        self.assertEqual("Lyrics from LRCLIB", attribution.text_content())
+        self.assertEqual("Lyrics from LRCLIB", attribution.text_content().strip())
 
     def test_empty_lyrics_state_stays_connected_to_tabs(self):
         page = self.page(1440, 900)

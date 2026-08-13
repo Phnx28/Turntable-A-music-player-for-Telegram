@@ -1693,9 +1693,6 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .method-heading p { margin: 0; color: var(--graphite); font-size: 11px; }
 .method-mark { display: grid; min-width: 34px; height: 25px; place-items: center; padding: 1px 7px 0; border: 1px solid var(--rule); border-radius: var(--radius-pill); color: var(--graphite); font-family: var(--font-data); font-size: var(--text-micro); letter-spacing: .05em; line-height: 1; text-indent: .05em; }
 .qr-stage { position: relative; display: grid; min-height: 255px; place-items: center; overflow: hidden; border: 1px solid var(--rule); border-radius: var(--radius-control); background: var(--ink); }
-.qr-stage::after { position: absolute; right: 16px; bottom: 14px; left: 16px; height: 1px; background: var(--paper); content: ""; opacity: 0; transform: scaleX(1); transform-origin: left; }
-.qr-stage[aria-busy="false"]::after { opacity: .65; animation: qr-progress 30s linear forwards; }
-.qr-stage.paused::after { animation-play-state: paused; }
 .qr-loader { display: grid; place-items: center; gap: 13px; color: var(--graphite); font-size: 11px; opacity: .75; }
 .qr-loader-mark { width: 30px; height: 30px; border: 1px solid var(--rule); border-top-color: var(--paper); border-radius: 50%; animation: spin .8s linear infinite; }
 .qr-inset, .qr-code { display: grid; place-items: center; }
@@ -1752,7 +1749,6 @@ dialog.modal[open]::backdrop { opacity: 1; }
 .gate:not([hidden]) > .gate-panel { animation: surface-in var(--dur-3) var(--ease-out) both; }
 @keyframes login-step-in { from { opacity: 0; transform: translateX(8px); } }
 @keyframes qr-in { from { opacity: 0; } }
-@keyframes qr-progress { to { transform: scaleX(0); } }
 
 @media (max-width: 720px) {
   .gate { min-height: 100dvh; align-items: safe end; justify-items: center; padding: 0; }
