@@ -2194,14 +2194,24 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(rest["expected"], rest["menuColor"])
         self.assertEqual(rest["expected"], rest["actionsColor"])
         row.hover()
-        page.wait_for_timeout(150)
-        hover_color = row.locator(".row-menu").evaluate(
-            "(button) => getComputedStyle(button).color"
-        )
         ink = page.evaluate("""() => {
           const probe = document.createElement('span'); probe.style.color = 'var(--ink)'; document.body.append(probe);
           const color = getComputedStyle(probe).color; probe.remove(); return color;
         }""")
+        # The hover color transitions in, and a fixed 150ms sleep races the animation under
+        # load (observed: rgb(21, 18, 16) mid-flight vs rgb(20, 17, 15) settled). Wait for the
+        # computed color to actually reach --ink instead of sampling an interpolated frame.
+        page.wait_for_function(
+            """(target) => {
+          const button = document.querySelector('.track-row:not(.track-placeholder) .row-menu');
+          return Boolean(button) && getComputedStyle(button).color === target;
+        }""",
+            arg=ink,
+            timeout=3000,
+        )
+        hover_color = row.locator(".row-menu").evaluate(
+            "(button) => getComputedStyle(button).color"
+        )
         self.assertEqual(
             ink, hover_color, "desktop row actions should gain ink emphasis on hover"
         )
