@@ -38,8 +38,11 @@ except ImportError as error:  # pragma: no cover - probe-only dependencies
 import telegram_service
 from telegram_service import QR_QUIET_MODULES, render_qr_svg
 
-# 176-252 covers every real .qr-inset render; 150-170 are the margin-below band.
-SIZES = (150, 160, 170, 176, 180, 184, 190, 200, 204, 210, 216, 224, 232, 252)
+# 176-252 covers every real .qr-inset render; 150-170 are the margin-below band. The sweep
+# is decoded plain; the real render band is additionally decoded after rotation, blur and
+# noise, because a radius that survives a clean scan can still crumble under a phone camera.
+SWEEP = (150, 160, 170, 176, 180, 184, 190, 200)
+REAL = (204, 210, 216, 224, 232, 252)
 PAYLOAD_COUNT = 6
 
 
@@ -111,6 +114,26 @@ def luminance_checks(gray: np.ndarray, matrix, px: int) -> tuple[int, int, int, 
     return mismatches, seams, int(quiet_bad), finder_bad
 
 
+def variants(gray: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    """Camera-flavoured degradations for the real render band."""
+    rotated = []
+    for angle in (3, -3):
+        matrix = cv2.getRotationMatrix2D(
+            (gray.shape[1] / 2, gray.shape[0] / 2), angle, 1.0
+        )
+        rotated.append(cv2.warpAffine(gray, matrix, gray.shape[::-1], borderValue=255))
+    blurred = cv2.GaussianBlur(gray, (5, 5), 1.2)
+    rng = np.random.default_rng(7)  # fixed seed: a flaky probe proves nothing
+    noisy = np.clip(gray.astype(np.float64) + rng.normal(0, 10, gray.shape), 0, 255)
+    return [
+        ("plain", gray),
+        ("rot+3", rotated[0]),
+        ("rot-3", rotated[1]),
+        ("blur5", blurred),
+        ("noise10", noisy.astype(np.uint8)),
+    ]
+
+
 def main() -> None:
     payloads = [
         "tg://login?token="
@@ -118,6 +141,7 @@ def main() -> None:
         for _ in range(PAYLOAD_COUNT)
     ]
     failures = 0
+    total = 0
     detector = cv2.QRCodeDetector()
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -126,7 +150,7 @@ def main() -> None:
 
             matrix = segno.make(payload).matrix
             svg = render_qr_svg(payload)
-            for px in SIZES:
+            for px in SWEEP + REAL:
                 gray = rasterize(browser, svg, px)
                 mismatches, seams, quiet_bad, finder_bad = luminance_checks(
                     gray, matrix, px
@@ -135,15 +159,18 @@ def main() -> None:
                 assert seams == 0, f"{px}px: {seams} adjacent dark modules gapped"
                 assert quiet_bad == 0, f"{px}px: {quiet_bad} quiet-zone pixels impure"
                 assert finder_bad == 0, f"{px}px: {finder_bad} finder modules notched"
-                data, _, _ = detector.detectAndDecode(gray)
-                if data != payload:
-                    failures += 1
-                    print(f"{px}px: DECODE FAILED")
+                decoded = variants(gray) if px in REAL else [("plain", gray)]
+                for name, image in decoded:
+                    total += 1
+                    data, _, _ = detector.detectAndDecode(image)
+                    if data != payload:
+                        failures += 1
+                        print(f"{px}px {name}: DECODE FAILED")
         browser.close()
-    total = len(payloads) * len(SIZES)
     print(
         f"radius {telegram_service.QR_MODULE_RADIUS}: {total - failures}/{total} decodes "
-        f"passed across {len(SIZES)} sizes x {len(payloads)} payloads"
+        f"passed (sweep {SWEEP[0]}-{SWEEP[-1]}px plain, real {REAL[0]}-{REAL[-1]}px with "
+        f"rotation/blur/noise)"
     )
     if failures:
         raise SystemExit(f"{failures} decode failures at the current radius")

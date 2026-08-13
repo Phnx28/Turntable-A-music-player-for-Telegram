@@ -423,6 +423,117 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_timeout(200)
         self.assertEqual([{"phone": "+989123456789"}], payloads)
 
+    def test_phone_login_completes_by_keyboard_alone(self):
+        # The final checklist demands a keyboard pass over the login flow: country search,
+        # combobox arrows/Enter, phone entry, and both verification stages must all be
+        # operable without a pointer. This pins the keyboard-only path end to end.
+        page = self.page(1440, 900)
+        page.route(
+            "**/api/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"unlocked": true, "telegram": {"linked": false, "userId": null, "displayName": null}, "startupError": null}',
+            ),
+        )
+        page.route(
+            "**/api/telegram/countries",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    [
+                        {"iso2": "IR", "name": "Iran", "dialCode": "98"},
+                        {"iso2": "DE", "name": "Germany", "dialCode": "49"},
+                    ]
+                ),
+            ),
+        )
+        phone_payloads = []
+        page.route(
+            "**/api/telegram/phone",
+            lambda route: (
+                phone_payloads.append(json.loads(route.request.post_data or "{}")),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"flowId": "flow-1", "delivery": "App", "state": "waiting"}',
+                ),
+            )[1],
+        )
+        code_payloads = []
+        page.route(
+            "**/api/telegram/code",
+            lambda route: (
+                code_payloads.append(json.loads(route.request.post_data or "{}")),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"state": "password_required"}',
+                ),
+            )[1],
+        )
+        password_payloads = []
+        page.route(
+            "**/api/telegram/password",
+            lambda route: (
+                password_payloads.append(json.loads(route.request.post_data or "{}")),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"state": "ready"}',
+                ),
+            )[1],
+        )
+        page.evaluate("localStorage.removeItem('tm-country')")
+        page.reload()
+        page.wait_for_timeout(500)
+        country = page.locator("#country-search")
+        # Keyboard search: type, arrow into the list, Enter commits the active option.
+        country.focus()
+        page.keyboard.type("ir")
+        self.assertFalse(page.locator("#country-listbox").evaluate("(el) => el.hidden"))
+        page.keyboard.press("ArrowDown")
+        self.assertIn(
+            "Iran",
+            page.locator("#country-listbox .combo-option.is-active").text_content(),
+        )
+        page.keyboard.press("Enter")
+        self.assertEqual("98", page.input_value("#telegram-country"))
+        self.assertEqual("+98", page.locator("#dial-prefix").text_content().strip())
+        # selectCountry moved focus to the phone field; type the number and submit by Enter.
+        self.assertEqual(
+            "telegram-phone", page.evaluate("() => document.activeElement.id")
+        )
+        page.keyboard.type("09123456789")
+        page.keyboard.press("Tab")
+        self.assertEqual(
+            "send-telegram-code", page.evaluate("() => document.activeElement.id")
+        )
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        self.assertEqual([{"phone": "+989123456789"}], phone_payloads)
+        # Code stage owns focus; a separated code normalizes to digits only.
+        self.assertEqual(
+            "telegram-code", page.evaluate("() => document.activeElement.id")
+        )
+        page.keyboard.type("1 2-3")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        self.assertEqual(
+            [{"flowId": "flow-1", "code": "123"}], code_payloads
+        )
+        # 2FA stage owns focus and submits by Enter.
+        self.assertEqual(
+            "telegram-password", page.evaluate("() => document.activeElement.id")
+        )
+        page.keyboard.type("hunter2")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        self.assertEqual(
+            [{"flowId": "flow-1", "password": "hunter2"}], password_payloads
+        )
+
     def test_verification_stages_show_phone_context_and_normalized_code(self):
         page = self.page(1440, 900)
         page.route(
