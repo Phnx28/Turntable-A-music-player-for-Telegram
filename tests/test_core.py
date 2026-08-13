@@ -16,7 +16,13 @@ from core import (
 )
 from cryptography.fernet import Fernet
 from media import MEDIA_CHUNK_SIZE
-from telegram_service import QR_QUIET_MODULES, LoginFlow, TelegramService, render_qr_svg
+from telegram_service import (
+    QR_MODULE_RADIUS,
+    QR_QUIET_MODULES,
+    LoginFlow,
+    TelegramService,
+    render_qr_svg,
+)
 from telethon.errors import RPCError, SessionPasswordNeededError
 from telethon.tl import functions
 from telethon.tl.types import User
@@ -59,8 +65,10 @@ class CoreTests(unittest.TestCase):
         self.assertNotRegex(svg, r"<svg[^>]*\swidth=")
         # The quiet zone must be inside the artwork, so it cannot be lost by the surrounding CSS.
         self.assertGreaterEqual(
-            QR_QUIET_MODULES, 2, "below this the code stops decoding"
+            QR_QUIET_MODULES, 3, "below this the code stops decoding"
         )
+        # Corner rounding stays under half a module so modules remain squares, not pills.
+        self.assertLess(QR_MODULE_RADIUS, 0.5)
         # Every drawn module must sit within the quiet margin on all four sides.
         coordinates = [
             float(value) for value in re.findall(r"[MHV](-?\d+(?:\.\d+)?)", svg)
@@ -70,6 +78,33 @@ class CoreTests(unittest.TestCase):
             min(drawn), 0, "a module touches the edge, leaving no quiet zone"
         )
         self.assertLessEqual(max(drawn), extent - QR_QUIET_MODULES)
+
+    def test_qr_solid_regions_stay_welded_not_pills(self):
+        # A module fully surrounded by dark neighbours must be drawn as a plain square with no
+        # arc commands: rounding every exposed corner would carve notches into solid regions
+        # like the finder squares and blur them into isolated pills.
+        import segno
+
+        payload = "tg://login?token=AbCdEf0123456789"
+        svg = render_qr_svg(payload)
+        matrix = segno.make(payload).matrix
+        size = len(matrix)
+        for row in range(1, size - 1):
+            for column in range(1, size - 1):
+                if not (
+                    matrix[row][column]
+                    and matrix[row - 1][column]
+                    and matrix[row + 1][column]
+                    and matrix[row][column - 1]
+                    and matrix[row][column + 1]
+                ):
+                    continue
+                x, y = column + QR_QUIET_MODULES, row + QR_QUIET_MODULES
+                # The renderer rounds a corner only where both adjoining neighbours are blank;
+                # surrounded here on all four sides, the module must come out a perfect square.
+                self.assertIn(f"M{x} {y}H{x + 1}V{y + 1}H{x}V{y}Z", svg)
+                return
+        self.fail("payload has no fully surrounded module to weld")
 
     def test_database_files_are_not_world_readable(self):
         # The database holds the Fernet-encrypted Telegram session and every chat title, so it
