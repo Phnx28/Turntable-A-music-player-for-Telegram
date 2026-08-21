@@ -1,0 +1,66 @@
+/* Standalone styles for the branded 404 page.
+   The app's Content-Security-Policy sets style-src 'self', so inline <style>
+   blocks are blocked — these rules must live in an external sheet.
+   Tokens fall back to the light palette if style.css itself fails to load. */
+.not-found {
+	min-height: 100dvh;
+	display: grid;
+	place-items: center;
+	padding: 32px;
+	background: radial-gradient(
+		circle at 50% 45%,
+		var(--surface, #fff) 0,
+		var(--paper, #faf9f6) 68%
+	);
+}
+.not-found-panel {
+	width: min(100%, 440px);
+	padding: 40px 28px;
+	border: 1px solid var(--rule, #ddd8ce);
+	border-radius: 12px;
+	background: var(--surface-raised, #fff);
+	box-shadow: 0 24px 80px
+		color-mix(in srgb, var(--ink, #14110f) 20%, transparent);
+	text-align: center;
+	isolation: isolate;
+	position: relative;
+	overflow: hidden;
+}
+.not-found-mark {
+	display: grid;
+	width: 56px;
+	height: 56px;
+	place-items: center;
+	margin: 0 auto 14px;
+	border: 1px solid var(--rule, #ddd8ce);
+	border-radius: 50%;
+	background: var(--paper, #faf9f6);
+	color: var(--graphite, #6b655d);
+	font-family: "IBM Plex Mono", ui-monospace, monospace;
+	font-size: 22px;
+	font-weight: 600;
+}
+.not-found h1 {
+	margin: 0 0 8px;
+	font-size: 28px;
+	font-weight: 550;
+	letter-spacing: -0.03em;
+	line-height: 1.1;
+	text-wrap: balance;
+}
+.not-found p {
+	margin: 0 0 22px;
+	color: var(--graphite, #6b655d);
+	font-size: 14px;
+	line-height: 1.5;
+}
+.not-found code {
+	font-family: "IBM Plex Mono", ui-monospace, monospace;
+	font-size: 12px;
+}
+.not-found .actions {
+	display: flex;
+	gap: 10px;
+	justify-content: center;
+	flex-wrap: wrap;
+}

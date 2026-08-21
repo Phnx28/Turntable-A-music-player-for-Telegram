@@ -1,33 +1,29 @@
 <!doctype html>
 <html lang="en" data-theme="system">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Not found — Telegram Turntable</title>
-    <link rel="stylesheet" href="/assets/style.css">
-    <style>
-      /* 404 inherits the design system tokens from style.css — no new palette, no inline image.
-         The gradient is the same paper/ink/graphite set; kept local so the page renders even
-         if style.css fails to load (fallback in <noscript>-like inline). */
-      .not-found { min-height: 100dvh; display: grid; place-items: center; padding: 32px; background: radial-gradient(circle at 50% 45%, var(--surface, #fff) 0, var(--paper, #faf9f6) 68%); }
-      .not-found-panel { width: min(100%, 440px); padding: 40px 28px; border: 1px solid var(--rule, #ddd8ce); border-radius: 12px; background: var(--surface-raised, #fff); box-shadow: 0 24px 80px color-mix(in srgb, var(--ink, #14110f) 20%, transparent); text-align: center; isolation: isolate; position: relative; overflow: hidden; }
-      .not-found-mark { display: grid; width: 56px; height: 56px; place-items: center; margin: 0 auto 14px; border: 1px solid var(--rule, #ddd8ce); border-radius: 50%; background: var(--paper, #faf9f6); color: var(--graphite, #6b655d); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 22px; font-weight: 600; }
-      .not-found h1 { margin: 0 0 8px; font-size: 28px; font-weight: 550; letter-spacing: -.03em; line-height: 1.1; text-wrap: balance; }
-      .not-found p { margin: 0 0 22px; color: var(--graphite, #6b655d); font-size: 14px; line-height: 1.5; }
-      .not-found code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; }
-      .not-found .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-    </style>
+    <link rel="stylesheet" href="/assets/style.css" />
+    <!-- CSP sets style-src 'self', so the 404 design lives in an external sheet,
+         not an inline <style> block (which would be silently blocked). -->
+    <link rel="stylesheet" href="/assets/404.css" />
   </head>
   <body>
     <main class="not-found" aria-labelledby="nf-title">
       <section class="not-found-panel" data-404-panel>
         <div class="not-found-mark" aria-hidden="true">404</div>
-        <h1 id="nf-title">That track isn't here</h1>
-        <p>The page <code id="nf-path"></code> doesn't exist. If you followed a link, it may have moved.</p>
+        <h1 id="nf-title">Not in the crate</h1>
+        <p>
+          The page <code id="nf-path"></code> doesn't exist. If you followed a
+          link, it may have moved.
+        </p>
         <div class="actions">
           <a class="button primary" href="/">Go to library</a>
-          <button class="button" type="button" onclick="history.back()">Go back</button>
+          <button class="button" type="button" onclick="history.back()">
+            Go back
+          </button>
         </div>
       </section>
     </main>
