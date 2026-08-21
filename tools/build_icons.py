@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, NoReturn
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX = ROOT / "static" / "index.html"
@@ -54,6 +55,10 @@ ICON_EXPORTS: dict[str, str] = {
     # The source-rail Settings button references #i-settings, but the export was missing from
     # the map, so the sprite generator dropped the symbol and the audit flagged the reference.
     "settings": "Settings02Icon",
+    # Gate theme control on the login screen.
+    "sun": "Sun03Icon",
+    "moon": "Moon02Icon",
+    "monitor": "Monitor",
 }
 
 FILLED = {"play-filled", "heart-filled"}
@@ -62,7 +67,15 @@ START = "<!-- icons:start -->"
 END = "<!-- icons:end -->"
 
 
-def package_icons() -> dict[str, list[list[object]]]:
+def _exit_unreadable(error: Exception) -> NoReturn:
+    details = getattr(error, "stderr", "") or str(error)
+    raise SystemExit(
+        "Unable to read @hugeicons/core-free-icons; run `npm install "
+        "@hugeicons/core-free-icons` first.\n" + details.strip()
+    ) from error
+
+
+def package_icons() -> dict[str, list[list[Any]]]:
     """Read the package's raw SVG element tuples without adding a runtime JS dependency."""
     script = """
 import * as icons from '@hugeicons/core-free-icons';
@@ -81,20 +94,23 @@ process.stdout.write(JSON.stringify(Object.fromEntries(
             text=True,
             check=True,
         )
-    except (OSError, subprocess.CalledProcessError) as error:
-        details = getattr(error, "stderr", "") or str(error)
+    except OSError as error:
+        _exit_unreadable(error)
+    except subprocess.CalledProcessError as error:
+        _exit_unreadable(error)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
         raise SystemExit(
-            "Unable to read @hugeicons/core-free-icons; run `npm install "
-            "@hugeicons/core-free-icons` first.\n" + details.strip()
+            f"Unexpected output from @hugeicons/core-free-icons: {error}"
         ) from error
-    return json.loads(result.stdout)
 
 
 def svg_attribute(name: str) -> str:
     return re.sub(r"(?<!^)([A-Z])", r"-\1", name).lower()
 
 
-def symbol(icon_id: str, elements: list[list[object]]) -> str:
+def symbol(icon_id: str, elements: list[list[Any]]) -> str:
     """Convert Hugeicons' raw SVG element tuples into one sprite symbol."""
     children = []
     for tag, raw_attributes in elements:
@@ -136,14 +152,18 @@ def audit_references() -> tuple[list[str], list[str]]:
     page load and quietly accumulate whenever a button is rewired. Re-pointing one button at a
     different glyph is exactly how #i-share was orphaned.
     """
-    sources = [(ROOT / "static" / name).read_text() for name in ("index.html", "app.js")]
+    sources = [
+        (ROOT / "static" / name).read_text() for name in ("index.html", "app.js")
+    ]
     referenced: set[str] = set()
     for text in sources:
         referenced.update(re.findall(r'href="#i-([a-z0-9-]+)"', text))
         # icon("name") and both arms of icon(cond ? "a" : "b")
         for call in re.findall(r"\bicon\(([^)]*)\)", text):
             referenced.update(re.findall(r'"([a-z0-9-]+)"', call))
-    return sorted(referenced - set(ICON_EXPORTS)), sorted(set(ICON_EXPORTS) - referenced)
+    return sorted(referenced - set(ICON_EXPORTS)), sorted(
+        set(ICON_EXPORTS) - referenced
+    )
 
 
 def main() -> None:
@@ -162,21 +182,29 @@ def main() -> None:
     def report() -> None:
         missing, unused = audit_references()
         if missing:
-            sys.exit("referenced but not in the sprite: "
-                     + ", ".join(f"i-{name}" for name in missing))
+            sys.exit(
+                "referenced but not in the sprite: "
+                + ", ".join(f"i-{name}" for name in missing)
+            )
         if unused:
-            print("warning: in the sprite but never referenced: "
-                  + ", ".join(f"i-{name}" for name in unused))
+            print(
+                "warning: in the sprite but never referenced: "
+                + ", ".join(f"i-{name}" for name in unused)
+            )
 
     if arguments.check:
         if updated != html:
             sys.exit("sprite in index.html is stale -- rerun tools/build_icons.py")
         report()
-        print(f"sprite matches Hugeicons ({len(ICON_EXPORTS)} icons), all references resolve")
+        print(
+            f"sprite matches Hugeicons ({len(ICON_EXPORTS)} icons), all references resolve"
+        )
         return
     INDEX.write_text(updated)
     report()
-    print(f"wrote {len(ICON_EXPORTS)} Hugeicons into {INDEX.relative_to(ROOT)}; all references resolve")
+    print(
+        f"wrote {len(ICON_EXPORTS)} Hugeicons into {INDEX.relative_to(ROOT)}; all references resolve"
+    )
 
 
 if __name__ == "__main__":

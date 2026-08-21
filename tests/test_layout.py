@@ -300,12 +300,16 @@ class LayoutTests(unittest.TestCase):
             (phone.compareDocumentPosition(qr) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
         }"""
         )
-        self.assertTrue(phone_before_qr, "phone method must precede QR in document order")
+        self.assertTrue(
+            phone_before_qr, "phone method must precede QR in document order"
+        )
         phone_box = page.locator(".phone-method").bounding_box()
         qr_box = page.locator(".qr-method").bounding_box()
         self.assertIsNotNone(phone_box)
         self.assertIsNotNone(qr_box)
-        self.assertLess(qr_box["x"], phone_box["x"], "desktop must place QR left of phone")
+        self.assertLess(
+            qr_box["x"], phone_box["x"], "desktop must place QR left of phone"
+        )
 
     def test_login_methods_stack_phone_above_qr_on_mobile(self):
         page = self.page(390, 844)
@@ -520,9 +524,7 @@ class LayoutTests(unittest.TestCase):
         page.keyboard.type("1 2-3")
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
-        self.assertEqual(
-            [{"flowId": "flow-1", "code": "123"}], code_payloads
-        )
+        self.assertEqual([{"flowId": "flow-1", "code": "123"}], code_payloads)
         # 2FA stage owns focus and submits by Enter.
         self.assertEqual(
             "telegram-password", page.evaluate("() => document.activeElement.id")
@@ -597,17 +599,12 @@ class LayoutTests(unittest.TestCase):
         page.wait_for_timeout(200)
         self.assertEqual(
             [{"flowId": "flow-1", "code": "123"}],
-            [
-                {"flowId": p["flowId"], "code": p["code"]}
-                for p in code_payloads
-            ],
+            [{"flowId": p["flowId"], "code": p["code"]} for p in code_payloads],
         )
         # 2FA keeps the phone context and states what the password is for.
         self.assertFalse(page.locator("#twofa-form").evaluate("(el) => el.hidden"))
         self.assertFalse(context.evaluate("(el) => el.hidden"))
-        self.assertIn(
-            "Telegram password", page.locator("#twofa-form").text_content()
-        )
+        self.assertIn("Telegram password", page.locator("#twofa-form").text_content())
         self.assertIn(
             "Turntable does not store it", page.locator("#twofa-form").text_content()
         )
@@ -654,15 +651,16 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("localStorage.setItem('tm-country', 'IR')")
         page.reload()
         page.wait_for_timeout(500)
-        page.locator("#qr-start").click()
-        # The QR poller ticks at 1500ms and the status swap animates for 150ms.
+        # The auto-started flow answers instantly; the QR poller ticks at 1500ms
+        # and the status swap animates for 150ms.
         page.wait_for_timeout(2000)
         self.assertFalse(page.locator("#twofa-form").evaluate("(el) => el.hidden"))
-        self.assertEqual("telegram-password", page.evaluate("() => document.activeElement.id"))
-        self.assertIn(
-            "QR accepted · enter your Telegram password",
-            page.locator("#qr-status").text_content(),
+        self.assertEqual(
+            "telegram-password", page.evaluate("() => document.activeElement.id")
         )
+        # The pill on the paused code says "QR accepted"; the footer lane stays
+        # quiet so the instruction isn't printed a third time beside the form.
+        self.assertEqual("", page.locator("#qr-status").text_content().strip())
 
     def test_qr_lifecycle_copy_pins_generate_expire_and_regenerate(self):
         page = self.page(1440, 900)
@@ -718,26 +716,23 @@ class LayoutTests(unittest.TestCase):
             return fetch_(...args);
           };
         })()""")
-        # The auto-started flow on load settles into "waiting" (never expires),
-        # the manual-refresh flow expires, and the regenerated flow completes.
-        page.route(
-            "**/api/telegram/flow/flow-1",
-            lambda route: route.fulfill(
+        # The auto-started flow waits through two polls, then expires; the
+        # regenerated flow completes. There is no manual refresh -- expiry alone
+        # drives the second generation.
+        flow_1_polls = {"count": 0}
+
+        def flow_1_route(route):
+            flow_1_polls["count"] += 1
+            state = "waiting" if flow_1_polls["count"] <= 2 else "expired"
+            route.fulfill(
                 status=200,
                 content_type="application/json",
-                body='{"state": "waiting"}',
-            ),
-        )
+                body=json.dumps({"state": state}),
+            )
+
+        page.route("**/api/telegram/flow/flow-1", flow_1_route)
         page.route(
             "**/api/telegram/flow/flow-2",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="application/json",
-                body='{"state": "expired"}',
-            ),
-        )
-        page.route(
-            "**/api/telegram/flow/flow-3",
             lambda route: route.fulfill(
                 status=200,
                 content_type="application/json",
@@ -752,26 +747,9 @@ class LayoutTests(unittest.TestCase):
             "() => document.querySelector('#qr-status').textContent.includes('Preparing secure QR…')",
             timeout=8000,
         )
-        # Let the auto-started flow finish generating first so its late completion
-        # cannot overwrite the preparing state of the flow under test.
+        # Let the auto-started flow settle into its ready state before expiry.
         page.wait_for_function(
-            "() => document.querySelector('#qr-status').textContent.includes('Ready to scan · refreshes automatically')",
-            timeout=8000,
-        )
-        # Start a fresh flow and catch the preparing state while its request is
-        # still in flight. Dispatch synchronously: Playwright's click() spends
-        # several hundred ms on actionability checks, which is long enough for
-        # the whole prepare->ready cycle to finish before it returns.
-        page.evaluate("() => document.querySelector('#error-dialog')?.close()")
-        page.evaluate("() => document.querySelector('#qr-start').click()")
-        # The status swap animates for 150ms; poll to catch the preparing state
-        # before the request resolves and flips it to ready.
-        page.wait_for_function(
-            "() => document.querySelector('#qr-status').textContent.includes('Preparing secure QR…')",
-            timeout=8000,
-        )
-        page.wait_for_function(
-            "() => document.querySelector('#qr-status').textContent.includes('Ready to scan · refreshes automatically')",
+            "() => document.querySelector('#qr-status').textContent.includes('Ready to scan')",
             timeout=8000,
         )
         # Expiry is a real visible state, then the replacement flow is requested.
@@ -779,9 +757,13 @@ class LayoutTests(unittest.TestCase):
             "() => document.querySelector('#qr-status').textContent.includes('QR expired · generating a new one…')",
             timeout=8000,
         )
-        # The replacement flow (flow-3) is requested after expiry.
         page.wait_for_function(
-            "() => window.__qrFetches === 3",
+            "() => document.querySelector('#qr-status').textContent.includes('Preparing secure QR…')",
+            timeout=8000,
+        )
+        # The replacement flow (flow-2) is requested after expiry.
+        page.wait_for_function(
+            "() => window.__qrFetches === 2",
             timeout=8000,
         )
         page.wait_for_function(
@@ -789,7 +771,7 @@ class LayoutTests(unittest.TestCase):
             timeout=8000,
         )
 
-    def test_qr_generation_failure_emphasizes_the_refresh_control(self):
+    def test_qr_generation_failure_opens_the_retry_dialog(self):
         page = self.page(1440, 900)
         page.route(
             "**/api/status",
@@ -822,19 +804,14 @@ class LayoutTests(unittest.TestCase):
         )
         page.evaluate("localStorage.setItem('tm-country', 'IR')")
         page.reload()
-        page.wait_for_timeout(500)
-        # The auto-started flow already failed once, which opened the dialog; close it
-        # and drive the refresh path under test.
-        page.evaluate("() => document.querySelector('#error-dialog')?.close()")
-        page.locator("#qr-start").click()
-        page.wait_for_timeout(500)
-        self.assertIn(
-            "Couldn’t refresh the QR code.",
-            page.locator("#qr-status").text_content(),
+        # The auto-started flow fails straight away: the status names the failure
+        # and the dialog offers the retry path.
+        page.wait_for_function(
+            "() => document.querySelector('#qr-status').textContent.includes('Couldn’t load the QR code.')",
+            timeout=8000,
         )
-        self.assertTrue(
-            page.locator("#qr-start").evaluate("(el) => el.classList.contains('is-recovery')")
-        )
+        self.assertTrue(page.locator("#error-dialog").evaluate("(el) => el.open"))
+        self.assertFalse(page.locator("#error-retry").evaluate("(el) => el.hidden"))
 
     def test_phone_login_pauses_qr_without_a_second_flow(self):
         page = self.page(1440, 900)
@@ -887,7 +864,9 @@ class LayoutTests(unittest.TestCase):
         page.locator("#send-telegram-code").click()
         page.wait_for_timeout(200)
         self.assertTrue(
-            page.locator("#qr-stage").evaluate("(el) => el.classList.contains('paused')")
+            page.locator("#qr-stage").evaluate(
+                "(el) => el.classList.contains('paused')"
+            )
         )
         self.assertEqual(
             "Using phone login",
@@ -1111,11 +1090,15 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         self.assertAlmostEqual(
-            edges["qrHeading"], edges["qrStage"], delta=1,
+            edges["qrHeading"],
+            edges["qrStage"],
+            delta=1,
             msg="QR heading text edge must line up with the QR frame edge",
         )
         self.assertAlmostEqual(
-            edges["phoneHeading"], edges["country"], delta=1,
+            edges["phoneHeading"],
+            edges["country"],
+            delta=1,
             msg="phone heading text edge must line up with the control edge",
         )
 
@@ -1136,16 +1119,14 @@ class LayoutTests(unittest.TestCase):
         details = page.locator(".login-disclosure")
         self.assertEqual(1, details.count())
         summary = details.locator("summary")
-        self.assertEqual("Where your Telegram link lives", summary.text_content().strip())
+        self.assertEqual("About your Telegram session", summary.text_content().strip())
         self.assertIn("encrypted Telegram session", details.text_content())
         self.assertIn("Disconnect Telegram removes", details.text_content())
         self.assertFalse(
             details.evaluate("(el) => el.open"), "disclosure starts closed and quiet"
         )
         # The top sentence stays the concise, verified one.
-        gate_copy = " ".join(
-            page.text_content("#telegram-view .gate-copy").split()
-        )
+        gate_copy = " ".join(page.text_content("#telegram-view .gate-copy").split())
         self.assertIn(
             "Your Telegram password and login codes are never stored.", gate_copy
         )
@@ -1178,7 +1159,13 @@ class LayoutTests(unittest.TestCase):
     def test_login_panel_no_overflow_or_clipped_cta_at_common_viewports(self):
         # Task 11 step 6. The real renderer emits one square viewBox path, so inject a
         # representative square SVG: geometry here is about the frame, not the payload.
-        for width, height in ((1440, 900), (900, 900), (720, 900), (390, 844), (320, 700)):
+        for width, height in (
+            (1440, 900),
+            (900, 900),
+            (720, 900),
+            (390, 844),
+            (320, 700),
+        ):
             page = self.page(width, height)
             page.evaluate(
                 """() => {
@@ -1218,8 +1205,12 @@ class LayoutTests(unittest.TestCase):
                 metrics["innerWidth"],
                 f"{width}x{height}: CTA clipped right",
             )
-            self.assertGreater(metrics["qrWidth"], 0, f"{width}x{height}: QR not laid out")
-            self.assertGreater(metrics["qrHeight"], 0, f"{width}x{height}: QR not laid out")
+            self.assertGreater(
+                metrics["qrWidth"], 0, f"{width}x{height}: QR not laid out"
+            )
+            self.assertGreater(
+                metrics["qrHeight"], 0, f"{width}x{height}: QR not laid out"
+            )
             self.assertAlmostEqual(
                 metrics["qrWidth"],
                 metrics["qrHeight"],

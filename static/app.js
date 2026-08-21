@@ -51,6 +51,7 @@ const state = {
 	editing: null,
 	lyrics: null,
 	flow: "",
+	loginVia: "",
 	lyric: -1,
 	queue: [],
 	queueIndex: -1,
@@ -109,6 +110,10 @@ let confirmResolve = null,
 	draggedSource = "",
 	draggedQueue = -1,
 	pendingShare = null;
+// Bounded auto-skip: how many tracks in a row failed to stream (file gone from
+// Telegram). Reset the moment real audio plays, so one bad file never disables
+// playback and a run of bad files can't cascade forever.
+let consecutiveDeadTracks = 0;
 let lastUiTrackKey = "";
 let countryList = [],
 	countryMatches = [],
@@ -116,6 +121,9 @@ let countryList = [],
 	selectedCountry = null,
 	countryCloseTimer;
 const COUNTRY_RESULT_LIMIT = 60;
+// Set on the first keystroke or committed pick in the login form, so the status lane can
+// name what is still missing without pre-empting the field labels on an untouched form.
+let phoneTouched = false;
 const GLOBAL_SEARCH_LIMIT = 30;
 let lastAudibleVolume = 0.8;
 const pendingCovers = new Set();
@@ -201,9 +209,7 @@ function toast(message, action = null, duration = 3200) {
 let dialogReturnFocus = null;
 function captureDialogFocus() {
 	dialogReturnFocus =
-		document.activeElement instanceof HTMLElement
-			? document.activeElement
-			: null;
+		document.activeElement instanceof HTMLElement ? document.activeElement : null;
 }
 function restoreDialogFocus() {
 	if (dialogReturnFocus?.isConnected) dialogReturnFocus.focus();
@@ -483,17 +489,40 @@ function expectedAuthFailure(error) {
 	);
 }
 
-function setLoginStage(stage, message = "") {
+// Every login stage renders in the phone column, but a QR scan can land there too
+// (two-step verification). The column heading follows the flow that owns the active stage.
+const METHOD_HEADINGS = {
+	phone: ["Use your number", "Telegram sends the code inside the app."],
+	code: ["Use your number", "Telegram sends the code inside the app."],
+	twofa_phone: [
+		"Use your number",
+		"Confirm it’s you with your Telegram password.",
+	],
+	twofa_qr: [
+		"Secure your session",
+		"Confirm the scan with your Telegram password.",
+	],
+};
+function renderMethodHeading(stage) {
+	const key = stage === "twofa" ? `twofa_${state.loginVia || "phone"}` : stage;
+	const [title, subtitle] = METHOD_HEADINGS[key] || METHOD_HEADINGS.phone;
+	document.querySelector(".phone-method .method-heading h2").textContent = title;
+	document.querySelector(".phone-method .method-heading p").textContent =
+		subtitle;
+}
+
+function setLoginStage(stage, message = "", { focus = true } = {}) {
 	for (const name of ["phone", "code", "twofa"])
 		$(`${name}-form`).hidden = name !== stage;
 	$("login-phone-context").hidden = !["code", "twofa"].includes(stage);
 	if (message) setLoginFeedback(message);
+	renderMethodHeading(stage);
 	const field = {
 		phone: "country-search",
 		code: "telegram-code",
 		twofa: "telegram-password",
 	}[stage];
-	requestAnimationFrame(() => $(field)?.focus());
+	if (focus) requestAnimationFrame(() => $(field)?.focus());
 }
 
 function pauseQr(message) {
@@ -540,9 +569,20 @@ function updatePhoneReadiness() {
 	const button = $("send-telegram-code");
 	if (!button) return;
 	const hasCountry = Boolean($("telegram-country").value);
-	const digits = normalizePhoneEntry($("telegram-phone").value).replace(/\D/g, "");
+	const digits = normalizePhoneEntry($("telegram-phone").value).replace(
+		/\D/g,
+		"",
+	);
 	const plausible = digits.length >= 4 && digits.length <= 20;
 	button.disabled = !(state.countriesLoaded && hasCountry && plausible);
+	// Quiet until the user engages; then name the one thing still missing instead of
+	// restating both field labels forever.
+	if (!phoneTouched || $("telegram-view").hidden || $("phone-form").hidden)
+		return;
+	if (!state.countriesLoaded) return;
+	if (!hasCountry) setLoginFeedback("Choose your country first.");
+	else if (plausible) setLoginFeedback("");
+	else setLoginFeedback("Now enter your phone number.");
 }
 
 function applyPhoneNormalization() {
@@ -550,7 +590,9 @@ function applyPhoneNormalization() {
 	const normalized = normalizePhoneEntry(field.value);
 	if (!normalized.startsWith("+")) return updatePhoneReadiness();
 	const digits = normalized.replace(/\D/g, "");
-	const matches = countryList.filter((country) => digits.startsWith(country.dialCode));
+	const matches = countryList.filter((country) =>
+		digits.startsWith(country.dialCode),
+	);
 	if (matches.length === 1) {
 		// A unique calling code selects its country and leaves the national digits.
 		const national = digits.slice(matches[0].dialCode.length);
@@ -578,7 +620,9 @@ function phoneNumber() {
 	// Trunk prefix: people type their number the way they dial it locally (e.g. 0151... in
 	// Germany), but the international form drops that leading zero. Telegram rejects it otherwise.
 	const digits = normalized.replace(/\D/g, "").replace(/^0+/, "");
-	const national = digits.startsWith(country) ? digits.slice(country.length) : digits;
+	const national = digits.startsWith(country)
+		? digits.slice(country.length)
+		: digits;
 	if (!national) throw new AppError("Enter your phone number.");
 	return `+${country}${national}`;
 }
@@ -651,16 +695,16 @@ function renderCountryOptions(query) {
 	const list = $("country-listbox");
 	countryMatches = matchCountries(query);
 	countryActive = countryMatches.length ? 0 : -1;
-	if (!countryMatches.length) {
-		list.innerHTML =
-			'<li class="combo-empty" role="presentation">No matching country</li>';
-	} else {
+	if (countryMatches.length) {
 		list.innerHTML = countryMatches
 			.map(
 				(country, index) =>
 					`<li class="combo-option${index === 0 ? " is-active" : ""}" role="option" id="country-option-${index}" aria-selected="${index === 0}" data-index="${index}"><span class="combo-flag" aria-hidden="true">${country.flag}</span><span class="combo-name">${escapeHtml(country.name)}</span><span class="combo-dial">+${escapeHtml(country.dialCode)}</span></li>`,
 			)
 			.join("");
+	} else {
+		list.innerHTML =
+			'<li class="combo-empty" role="presentation">No matching country</li>';
 	}
 	openCountryList();
 	syncCountryActive();
@@ -716,11 +760,12 @@ function moveCountryActive(step) {
 function selectCountry(country, { silent = false } = {}) {
 	selectedCountry = country;
 	$("telegram-country").value = country.dialCode;
-	$("country-search").value = `${country.flag} ${country.name}`;
+	$("country-search").value = country.name;
 	$("dial-prefix").textContent = `+${country.dialCode}`;
 	$("country-clear").hidden = false;
 	localStorage.setItem("tm-country", country.iso2);
 	closeCountryList();
+	if (!silent) phoneTouched = true;
 	updatePhoneReadiness();
 	if (!silent) requestAnimationFrame(() => $("telegram-phone").focus());
 }
@@ -736,33 +781,32 @@ function clearCountry({ focus = true } = {}) {
 	if (focus) $("country-search").focus();
 }
 
-async function startQr(phoneMessage = "Pick your country, then enter your phone number.") {
+async function startQr(phoneMessage = "", { focus = true } = {}) {
 	clearTimeout(qrTimer);
-	const qrExit = clearQr();
 	state.flow = "";
-	setLoginStage("phone", phoneMessage);
+	setLoginStage("phone", phoneMessage, { focus });
 	$("telegram-code").value = "";
 	$("telegram-password").value = "";
 	$("qr-stage").classList.remove("paused");
-	$("qr-stage").setAttribute("aria-busy", "true");
 	setQrStatus("Preparing secure QR…");
-	$("qr-start").setAttribute("aria-busy", "true");
 	try {
 		const flow = await api("/api/telegram/qr", { method: "POST" });
+		// The old code stays on screen until the new token is in hand; only then do
+		// we fade and swap, so a refresh never leaves an empty, shifting container.
+		const qrExit = clearQr();
+		$("qr-stage").setAttribute("aria-busy", "true");
 		await qrExit;
 		state.flow = flow.flowId;
+		state.loginVia = "qr";
 		$("qr-code").innerHTML = flow.svg;
 		$("qr-stage").setAttribute("aria-busy", "false");
-		$("qr-start").classList.remove("is-recovery");
-		setQrStatus("Ready to scan · refreshes automatically");
+		// The code regenerates itself when it expires; there is nothing to refresh by hand.
+		setQrStatus("Ready to scan");
 		pollQr(flow.flowId);
 	} catch (error) {
-		await qrExit;
-		setQrStatus("Couldn’t refresh the QR code.");
-		$("qr-start").classList.add("is-recovery");
+		$("qr-stage").setAttribute("aria-busy", "false");
+		setQrStatus("Couldn’t load the QR code.");
 		showError(error, startQr);
-	} finally {
-		$("qr-start").removeAttribute("aria-busy");
 	}
 }
 
@@ -771,24 +815,23 @@ function pollQr(flowId) {
 	qrTimer = setTimeout(async () => {
 		if (state.flow !== flowId || $("telegram-view").hidden) return;
 		try {
-			const status = await api(
-				`/api/telegram/flow/${encodeURIComponent(flowId)}`,
-			);
+			const status = await api(`/api/telegram/flow/${encodeURIComponent(flowId)}`);
 			if (status.state === "ready") {
 				setQrStatus("QR accepted · connecting…");
 				return boot();
 			}
 			if (status.state === "password_required") {
 				pauseQr("QR accepted");
-				setQrStatus("QR accepted · enter your Telegram password");
-				return setLoginStage(
-					"twofa",
-					"Enter your Telegram two-step verification password.",
-				);
+				// The pill on the code carries the state; the footer lane stays quiet so the
+				// instruction isn't printed a third time beside the password form.
+				setQrStatus("");
+				return setLoginStage("twofa");
 			}
 			if (status.state === "expired") {
 				setQrStatus("QR expired · generating a new one…");
-				qrTimer = setTimeout(startQr, 400);
+				// Background regeneration: refresh the code without stealing focus
+				// or reopening the country list mid-typing.
+				qrTimer = setTimeout(() => startQr(undefined, { focus: false }), 400);
 				return;
 			}
 			if (status.state === "error") {
@@ -823,10 +866,10 @@ async function submitPhone(event) {
 			body: JSON.stringify({ phone }),
 		});
 		state.flow = flow.flowId;
+		state.loginVia = "phone";
 		const via =
-			{ App: "Telegram app", Sms: "SMS", Call: "a phone call" }[
-				flow.delivery
-			] || "Telegram";
+			{ App: "Telegram app", Sms: "SMS", Call: "a phone call" }[flow.delivery] ||
+			"Telegram";
 		$("login-phone-context").textContent = `Code sent to ${phone}`;
 		setLoginStage("code", `Code sent via ${via}. Enter it to continue.`);
 	} catch (error) {
@@ -886,10 +929,7 @@ async function submitPhonePassword(event) {
 		await applyPhoneStatus(status);
 	} catch (error) {
 		if (expectedAuthFailure(error)) {
-			setLoginFeedback(
-				error.message || "Could not verify the password.",
-				"error",
-			);
+			setLoginFeedback(error.message || "Could not verify the password.", "error");
 		} else {
 			showError(error);
 			setLoginFeedback("Could not verify the password.", "error");
@@ -905,10 +945,8 @@ async function applyPhoneStatus(status) {
 	if (status.state === "ready") return boot();
 	if (status.state === "password_required") {
 		$("telegram-password").value = "";
-		setLoginStage(
-			"twofa",
-			status.error || "Enter your Telegram two-step verification password.",
-		);
+		// The column heading carries the instruction; the lane speaks only on errors.
+		setLoginStage("twofa");
 		if (status.error) setLoginFeedback(status.error, "error");
 		return;
 	}
@@ -928,6 +966,7 @@ async function applyPhoneStatus(status) {
 }
 
 function enterTelegramLogin() {
+	renderGateTheme();
 	loadCountries();
 	if (!state.flow) startQr();
 }
@@ -1024,9 +1063,7 @@ function renderSources() {
 		sorted
 			.map((source) => {
 				const draggable =
-					$("sidebar-sort").value === "custom" &&
-					!state.bulk &&
-					!source.pinnedAt;
+					$("sidebar-sort").value === "custom" && !state.bulk && !source.pinnedAt;
 				return `<div class="source-link source-entry ${!state.likedMode && source.chatId === state.source ? "active" : ""}${source.pinnedAt ? " pinned" : ""}" data-source="${source.chatId}" role="button" tabindex="0" title="${escapeHtml(source.title)}" draggable="${draggable}"${!state.likedMode && source.chatId === state.source ? ' aria-current="page"' : ""}>
     ${state.bulk ? `<input class="source-select" type="checkbox" data-bulk-source="${source.chatId}" ${state.selectedSources.has(source.chatId) ? "checked" : ""} aria-label="Select ${escapeHtml(source.title)}">` : avatarMarkup(source)}
     <span class="source-copy"><strong>${source.pinnedAt ? `<span class="source-pin-mark" aria-hidden="true">${icon("pin")}</span>` : ""}${escapeHtml(source.title)}</strong><small>${escapeHtml(sourceKindLabel(source.kind))}${state.syncingIds.has(source.chatId) ? `<span class="source-sync-spin" aria-label="Syncing" role="img"></span>` : source.syncError ? `<span class="source-error-dot" role="img" aria-label="Sync problem: ${escapeAttr(source.syncError)}" title="${escapeAttr(source.syncError)}"></span>` : ""}</small></span>
@@ -1153,9 +1190,7 @@ function revealLibrary() {
 function trackRowHeight() {
 	return (
 		parseFloat(
-			getComputedStyle(document.documentElement).getPropertyValue(
-				"--row-height",
-			),
+			getComputedStyle(document.documentElement).getPropertyValue("--row-height"),
 		) || 64
 	);
 }
@@ -1328,9 +1363,7 @@ function renderTracks(force = false) {
 		// Roving tabindex: the focused row keeps the only tab stop. If it is outside this window
 		// (Tab entered the list mid-scroll), fall back to the first real row so the list is
 		// keyboard-reachable at all.
-		if (
-			!list.querySelector(".track-row:not(.track-placeholder)[tabindex='0']")
-		) {
+		if (!list.querySelector(".track-row:not(.track-placeholder)[tabindex='0']")) {
 			const fallback = list.querySelector(".track-row:not(.track-placeholder)");
 			if (fallback) fallback.tabIndex = 0;
 		}
@@ -1485,10 +1518,7 @@ async function selectTemporary() {
 	watchJob(
 		state.temporaryJob,
 		(job) => {
-			if (
-				job.found > visible &&
-				state.source === state.temporarySource?.chatId
-			) {
+			if (job.found > visible && state.source === state.temporarySource?.chatId) {
 				visible = job.found;
 				loadLibrary();
 			}
@@ -1548,8 +1578,7 @@ function renderGlobalSearch(message = "") {
 		: "";
 	const empty = $("global-search-empty");
 	empty.hidden =
-		Boolean(state.globalTracks.length || state.globalSources.length) &&
-		!message;
+		Boolean(state.globalTracks.length || state.globalSources.length) && !message;
 	empty.textContent = message || "Nothing matches that search";
 }
 
@@ -1560,8 +1589,7 @@ async function searchEverywhere() {
 	globalController = new AbortController();
 	state.globalTracks = [];
 	state.globalSources = [];
-	if (!query)
-		return renderGlobalSearch("Type a title, artist, or source name.");
+	if (!query) return renderGlobalSearch("Type a title, artist, or source name.");
 	if (query.length < 3)
 		return renderGlobalSearch(
 			"Type at least three characters to search Telegram.",
@@ -1630,11 +1658,13 @@ async function playKey(key, queue = null, explicitIndex = null) {
 	} else if (Number.isInteger(explicitIndex)) state.queueIndex = explicitIndex;
 	// Playing a track that is not in the queue replaces the queue outright, so any restored window
 	// is gone and there is nothing left to rebuild.
-	else if (!state.queue.includes(key)) {
+	else if (state.queue.includes(key))
+		state.queueIndex = state.queue.indexOf(key);
+	else {
 		state.queue = [key];
 		state.queueIndex = 0;
 		state.queueTruncated = false;
-	} else state.queueIndex = state.queue.indexOf(key);
+	}
 	const track = await getTrack(key);
 	if (state.current && state.current.key !== key && !state.current.qualified)
 		api("/api/playback/events", {
@@ -1838,9 +1868,7 @@ function setTrackUi() {
 
 function updateTransport() {
 	const playing = state.buffering || !audio.paused;
-	document
-		.querySelector(".label-disc")
-		?.classList.toggle("is-playing", playing);
+	document.querySelector(".label-disc")?.classList.toggle("is-playing", playing);
 	$("play").classList.toggle("playing", playing);
 	$("play").setAttribute("aria-busy", String(state.buffering));
 	$("play").setAttribute("aria-pressed", String(playing));
@@ -2019,9 +2047,7 @@ async function toggleShuffle() {
 	state.shuffle = enabled;
 	updateModes();
 	state.queue = toggleShuffleQueue(keys, state.current?.key || "", enabled);
-	state.queueIndex = state.current
-		? state.queue.indexOf(state.current.key)
-		: -1;
+	state.queueIndex = state.current ? state.queue.indexOf(state.current.key) : -1;
 	state.queueTotal = Math.max(state.queueTotal, state.queue.length);
 	renderQueue();
 	schedulePrefetch();
@@ -2145,8 +2171,7 @@ function renderQueue({ followCurrent = false } = {}) {
 			const summary = state.summaryCache.get(key);
 			const detail = state.trackCache.get(key);
 			const index = visibleStart + offset;
-			const title =
-				summary?.title || detail?.metadata?.title || "Loading track…";
+			const title = summary?.title || detail?.metadata?.title || "Loading track…";
 			const artist = summary?.artist || detail?.metadata?.artist || "";
 			const section =
 				index < state.queueIndex
@@ -2340,10 +2365,7 @@ async function openSources() {
 						item.musicFileCount = current.result[item.chatId];
 				renderDiscovered();
 				$("discover-list").classList.add("is-revealing");
-				setTimeout(
-					() => $("discover-list").classList.remove("is-revealing"),
-					500,
-				);
+				setTimeout(() => $("discover-list").classList.remove("is-revealing"), 500);
 			},
 			() => $("source-dialog").open,
 		);
@@ -2380,8 +2402,7 @@ function renderDiscovered() {
 				return `<section class="discover-group"><h3>${labels[group]}</h3>${items
 					.map((item) => {
 						const counted =
-							item.musicFileCount ??
-							(item.trackCount > 0 ? item.trackCount : null);
+							item.musicFileCount ?? (item.trackCount > 0 ? item.trackCount : null);
 						// ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
 						return `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`;
 					})
@@ -3061,10 +3082,7 @@ function syncSidebarSortTrigger() {
 	const value = $("sidebar-sort").value || "custom";
 	const label = SOURCE_SORT_LABELS[value] || "Custom order";
 	$("sidebar-sort-label").textContent = label;
-	$("sidebar-sort-trigger").setAttribute(
-		"aria-label",
-		`Sort sources: ${label}`,
-	);
+	$("sidebar-sort-trigger").setAttribute("aria-label", `Sort sources: ${label}`);
 }
 
 function openSidebarSortMenu() {
@@ -3243,7 +3261,9 @@ function renderContacts() {
 		contacts
 			.map(
 				(contact) =>
-					`<button class="contact-row" type="button" data-contact="${contact.id}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span><strong>${escapeHtml(contact.name)}</strong><small>${contact.username ? `@${escapeHtml(contact.username)}` : "Your cloud storage"}</small></span></button>`,
+					`<button class="contact-row" type="button" data-contact="${contact.id}"><img class="source-avatar" src="${contact.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(contact.name))}" alt="" loading="lazy"><span><strong>${escapeHtml(contact.name)}</strong>${
+						contact.username ? `<small>@${escapeHtml(contact.username)}</small>` : ""
+					}</span></button>`,
 			)
 			.join("") || '<p class="empty-copy">No contacts found.</p>';
 }
@@ -3253,6 +3273,7 @@ async function openShare() {
 	$("share-dialog").showModal();
 	$("contact-search").value = "";
 	$("share-status").textContent = "Loading contacts…";
+	// pi-lens-ignore: ast-grep:no-inner-html-js
 	$("contact-list").innerHTML =
 		'<div class="list-skeleton"><span></span><span></span></div>';
 	try {
@@ -3365,9 +3386,7 @@ async function locateCurrent() {
 					!state.sources.some((item) => item.chatId === chatId),
 			);
 			const link = temporary
-				? document.querySelector(
-						`[data-temporary-source="${CSS.escape(chatId)}"]`,
-					)
+				? document.querySelector(`[data-temporary-source="${CSS.escape(chatId)}"]`)
 				: document.querySelector(
 						`.source-link[data-source="${CSS.escape(chatId ?? "")}"]`,
 					);
@@ -3542,11 +3561,11 @@ function renderNetwork() {
 	} else if (activeHost && activeHost !== bindHost) {
 		notice.hidden = false;
 		notice.textContent = `Saved. Currently still serving on ${activeHost} \u2014 restart to apply.`;
-	} else if (!managed) {
+	} else if (managed) {
+		notice.hidden = true;
+	} else {
 		notice.hidden = false;
 		notice.textContent = "This setting needs a restart to take effect.";
-	} else {
-		notice.hidden = true;
 	}
 }
 
@@ -3757,6 +3776,7 @@ $("lock-form").addEventListener("submit", async (event) => {
 });
 
 $("country-search").addEventListener("input", () => {
+	phoneTouched = true;
 	// Typing always reopens the list and re-filters, so the field never looks stuck after a pick.
 	if (selectedCountry) {
 		selectedCountry = null;
@@ -3767,11 +3787,19 @@ $("country-search").addEventListener("input", () => {
 	$("country-clear").hidden = !$("country-search").value;
 	renderCountryOptions($("country-search").value);
 });
-$("telegram-phone").addEventListener("input", applyPhoneNormalization);
+$("telegram-phone").addEventListener("input", () => {
+	phoneTouched = true;
+	applyPhoneNormalization();
+});
 $("country-search").addEventListener("beforeinput", (event) => {
 	// Typing printable text over a committed selection replaces it with a fresh query.
 	// Composition events are left alone so IME candidates keep working.
-	if (selectedCountry && event.inputType === "insertText" && !event.isComposing && event.data) {
+	if (
+		selectedCountry &&
+		event.inputType === "insertText" &&
+		!event.isComposing &&
+		event.data
+	) {
 		clearCountry({ focus: false });
 	}
 });
@@ -3821,9 +3849,7 @@ $("country-search").addEventListener("blur", () => {
 		if (!selectedCountry && typed && countryMatches.length === 1)
 			return selectCountry(countryMatches[0], { silent: true });
 		closeCountryList();
-		if (selectedCountry)
-			$("country-search").value =
-				`${selectedCountry.flag} ${selectedCountry.name}`;
+		if (selectedCountry) $("country-search").value = selectedCountry.name;
 		else if (typed) clearCountry({ focus: false });
 	}, 0);
 });
@@ -3851,12 +3877,34 @@ function restartPhoneLogin() {
 	state.flow = "";
 	$("telegram-code").value = "";
 	$("telegram-password").value = "";
-	startQr("Choose your country and send a new code.");
+	startQr();
+	// A restart is engagement, so let readiness name the next step instead of a static
+	// line that would contradict an already-selected country.
+	phoneTouched = true;
+	updatePhoneReadiness();
 }
 $("change-number").addEventListener("click", restartPhoneLogin);
 $("change-number-2fa").addEventListener("click", restartPhoneLogin);
 
-$("qr-start").addEventListener("click", () => startQr());
+// Gate theme control: same tm-theme storage and three-state cycle as Settings, so a
+// choice made here carries into the app and vice versa. All three glyphs live in the
+// markup; CSS shows the one matching data-mode.
+const GATE_THEME_CYCLE = ["system", "light", "dark"];
+function renderGateTheme() {
+	const mode = localStorage.getItem("tm-theme") || "system";
+	const button = $("gate-theme");
+	button.dataset.mode = mode;
+	const next = GATE_THEME_CYCLE[(GATE_THEME_CYCLE.indexOf(mode) + 1) % 3];
+	button.setAttribute("aria-label", `Theme: ${mode}. Activate for ${next}.`);
+}
+$("gate-theme").addEventListener("click", () => {
+	const current = localStorage.getItem("tm-theme") || "system";
+	const next = GATE_THEME_CYCLE[(GATE_THEME_CYCLE.indexOf(current) + 1) % 3];
+	localStorage.setItem("tm-theme", next);
+	document.documentElement.dataset.theme = next;
+	renderGateTheme();
+});
+renderGateTheme();
 
 document
 	.querySelector('[data-source=""]')
@@ -4057,10 +4105,7 @@ $("track-list").addEventListener("keydown", (event) => {
 		event.preventDefault();
 		focusTrackRow(
 			index +
-				Math.max(
-					1,
-					Math.floor(libraryScroller().clientHeight / trackRowHeight()),
-				),
+				Math.max(1, Math.floor(libraryScroller().clientHeight / trackRowHeight())),
 		);
 		return;
 	}
@@ -4068,10 +4113,7 @@ $("track-list").addEventListener("keydown", (event) => {
 		event.preventDefault();
 		focusTrackRow(
 			index -
-				Math.max(
-					1,
-					Math.floor(libraryScroller().clientHeight / trackRowHeight()),
-				),
+				Math.max(1, Math.floor(libraryScroller().clientHeight / trackRowHeight())),
 		);
 		return;
 	}
@@ -4346,7 +4388,11 @@ for (const event of ["waiting", "stalled"])
 		if (!audio.paused) setBuffering(true);
 	});
 for (const event of ["canplay", "playing"])
-	audio.addEventListener(event, () => setBuffering(false));
+	audio.addEventListener(event, () => {
+		setBuffering(false);
+		// Real audio flowing means the previous failure was transient, not a dead file.
+		consecutiveDeadTracks = 0;
+	});
 audio.addEventListener("play", () => {
 	updateTransport();
 	schedulePersist();
@@ -4370,6 +4416,18 @@ audio.addEventListener("error", () => {
 	const track = state.current;
 	if (!track) return;
 	if (track._retried) {
+		// A file that fails twice is gone from Telegram (deleted message, revoked chat).
+		// Tell the user and move on with the queue instead of parking on a silent player,
+		// but bound the skips so a row of dead files can't cascade into a runaway playlist.
+		consecutiveDeadTracks += 1;
+		const hasNext =
+			state.queueIndex > -1 && state.queueIndex < state.queue.length - 1;
+		if (hasNext && consecutiveDeadTracks < 3) {
+			const label = track.metadata?.title || track.file?.name || "This track";
+			toast(`“${label}” couldn’t be streamed. Skipping to the next track.`);
+			move(1).catch(() => {});
+			return;
+		}
 		showError(
 			new AppError("This track couldn’t be streamed. Try syncing its source."),
 			() => syncSource(track.chatId, false),
@@ -4394,15 +4452,16 @@ audio.addEventListener("error", () => {
 			},
 			{ once: true },
 		);
-	audio.play().catch(() => {
-		if (state.current?.key === track.key) {
+	audio.play().catch((error) => {
+		// A failed load surfaces here AND as an error event; the error event owns it
+		// (retry, then skip-or-dialog). Only an autoplay-policy block needs surfacing
+		// from this side — no load failure ever fires for it.
+		if (error?.name === "NotAllowedError" && state.current?.key === track.key)
 			showError(
 				new AppError(
-					"This track couldn’t be streamed. Try syncing its source.",
+					"Press play to start streaming — the browser blocked autoplay.",
 				),
-				() => syncSource(track.chatId, false),
 			);
-		}
 	});
 });
 audio.addEventListener("seeked", schedulePersist);
@@ -4467,9 +4526,7 @@ $("queue-list").addEventListener("drop", (event) => {
 	}
 });
 $("queue-list").addEventListener("dragend", (event) => {
-	event.target
-		.closest("[data-queue-index]")
-		?.classList.remove("queue-dragging");
+	event.target.closest("[data-queue-index]")?.classList.remove("queue-dragging");
 });
 $("clear-queue").addEventListener("click", () => {
 	state.queue = state.current ? [state.current.key] : [];
@@ -4618,9 +4675,7 @@ $("fetch-covers").addEventListener("click", async () => {
 			) {
 				const added = Number(current.result?.added) || 0;
 				if (current.state === "complete" && added)
-					toast(
-						`Cover art added for ${added} ${added === 1 ? "track" : "tracks"}`,
-					);
+					toast(`Cover art added for ${added} ${added === 1 ? "track" : "tracks"}`);
 			}
 		});
 	} catch (error) {

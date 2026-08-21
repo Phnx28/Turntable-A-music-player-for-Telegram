@@ -14,6 +14,8 @@
 	--stamp: #8c2f24;
 	--danger: #a2331f;
 	--ok: #2f6b45;
+	/* QR tiles keep a fixed white ground so scanners get contrast in both themes. */
+	--qr-ground: #fff;
 	--scrim: rgb(20 17 15 / 0.82);
 	--radius-control: 6px;
 	--radius-panel: 12px;
@@ -390,10 +392,6 @@ svg [stroke] {
 	.discover-copy small
 ) {
 	font-family: var(--font-data);
-}
-
-#qr-start.is-recovery {
-	color: var(--danger);
 }
 
 .login-status[data-tone="error"] {
@@ -4327,6 +4325,26 @@ dialog.modal[open]::backdrop {
 	max-width: 52ch;
 	margin: 8px 0 0;
 }
+.gate-theme {
+	position: absolute;
+	top: max(16px, env(safe-area-inset-top));
+	right: max(16px, env(safe-area-inset-right));
+	color: var(--graphite);
+}
+.gate-theme:hover {
+	color: var(--ink);
+}
+.gate-theme svg {
+	display: none;
+	grid-area: 1 / 1;
+	width: 18px;
+	height: 18px;
+}
+.gate-theme[data-mode="system"] svg[data-mode="system"],
+.gate-theme[data-mode="light"] svg[data-mode="light"],
+.gate-theme[data-mode="dark"] svg[data-mode="dark"] {
+	display: block;
+}
 .login-columns {
 	grid-template-columns: 1fr 1fr;
 	grid-template-areas: "qr phone";
@@ -4360,7 +4378,7 @@ dialog.modal[open]::backdrop {
 .method-heading p {
 	margin: 0;
 	color: var(--content-secondary);
-	font-size: 11px;
+	font-size: var(--text-small);
 }
 .qr-stage {
 	position: relative;
@@ -4368,9 +4386,10 @@ dialog.modal[open]::backdrop {
 	min-height: 255px;
 	place-items: center;
 	overflow: hidden;
-	border: 1px solid var(--rule);
-	border-radius: var(--radius-control);
-	background: var(--ink);
+}
+/* Loader and tile share one cell so the swap never reflows the column. */
+.qr-stage > * {
+	grid-area: 1 / 1;
 }
 .qr-loader {
 	display: grid;
@@ -4394,14 +4413,14 @@ dialog.modal[open]::backdrop {
 	place-items: center;
 }
 .qr-inset {
+	position: relative;
 	width: min(252px, 100%);
-	padding: 14px;
-	border-radius: 12px;
-	background: var(--surface);
-	box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+	/* The box is reserved even while the code is empty or faded, so a refresh
+	   swaps content in place instead of collapsing the tile and shifting the page. */
+	aspect-ratio: 1;
 }
-.qr-inset:has(.qr-code:empty) {
-	display: none;
+.qr-stage[aria-busy="true"] .qr-inset {
+	visibility: hidden;
 }
 .qr-code {
 	width: 100%;
@@ -4428,7 +4447,8 @@ dialog.modal[open]::backdrop {
 	height: auto;
 	aspect-ratio: 1;
 	border-radius: 10px;
-	background: var(--paper);
+	background: var(--qr-ground);
+	border: 1px solid var(--rule);
 	box-shadow: var(--elev-2);
 	animation: qr-in var(--dur-2) var(--ease-out) both;
 }
@@ -4461,17 +4481,10 @@ dialog.modal[open]::backdrop {
 .method-footer p {
 	margin: 2px 0 0;
 }
+}
+
 .method-footer .text-button {
 	flex: 0 0 auto;
-}
-.method-footer #qr-start {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-}
-.method-footer #qr-start svg {
-	width: 13px;
-	height: 13px;
 }
 .login-stages {
 	min-height: 254px;
