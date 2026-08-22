@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 JOB_RETENTION_SECONDS = 15 * 60
 JOB_MAX_SURVIVORS = 100

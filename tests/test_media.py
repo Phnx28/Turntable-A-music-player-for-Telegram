@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from core import Database, media_digest, media_identity, parse_range_header
-from media import MediaCache, MediaSource, MEDIA_CHUNK_SIZE
+from media import MEDIA_CHUNK_SIZE, MediaCache, MediaSource
 
 
 class _FakeClient:

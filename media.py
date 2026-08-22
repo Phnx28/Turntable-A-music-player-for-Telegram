@@ -21,8 +21,9 @@ import logging
 import math
 import os
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from core import ByteRange, Database, media_digest, media_identity, track_key
 
@@ -51,11 +52,11 @@ class MediaSource:
     body; everything about *where* the bytes live stays behind this interface.
     """
 
-    __slots__ = ("_media", "_track", "size", "_file", "_document")
+    __slots__ = ("_document", "_file", "_media", "_track", "size")
 
     def __init__(
         self,
-        media: "MediaCache",
+        media: MediaCache,
         track: dict[str, Any],
         *,
         size: int,
@@ -199,7 +200,7 @@ class MediaCache:
                     remaining -= len(data)
                     if data:
                         yield data
-            except asyncio.TimeoutError as error:
+            except TimeoutError as error:
                 # The response is already streaming; raising mid-generator just ends the body,
                 # which the client's audio retry handles. Do not let the request hang forever.
                 raise RuntimeError(
@@ -405,7 +406,7 @@ class MediaCache:
             _, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=FFMPEG_TIMEOUT_SECONDS
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.communicate()
             temporary.unlink(missing_ok=True)

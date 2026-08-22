@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
@@ -14,15 +13,19 @@ from urllib.parse import quote
 import httpx
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from telethon.errors import RPCError
 
 from core import (
-    BIND_HOSTS,
     SESSION_TTL_SECONDS,
     Database,
     RangeNotSatisfiable,
@@ -33,7 +36,6 @@ from core import (
 )
 from external import ExternalServices
 from telegram_service import TelegramService
-
 
 ROOT = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
@@ -55,7 +57,7 @@ class Settings:
     musicbrainz_contact: str
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         # An api_id is only valid with the api_hash issued alongside it, so the pair is resolved
         # as a unit. Reading each independently meant setting just one (the natural mistake when
         # following my.telegram.org, where the ID is the more memorable half) silently paired a

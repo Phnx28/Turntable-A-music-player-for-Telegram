@@ -2,7 +2,7 @@ import asyncio
 import time
 import unittest
 
-from jobs import BackgroundJob, JobRunner, JOB_MAX_SURVIVORS, JOB_RETENTION_SECONDS
+from jobs import JOB_MAX_SURVIVORS, JOB_RETENTION_SECONDS, BackgroundJob, JobRunner
 
 
 class JobRunnerTests(unittest.IsolatedAsyncioTestCase):

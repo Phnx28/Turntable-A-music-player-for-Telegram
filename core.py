@@ -14,10 +14,10 @@ import sqlite3
 import threading
 import time
 import unicodedata
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
-
+from typing import Any
 
 METADATA_FIELDS = {
     "title",
@@ -819,10 +819,7 @@ class Database:
             )
             if not cursor.rowcount:
                 raise KeyError("Source not found")
-        try:
-            self._invalidate_pos_cache()
-        except AttributeError:
-            pass
+        self._invalidate_pos_cache()
 
     def set_source_pinned(self, chat_id: str, pinned: bool) -> None:
         with self.transaction() as connection:
@@ -844,10 +841,7 @@ class Database:
                 f"UPDATE sources SET selected = ? WHERE chat_id IN ({placeholders})",
                 (int(selected), *ids),
             )
-        try:
-            self._invalidate_pos_cache()
-        except AttributeError:
-            pass
+        self._invalidate_pos_cache()
 
     def set_source_order(self, chat_ids: Iterable[str]) -> None:
         ids = list(dict.fromkeys(str(value) for value in chat_ids))
@@ -935,10 +929,7 @@ class Database:
             )
             for value in values:
                 self._dirty_search_keys.add(track_key(value[0], value[1]))
-            try:
-                self._invalidate_pos_cache()
-            except AttributeError:
-                pass
+            self._invalidate_pos_cache()
 
     def mark_missing_unavailable(self, chat_id: str, seen_message_ids: set[str]) -> None:
         self._track_counts = None
@@ -1200,7 +1191,7 @@ class Database:
         # Other sorts/queries stay on SQL (rare, and invalidation would be constant).
         if not (cache_key.endswith("|posted") and "|0|0|posted" in cache_key and not any(clauses.count("LIKE") or "MATCH" in c for c in clauses)):
             return None
-        import time as _time, bisect as _bisect
+        import time as _time
         now = _time.monotonic()
         if self._pos_cache is None:
             self._pos_cache = {}

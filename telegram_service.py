@@ -14,10 +14,7 @@ from typing import Any
 
 import httpx
 import segno
-from core import Database, is_audio_file, media_identity, normalize_text, track_key
 from cryptography.fernet import Fernet, InvalidToken
-from jobs import BackgroundJob, JobRunner
-from media import MediaCache
 from telethon import TelegramClient, events, functions, types, utils
 from telethon.errors import FloodWaitError, RPCError, SessionPasswordNeededError
 from telethon.sessions import StringSession
@@ -27,6 +24,10 @@ from telethon.tl.types import (
     InputMessagesFilterMusic,
 )
 from telethon.tl.types import contacts as contacts_types
+
+from core import Database, is_audio_file, media_identity, normalize_text, track_key
+from jobs import BackgroundJob, JobRunner
+from media import MediaCache
 
 LOGGER = logging.getLogger(__name__)
 
@@ -304,14 +305,14 @@ class TelegramService:
         # still waits) or undershoot one that Telegram allows to live longer.
         remaining = max(
             1.0,
-            (flow.qr.expires - datetime.datetime.now(datetime.timezone.utc)).total_seconds(),
+            (flow.qr.expires - datetime.datetime.now(datetime.UTC)).total_seconds(),
         )
         try:
             await flow.qr.wait(timeout=remaining)
             await self._complete_flow(flow)
         except SessionPasswordNeededError:
             flow.state = "password_required"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             flow.state = "expired"
             await flow.client.disconnect()
         except asyncio.CancelledError:

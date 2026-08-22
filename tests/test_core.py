@@ -6,6 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from cryptography.fernet import Fernet
+from telethon.errors import RPCError, SessionPasswordNeededError
+from telethon.tl import functions
+from telethon.tl.types import User
+from telethon.tl.types import contacts as contacts_types
+
 from core import (
     Database,
     RangeNotSatisfiable,
@@ -14,7 +20,6 @@ from core import (
     parse_range_header,
     weighted_shuffle_tracks,
 )
-from cryptography.fernet import Fernet
 from media import MEDIA_CHUNK_SIZE
 from telegram_service import (
     QR_MODULE_RADIUS,
@@ -23,10 +28,6 @@ from telegram_service import (
     TelegramService,
     render_qr_svg,
 )
-from telethon.errors import RPCError, SessionPasswordNeededError
-from telethon.tl import functions
-from telethon.tl.types import User
-from telethon.tl.types import contacts as contacts_types
 
 
 class CoreTests(unittest.TestCase):
@@ -1008,7 +1009,7 @@ class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
         flow = LoginFlow("flow", "qr", client)
         flow.qr = SimpleNamespace(
             wait=qr_wait,
-            expires=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=30),
+            expires=datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=30),
         )
         return flow
 
@@ -1040,7 +1041,7 @@ class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_qr_wait_timeout_marks_expired_and_disconnects(self):
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
-            flow = self.make_flow(AsyncMock(side_effect=asyncio.TimeoutError()))
+            flow = self.make_flow(AsyncMock(side_effect=TimeoutError()))
             await service._wait_for_qr(flow)
             self.assertEqual("expired", flow.state)
             self.assertEqual(1, flow.client.disconnects)
@@ -1066,9 +1067,9 @@ class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             service = self.service(directory)
-            wait = AsyncMock(side_effect=asyncio.TimeoutError())
+            wait = AsyncMock(side_effect=TimeoutError())
             flow = self.make_flow(wait)
-            flow.qr.expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=10)
+            flow.qr.expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=10)
             await service._wait_for_qr(flow)
             self.assertEqual("expired", flow.state)
             wait.assert_awaited_once()
@@ -1090,7 +1091,7 @@ class QrLoginFlowTests(unittest.IsolatedAsyncioTestCase):
             gate = asyncio.Event()
             fake_qr = SimpleNamespace(
                 url="tg://login?token=TestToken",
-                expires=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=30),
+                expires=datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=30),
                 wait=lambda timeout: gate.wait(),
             )
             client.qr_login.return_value = fake_qr

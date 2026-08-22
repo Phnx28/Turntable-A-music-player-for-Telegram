@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -17,7 +18,6 @@ from core import (
     plain_lyrics,
     rank_metadata_candidates,
 )
-
 
 ENRICH_MIN_SCORE = 97   # MusicBrainz match score; below this a human decides in the dialog
 ENRICH_BATCH = 50       # covers per run; a fresh crate spreads politely over days
