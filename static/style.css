@@ -1151,7 +1151,7 @@ body.resizing {
 	display: none;
 }
 .track-list {
-	padding-bottom: 40px;
+	padding-bottom: calc(var(--player-height) + 24px);
 }
 .day-separator {
 	display: flex;
@@ -1177,9 +1177,10 @@ body.resizing {
 	background: color-mix(in srgb, var(--surface) 58%, transparent);
 }
 /* Background only, matching .source-link.active: no left bar anywhere. The stamp marks the
-   track that is playing. */
+   track that is playing. DESIGN.md specs the wash at 10% -- one rule, one value; the old
+   20%/30% duplicates made the playing row shout over the artwork. */
 .track-row.current {
-	background: color-mix(in srgb, var(--stamp) 30%, transparent);
+	background: color-mix(in srgb, var(--stamp) 10%, transparent);
 }
 .track-main {
 	display: flex;
@@ -4877,9 +4878,6 @@ html[data-theme="dark"] {
 		0 10px 24px -18px var(--shadow-color-strong),
 		0 1px 0 var(--rule);
 }
-.track-row.current {
-	background: color-mix(in srgb, var(--stamp) 20%, transparent);
-}
 .now-title h2 {
 	line-height: 1.05;
 }
@@ -5334,5 +5332,153 @@ textarea { min-height: 150px; max-height: 52dvh; }
 @media (max-width: 1120px) {
 	.player-track-actions .desktop-action {
 		display: none;
+	}
+}
+
+/* ================================================================
+   Impeccable critique pass — layering, native controls, targets
+   ================================================================ */
+
+/* When a dialog owns the screen, unrelated chrome recedes instead of competing
+   with the scrim at full brightness. The dock and the Now Playing panel are the
+   two loudest surfaces; both step back so the focused task reads as foreground. */
+.player,
+.now-panel {
+	transition:
+		opacity var(--dur-2) var(--ease-out),
+		filter var(--dur-2) var(--ease-out);
+}
+body:has(dialog[open]) .player,
+body:has(dialog[open]) .now-panel {
+	opacity: 0.35;
+	filter: saturate(0.6);
+}
+
+/* Native select chrome punctured the design system beside custom popovers.
+   Keep the native element (keyboard + a11y for free) but dress it in the field
+   vocabulary: field fill, hairline rule, mono-space chevron, ink focus ring.
+   The sr-only discover-sort select must stay untouched. */
+select:not(.sr-only) {
+	appearance: none;
+	-webkit-appearance: none;
+	min-height: 34px;
+	padding: 4px 30px 4px 12px;
+	border: 1px solid var(--rule);
+	border-radius: var(--radius-control);
+	background:
+		var(--field)
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b655d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3D")
+		no-repeat right 10px center;
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+select:not(.sr-only):hover {
+	border-color: var(--graphite);
+}
+select:not(.sr-only):focus-visible {
+	outline: none;
+	border-color: var(--ink);
+	box-shadow: var(--focus-ring);
+}
+
+/* Column-head sort buttons were 13px tall — under every touch-target floor.
+   Grow the hit area with padding and reclaim it with negative margins so the
+   header grid does not shift. */
+.head-sort {
+	padding-block: 8px;
+	margin-block: -8px;
+}
+.global-search-trigger {
+	width: 36px;
+}
+
+/* Loading states read as broken, not busy: raise skeleton contrast past a
+   whisper and give the status line the center of the stage. */
+.list-skeleton span {
+	background: color-mix(in srgb, var(--rule) 55%, transparent);
+	animation: track-skeleton 1.6s var(--ease-out) infinite;
+}
+.discover-progress {
+	flex: 1 1 auto;
+	text-align: center;
+}
+
+/* A disabled primary is a promise of what saving will look like; outline it so
+   "not yet" parses preattentively instead of reading as a dimmed second choice. */
+#save-metadata[disabled],
+#save-lyrics[disabled] {
+	background: transparent;
+	color: var(--graphite);
+	box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+/* Restore the active-lyric voice lost in the merge, then sharpen it further:
+   weight and color alone were nearly invisible at panel scale, so the active
+   line also carries a small leading stamp dot. */
+.lyrics-lines button:hover {
+	color: var(--ink);
+	transform: translateX(2px);
+}
+.lyrics-lines button.active {
+	color: var(--ink);
+	font-weight: 650;
+	transform: translateX(14px);
+}
+.lyrics-lines button.active::before {
+	position: absolute;
+	top: 50%;
+	left: 0;
+	width: 7px;
+	height: 7px;
+	margin-top: -3.5px;
+	border-radius: 50%;
+	background: var(--ink);
+	content: "";
+}
+.lyric-line {
+	position: relative;
+}
+
+/* Mixed-direction source names must not scramble the row around them.
+   .discover-copy strong keeps its existing unicode-bidi: plaintext (first-strong
+   direction + isolation); these surfaces get plain isolation. */
+.library-heading h1,
+.now-title h2,
+.now-title p,
+.details-pane dd {
+	unicode-bidi: isolate;
+}
+
+/* Context menu grammar: a hairline separates navigation from lossy/secondary
+   intents (download, edit) so Play and its neighbours do not read as equals. */
+.menu-separator {
+	height: 1px;
+	margin: 6px 10px;
+	border: 0;
+	background: var(--rule);
+}
+
+/* A destructive confirm takes the danger voice, never the brand-primary fill. */
+#confirm-accept.danger {
+	background: var(--danger);
+	color: rgb(255 255 255);
+}
+#confirm-accept.danger:hover {
+	background: color-mix(in srgb, var(--danger) 88%, var(--ink));
+}
+
+/* At phone widths the zero-padded index is decoration that clips mid-digit
+   while titles starve; the title column is the product. Two columns only,
+   which also retires the posted date below its own hide point (<=360px). */
+@media (max-width: 480px) {
+	.track-row .track-ordinal,
+	.track-row .track-posted {
+		display: none;
+	}
+	.track-head,
+	.track-row {
+		grid-template-columns: minmax(0, 1fr) 44px;
 	}
 }

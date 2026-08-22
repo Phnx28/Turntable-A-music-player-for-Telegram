@@ -228,10 +228,12 @@ function showError(error, retry = null, title = "Couldn’t complete that") {
 	}
 }
 
-function confirmAction(title, message, accept = "Continue") {
+function confirmAction(title, message, accept = "Continue", { danger = false } = {}) {
 	$("confirm-title").textContent = title;
 	$("confirm-message").textContent = message;
 	$("confirm-accept").textContent = accept;
+	// Lossy confirms speak in the danger voice; everything else keeps brand primary.
+	$("confirm-accept").classList.toggle("danger", danger);
 	if (!$("confirm-dialog").open) {
 		captureDialogFocus();
 		$("confirm-dialog").showModal();
@@ -278,6 +280,7 @@ async function confirmEditorClose(dialog) {
     "Discard unsaved changes?",
     dialog.id === "lyrics-dialog" ? "Your unsaved lyrics edits will be lost." : "Your unsaved metadata edits will be lost.",
     "Discard",
+    { danger: true },
   );
 }
 
@@ -2878,7 +2881,10 @@ function openMenu(actions, x, y) {
   const menu = $("context-menu");
   const menuHost = document.querySelector("dialog[open]") || document.body;
   if (menu.parentElement !== menuHost) menuHost.append(menu);
-  menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
+  menu.innerHTML = actions.map((item, index) => item.separator
+    ? '<hr class="menu-separator">'
+    : `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`
+  ).join("");
   // Re-opening while the previous menu is still fading would inherit the exit state.
   clearTimeout(menuCloseTimer); menu.classList.remove("is-leaving");
   menu.hidden = false; menu._actions = actions;
@@ -2986,6 +2992,7 @@ function trackMenu(key, x, y) {
 					toast("Added to queue");
 				},
 			},
+			{ separator: true },
 			{
 				label: "Download",
 				action: () => {
@@ -4560,7 +4567,15 @@ $("queue-list").addEventListener("drop", (event) => {
 $("queue-list").addEventListener("dragend", (event) => {
 	event.target.closest("[data-queue-index]")?.classList.remove("queue-dragging");
 });
-$("clear-queue").addEventListener("click", () => {
+$("clear-queue").addEventListener("click", async () => {
+	// The single most destructive control in the panel; it must not be a mis-click away.
+	const confirmed = await confirmAction(
+		"Clear the queue?",
+		"Upcoming tracks will be removed. The current track keeps playing.",
+		"Clear",
+		{ danger: true },
+	);
+	if (!confirmed) return;
 	state.queue = state.current ? [state.current.key] : [];
 	state.queueIndex = state.current ? 0 : -1;
 	renderQueue();
@@ -4678,6 +4693,9 @@ document.querySelectorAll("[data-settings-tab]").forEach((button) =>
 			.forEach((item) => item.classList.toggle("active", item === button));
 		document.querySelectorAll("[data-settings-pane]").forEach((pane) => {
 			pane.hidden = pane.dataset.settingsPane !== button.dataset.settingsTab;
+			// A pane must open at its top edge, never mid-scroll carrying a clipped
+			// field over from whatever the previous pane left behind.
+			pane.scrollTop = 0;
 		});
 	}),
 );

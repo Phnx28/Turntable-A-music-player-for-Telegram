@@ -1853,7 +1853,7 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         self.assertEqual(
-            ["track-ordinal", "track-main", "row-menu"], shape["visibleCells"], shape
+            ["track-main", "row-menu"], shape["visibleCells"], shape
         )
         self.assertTrue(
             shape["postedHidden"], "the date should yield before title space at 320px"
@@ -1869,9 +1869,8 @@ class LayoutTests(unittest.TestCase):
             shape["menuOpacity"],
             "the 320px row sheet trigger must remain reachable",
         )
-        self.assertLessEqual(
-            shape["ordinalWidth"], 30, "the ordinal should shrink to ~3ch"
-        )
+        # The zero-padded index is decoration at phone widths; it hid itself.
+        self.assertEqual(0, shape["ordinalWidth"], "the ordinal should be hidden")
         self.assertGreater(
             shape["mainWidth"] / shape["rowWidth"],
             0.7,
@@ -1912,7 +1911,7 @@ class LayoutTests(unittest.TestCase):
           };
         }""")
         self.assertEqual(
-            ["track-ordinal", "track-main", "track-posted", "row-menu"],
+            ["track-main", "row-menu"],
             shape["visibleCells"],
             shape,
         )

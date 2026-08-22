@@ -98,6 +98,19 @@ def now_ts() -> int:
     return int(time.time())
 
 
+def humanize_filename(name: str) -> str:
+    """Turn a raw filename into a display title when Telegram carries no title.
+
+    "unverse_us_ca_04_demo.mp3" should never reach the shelf as-is: drop the
+    extension, give underscores the spaces they are standing in for, and
+    collapse the runs. Hyphens stay — "artist - title" is a convention, not slop.
+    """
+    stem = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", name)
+    stem = re.sub(r"_+", " ", stem)
+    stem = re.sub(r"\s{2,}", " ", stem).strip()
+    return stem or name
+
+
 def track_key(chat_id: str | int, message_id: str | int) -> str:
     return f"{chat_id}:{message_id}"
 
@@ -1017,7 +1030,9 @@ class Database:
         fingerprint = artwork or media_identity(value.get("document_id", ""), value.get("file_size", 0))
         return {
             "key": track_key(chat_id, message_id),
-            "title": override.get("title") or value["telegram_title"] or value["file_name"],
+            "title": override.get("title")
+                or value["telegram_title"]
+                or humanize_filename(value["file_name"]),
             "artist": override.get("artist") or value["telegram_artist"] or "Unknown artist",
             "durationMs": int(value["duration_ms"] or 0),
             "sentAt": int(value["sent_at"] or 0),
