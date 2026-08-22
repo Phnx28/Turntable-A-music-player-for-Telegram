@@ -5451,6 +5451,28 @@ select:not(.sr-only):focus-visible {
 	unicode-bidi: isolate;
 }
 
+/* Glass reads as a surface only when backdrop-filter frosts it. Where that is
+   unavailable — Firefox before 103, GPUs disabled, battery savers — the 52%
+   transparent fills turn into unreadable bleed-through (rows print straight
+   through the dock). Fall back to near-opaque surfaces there. */
+@supports not ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
+	.player,
+	.now-panel {
+		background: color-mix(in srgb, var(--surface) 97%, transparent);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+
+/* Touch scrolling outruns the dock's frosted layer: mid-gesture frames can
+   composite rows through the glass before backdrop-filter catches up. On
+   coarse-pointer widths the dock fill goes near-opaque so every frame reads. */
+@media (max-width: 860px) {
+	.player {
+		background: color-mix(in srgb, var(--surface) 92%, transparent);
+	}
+}
+
 /* Context menu grammar: a hairline separates navigation from lossy/secondary
    intents (download, edit) so Play and its neighbours do not read as equals. */
 .menu-separator {
