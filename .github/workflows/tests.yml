@@ -14,7 +14,10 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install
-        run: pip install .
+        # The project is a virtual uv project ([tool.uv] package = false): loose
+        # modules at the repo root, deliberately not installable. Tests import
+        # them from the checkout, so only the runtime dependencies are needed.
+        run: pip install cryptography fastapi "httpx[socks]" segno telethon "uvicorn[standard]"
       - name: Run tests
         run: python -m unittest discover -s tests -q
 
@@ -45,7 +48,9 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install
-        run: pip install . playwright
+        # Virtual uv project — see the Python tests job. Layout tests additionally
+        # drive Playwright against a live server instance.
+        run: pip install cryptography fastapi "httpx[socks]" segno telethon "uvicorn[standard]" playwright
       - name: Install Chromium
         run: python -m playwright install chromium --with-deps
       - name: Run layout tests
