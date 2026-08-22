@@ -544,10 +544,9 @@ class LayoutTests(unittest.TestCase):
         page.keyboard.press("Enter")
         self.assertEqual("98", page.input_value("#telegram-country"))
         self.assertEqual("+98", page.locator("#dial-prefix").text_content().strip())
-        # selectCountry moved focus to the phone field; type the number and submit by Enter.
-        self.assertEqual(
-            "telegram-phone", page.evaluate("() => document.activeElement.id")
-        )
+        # selectCountry moves focus to the phone field from a requestAnimationFrame
+        # callback, so wait for it rather than racing the next frame.
+        page.wait_for_function("() => document.activeElement.id === 'telegram-phone'")
         page.keyboard.type("09123456789")
         page.keyboard.press("Tab")
         self.assertEqual(
