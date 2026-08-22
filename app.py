@@ -885,8 +885,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers=headers,
         )
 
-    @application.api_route(
-        "/api/tracks/{key}/audio", methods=["GET", "HEAD"]    )
+    @application.api_route("/api/tracks/{key}/audio", methods=["GET", "HEAD"])
     async def audio(request: Request, key: str) -> Response:
         return await media_response(request, key)
 
@@ -997,8 +996,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             database(request).save_settings, body.model_dump(exclude_none=True)
         )
 
-    @application.post(
-        "/api/settings/musicbrainz/test"    )
+    @application.post("/api/settings/musicbrainz/test")
     async def settings_musicbrainz_test(request: Request) -> dict[str, bool]:
         return await external(request).test_musicbrainz()
 

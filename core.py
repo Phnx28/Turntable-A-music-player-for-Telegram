@@ -931,11 +931,25 @@ class Database:
         self._track_counts = None
         with self.transaction() as connection:
             if seen_message_ids:
-                placeholders = ",".join("?" for _ in seen_message_ids)
+                # A full sync can see tens of thousands of messages; an IN/NOT IN list that
+                # large overflows SQLite's parameter limit. Stage the ids in a temp table so
+                # the update stays a single statement with one bound parameter.
                 connection.execute(
-                    f"UPDATE tracks SET available = 0 WHERE chat_id = ? AND message_id NOT IN ({placeholders})",
-                    (chat_id, *sorted(seen_message_ids)),
+                    "CREATE TEMP TABLE IF NOT EXISTS sync_seen (message_id TEXT PRIMARY KEY)"
                 )
+                connection.execute("DELETE FROM sync_seen")
+                connection.executemany(
+                    "INSERT OR IGNORE INTO sync_seen (message_id) VALUES (?)",
+                    ((message_id,) for message_id in sorted(seen_message_ids)),
+                )
+                connection.execute(
+                    """
+                    UPDATE tracks SET available = 0
+                    WHERE chat_id = ?
+                      AND message_id NOT IN (SELECT message_id FROM sync_seen)
+                    """
+                )
+                connection.execute("DELETE FROM sync_seen")
             else:
                 connection.execute("UPDATE tracks SET available = 0 WHERE chat_id = ?", (chat_id,))
 
