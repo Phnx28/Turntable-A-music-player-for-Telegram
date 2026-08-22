@@ -120,6 +120,8 @@ let countryList = [],
 	countryActive = -1,
 	selectedCountry = null,
 	countryCloseTimer;
+const editorBaselines = new Map();
+const guardedEditorIds = new Set(["metadata-dialog", "lyrics-dialog"]);
 const COUNTRY_RESULT_LIMIT = 60;
 // Set on the first keystroke or committed pick in the login form, so the status lane can
 // name what is still missing without pre-empting the field labels on an untouched form.
@@ -239,23 +241,50 @@ function confirmAction(title, message, accept = "Continue") {
 	});
 }
 
-function icon(name) {
-	return `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+function metadataEditorSnapshot() {
+  return JSON.stringify(Object.fromEntries(new FormData($("metadata-form")).entries()));
 }
-function escapeHtml(value) {
-	const node = document.createElement("span");
-	node.textContent = value ?? "";
-	return node.innerHTML;
+
+function lyricsEditorSnapshot() {
+  return $("lyrics-text").value;
 }
-function escapeAttr(value) {
-	return escapeHtml(value)
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&#39;")
-		.replace(/`/g, "&#96;");
+
+function editorSnapshot(dialogId) {
+  if (dialogId === "metadata-dialog") return metadataEditorSnapshot();
+  if (dialogId === "lyrics-dialog") return lyricsEditorSnapshot();
+  return "";
 }
-function mediaUrl(track, action = "cover") {
-	return `/api/tracks/${encodeURIComponent(track.key)}/${action}`;
+
+function editorIsDirty(dialogId) {
+  if (!guardedEditorIds.has(dialogId)) return false;
+  return editorBaselines.has(dialogId) && editorSnapshot(dialogId) !== editorBaselines.get(dialogId);
 }
+
+function updateEditorDirtyUi(dialogId) {
+  const dirty = editorIsDirty(dialogId);
+  if (dialogId === "metadata-dialog") $("save-metadata").disabled = !dirty;
+  if (dialogId === "lyrics-dialog") $("save-lyrics").disabled = !dirty;
+  $(dialogId).toggleAttribute("data-dirty", dirty);
+}
+
+function captureEditorBaseline(dialogId) {
+  editorBaselines.set(dialogId, editorSnapshot(dialogId));
+  updateEditorDirtyUi(dialogId);
+}
+
+async function confirmEditorClose(dialog) {
+  if (!guardedEditorIds.has(dialog.id) || !editorIsDirty(dialog.id)) return true;
+  return confirmAction(
+    "Discard unsaved changes?",
+    dialog.id === "lyrics-dialog" ? "Your unsaved lyrics edits will be lost." : "Your unsaved metadata edits will be lost.",
+    "Discard",
+  );
+}
+
+function icon(name) { return `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`; }
+function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML; }
+function escapeAttr(value) { return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/`/g, "&#96;"); }
+function mediaUrl(track, action = "cover") { return `/api/tracks/${encodeURIComponent(track.key)}/${action}`; }
 function updateAmbientArtwork(track) {
 	const layer = $("ambient-art");
 	if (!layer) return;
@@ -2344,72 +2373,71 @@ async function syncAllSources() {
 }
 
 async function openSources() {
-	$("source-dialog").showModal();
-	$("discover-list").innerHTML =
-		'<div class="list-skeleton"><span></span><span></span><span></span></div>';
-	try {
-		state.discovered = await api("/api/sources/discover");
-		renderDiscovered();
-		$("discover-list").classList.add("is-revealing");
-		setTimeout(() => $("discover-list").classList.remove("is-revealing"), 420);
-		const job = await api("/api/sources/discover/counts", { method: "POST" });
-		watchJob(
-			job,
-			(current) => {
-				$("discover-progress").textContent =
-					current.state === "complete"
-						? "Counts ready"
-						: `Counting ${current.processed}/${state.discovered.length}`;
-				for (const item of state.discovered)
-					if (current.result?.[item.chatId] != null)
-						item.musicFileCount = current.result[item.chatId];
-				renderDiscovered();
-				$("discover-list").classList.add("is-revealing");
-				setTimeout(() => $("discover-list").classList.remove("is-revealing"), 500);
-			},
-			() => $("source-dialog").open,
-		);
-	} catch (error) {
-		showError(error, openSources);
-	}
+  $("source-dialog").showModal(); updateDiscoverProgress("loading"); $("discover-list").innerHTML = '<div class="list-skeleton"><span></span><span></span><span></span></div>';
+  try {
+    state.discovered = await api("/api/sources/discover");
+    const total = state.discovered.length;
+    updateDiscoverProgress({ state: "running", processed: 0 }, total);
+    renderDiscovered(); $("discover-list").classList.add("is-revealing"); setTimeout(() => $("discover-list").classList.remove("is-revealing"), 420);
+    const job = await api("/api/sources/discover/counts", { method: "POST" });
+    watchJob(job, (current) => {
+      updateDiscoverProgress(current, total);
+      for (const item of state.discovered) if (current.result?.[item.chatId] != null) item.musicFileCount = current.result[item.chatId];
+      renderDiscovered();
+    }, () => $("source-dialog").open);
+  } catch (error) { showError(error, openSources); }
+}
+
+function updateDiscoverProgress(current, total = state.discovered.length) {
+  $("discover-progress").textContent = current === "loading" ? "Loading chats…" : !total ? "" : current?.state === "complete"
+    ? `${total.toLocaleString()} chats scanned`
+    : `Scanning ${Math.min(current?.processed || 0, total).toLocaleString()} of ${total.toLocaleString()}`;
+}
+
+window.__updateDiscoverProgressForTest = updateDiscoverProgress;
+
+function filteredDiscoveredSources() {
+  const query = $("discover-search").value.trim().toLocaleLowerCase();
+  const kind = $("discover-kind-filter").value;
+  return state.discovered.filter((item) => {
+    if (kind && item.kind !== kind) return false;
+    if (!query) return true;
+    const haystack = [item.title, item.username]
+      .filter(Boolean).join(" ").toLocaleLowerCase();
+    return haystack.includes(query);
+  });
 }
 
 function renderDiscovered() {
-	const order = ["selected", "channel", "bot", "private", "saved"];
-	const labels = {
-		selected: "Selected",
-		channel: "Channels",
-		bot: "Bots",
-		private: "Private chats",
-		saved: "Saved messages",
-	};
-	const groups = new Map(order.map((key) => [key, []]));
-	const mode = $("discover-sort").value;
-	const compare = (a, b) =>
-		mode === "count"
-			? (b.musicFileCount ?? b.trackCount ?? -1) -
-				(a.musicFileCount ?? a.trackCount ?? -1)
-			: mode === "name"
-				? a.title.localeCompare(b.title)
-				: (b.lastPostAt || 0) - (a.lastPostAt || 0);
-	for (const item of state.discovered)
-		groups.get(item.selected ? "selected" : item.kind)?.push(item);
-	$("discover-list").innerHTML =
-		order
-			.map((group) => {
-				const items = groups.get(group).sort(compare);
-				if (!items.length) return "";
-				return `<section class="discover-group"><h3>${labels[group]}</h3>${items
-					.map((item) => {
-						const counted =
-							item.musicFileCount ?? (item.trackCount > 0 ? item.trackCount : null);
-						// ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
-						return `<label class="discover-row ${item.pending ? "pending" : ""}"><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""} aria-label="Select ${escapeHtml(item.title)}"></label>`;
-					})
-					.join("")}</section>`;
-			})
-			.join("") || '<p class="small-copy">No supported chats found.</p>';
+  const order = ["selected", "channel", "bot", "private", "saved"];
+  const labels = { selected: "Selected", channel: "Channels", bot: "Bots", private: "Private chats", saved: "Saved messages" };
+  const groups = new Map(order.map((key) => [key, []]));
+  const mode = $("discover-sort").value;
+  const compare = (a, b) => mode === "count" ? (b.musicFileCount ?? b.trackCount ?? -1) - (a.musicFileCount ?? a.trackCount ?? -1) : mode === "name" ? a.title.localeCompare(b.title) : (b.lastPostAt || 0) - (a.lastPostAt || 0);
+  const visibleItems = filteredDiscoveredSources();
+  for (const item of visibleItems) groups.get(item.selected ? "selected" : item.kind)?.push(item);
+  const filtersActive = Boolean(
+    $("discover-search").value.trim() || $("discover-kind-filter").value,
+  );
+  const emptyCopy = filtersActive
+    ? "No sources match these filters."
+    : "No supported chats found.";
+  $("discover-list").innerHTML = order.map((group) => {
+    const items = groups.get(group).sort(compare); if (!items.length) return "";
+    return `<section class="discover-group"><h3><span>${escapeHtml(labels[group])}</span><span class="discover-group-count">${items.length.toLocaleString()}</span></h3>${items.map((item) => {
+      const counted = item.musicFileCount ?? (item.trackCount > 0 ? item.trackCount : null);
+      // ponytail: counted-and-empty is indistinguishable from uncounted here; needs a real "counted" flag in the discover payload to separate them.
+      const action = item.selected ? "Remove" : "Add";
+      const direction = item.selected ? "from" : "to";
+      return `<label class="discover-row ${item.pending ? "pending" : ""}"${item.pending ? ' aria-busy="true"' : ""}><img class="source-avatar" src="${item.avatarUrl}" data-avatar-fallback="${escapeHtml(initials(item.title))}" alt="" loading="lazy"><span class="discover-copy"><strong dir="auto">${escapeHtml(item.title)}</strong><small dir="ltr">${escapeHtml(sourceKindLabel(item.kind))} · ${counted === null ? "—" : `${counted.toLocaleString()} music files`}</small></span><input type="checkbox" data-chat="${item.chatId}" ${item.selected ? "checked" : ""}${item.pending ? " disabled" : ""} aria-label="${action} ${escapeAttr(item.title)} ${direction} library"></label>`;
+    }).join("")}</section>`;
+  }).join("") || `<p id="discover-empty" class="small-copy">${escapeHtml(emptyCopy)}</p>`;
 }
+
+window.__renderDiscoveredForTest = (items) => {
+  state.discovered = items;
+  renderDiscovered();
+};
 
 async function toggleSource(input) {
 	const item = state.discovered.find(
@@ -2538,14 +2566,14 @@ async function unselectSources(ids) {
 }
 
 function openMetadata(track = state.current) {
-	if (!track) return;
-	state.editing = track;
-	for (const element of $("metadata-form").elements)
-		if (element.name) element.value = track.metadata[element.name] || "";
-	$("cover-quality").value = state.settings.coverQuality || "1200";
-	$("candidate-section").hidden = true;
-	$("metadata-status").textContent = "";
-	if (!$("metadata-dialog").open) $("metadata-dialog").showModal();
+  if (!track) return; state.editing = track;
+  const metadata = track.metadata || {};
+  for (const element of $("metadata-form").elements) if (element.name) element.value = metadata[element.name] || "";
+  $("cover-quality").value = state.settings.coverQuality || "1200";
+  $("fetch-metadata").textContent = "Fetch metadata";
+  $("candidate-section").hidden = true; $("metadata-status").textContent = "";
+  if (!$("metadata-dialog").open) $("metadata-dialog").showModal();
+  captureEditorBaseline("metadata-dialog");
 }
 
 // All four metadata handlers used to funnel error.message straight into the status line, and
@@ -2581,28 +2609,13 @@ function clearFormErrors(form) {
 }
 
 async function saveMetadata(event) {
-	event.preventDefault();
-	const values = Object.fromEntries(new FormData(event.currentTarget));
-	for (const field of ["year", "trackNumber", "discNumber"])
-		values[field] = Number(values[field]) || 0;
-	try {
-		const updated = await api(mediaUrl(state.editing, "metadata"), {
-			method: "PATCH",
-			body: JSON.stringify({ set: values, clear: [] }),
-		});
-		state.editing = updated;
-		cacheSet(state.trackCache, updated.key, updated, 100);
-		if (state.current?.key === updated.key) {
-			state.current = { ...state.current, ...updated };
-			setTrackUi();
-		}
-		state.libraryCache.clear();
-		await loadLibrary(true);
-		$("metadata-status").textContent =
-			"Saved locally. Downloads will use these tags.";
-	} catch (error) {
-		metadataFailed(error);
-	}
+  event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget));
+  for (const field of ["year", "trackNumber", "discNumber"]) values[field] = Number(values[field]) || 0;
+  try {
+    const updated = await api(mediaUrl(state.editing, "metadata"), { method: "PATCH", body: JSON.stringify({ set: values, clear: [] }) });
+    state.editing = updated; cacheSet(state.trackCache, updated.key, updated, 100); if (state.current?.key === updated.key) { state.current = { ...state.current, ...updated }; setTrackUi(); }
+    state.libraryCache.clear(); await loadLibrary(true); $("metadata-status").textContent = "Saved locally. Downloads will use these tags."; captureEditorBaseline("metadata-dialog");
+  } catch (error) { metadataFailed(error); }
 }
 
 async function resetMetadata() {
@@ -2632,35 +2645,41 @@ async function resetMetadata() {
 	}
 }
 
+function currentMetadataFormValues() {
+  return Object.fromEntries(new FormData($("metadata-form")).entries());
+}
+
+function candidateMetadataDifferences(candidate, current) {
+  const fields = [["Title", "title"], ["Artist", "artist"], ["Album", "album"], ["Year", "year"]];
+  return fields.flatMap(([label, key]) => {
+    const next = String(candidate[key] ?? "").trim();
+    const before = String(current[key] ?? "").trim();
+    if (!next || next.localeCompare(before, undefined, { sensitivity: "accent" }) === 0) return [];
+    return [{ label, before: before || "—", next }];
+  });
+}
+
+function candidateDifferenceMarkup(differences) {
+  if (!differences.length) return '<span class="candidate-same">Matches the visible metadata</span>';
+  return `<div class="candidate-differences">${differences.map((item) => `<span><strong>${escapeHtml(item.label)}</strong>${escapeHtml(item.next)}<small>current ${escapeHtml(item.before)}</small></span>`).join("")}</div>`;
+}
+
 async function fetchMetadata() {
-	const button = $("fetch-metadata");
-	button.disabled = true;
-	button.setAttribute("aria-busy", "true");
-	$("metadata-status").textContent = "Searching MusicBrainz…";
-	$("candidate-section").hidden = false;
-	$("candidate-list").innerHTML =
-		'<div class="list-skeleton"><span></span><span></span></div>';
-	try {
-		const candidates = await api(
-			`${mediaUrl(state.editing, "metadata")}/search`,
-			{ method: "POST", body: "{}" },
-		);
-		$("candidate-list").innerHTML =
-			candidates
-				.map(
-					(item) =>
-						`<article class="candidate-row">${item.coverUrl ? `<img class="candidate-cover" src="${mediaUrl(state.editing, `metadata/candidates/${encodeURIComponent(item.id)}/cover`)}" alt="" loading="lazy">` : '<div class="candidate-cover art-placeholder"><span></span></div>'}<div class="candidate-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.artist)} · ${escapeHtml(item.album || "Single")} ${item.year || ""}</span></div><span class="utility">${item.score}%</span><button class="button" type="button" data-candidate="${escapeHtml(item.id)}">Use match</button></article>`,
-				)
-				.join("") || '<p class="small-copy">No close matches found.</p>';
-		$("metadata-status").textContent = candidates.length
-			? `${candidates.length} matches found.`
-			: "No close matches found.";
-	} catch (error) {
-		metadataFailed(error);
-	} finally {
-		button.disabled = false;
-		button.removeAttribute("aria-busy");
-	}
+  const button = $("fetch-metadata"); button.disabled = true; button.setAttribute("aria-busy", "true");
+  $("metadata-status").textContent = "Searching MusicBrainz…";
+  $("candidate-section").hidden = false; $("candidate-list").innerHTML = '<div class="list-skeleton"><span></span><span></span></div>';
+  try {
+    const candidates = await api(`${mediaUrl(state.editing, "metadata")}/search`, { method: "POST", body: "{}" });
+    const current = currentMetadataFormValues();
+    $("candidate-list").innerHTML = candidates.map((item) => {
+      const differences = candidateMetadataDifferences(item, current);
+      const confidence = Number(item.score) < 100 ? `<span class="candidate-confidence utility">${escapeHtml(item.score)}% match</span>` : "";
+      return `<article class="candidate-row">${item.coverUrl ? `<img class="candidate-cover" src="${mediaUrl(state.editing, `metadata/candidates/${encodeURIComponent(item.id)}/cover`)}" alt="" loading="lazy">` : '<div class="candidate-cover art-placeholder"><span></span></div>'}<div class="candidate-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.artist)} · ${escapeHtml(item.album || "Single")} ${item.year || ""}</span>${candidateDifferenceMarkup(differences)}${confidence}</div><button class="button" type="button" data-candidate="${escapeHtml(item.id)}">Use match</button></article>`;
+    }).join("") || '<p class="small-copy">No close matches found.</p>';
+    $("metadata-status").textContent = candidates.length ? `${candidates.length} matches found.` : "No close matches found.";
+    button.textContent = "Refresh matches";
+  } catch (error) { metadataFailed(error); }
+  finally { button.disabled = false; button.removeAttribute("aria-busy"); }
 }
 
 async function applyCandidate(id) {
@@ -2688,25 +2707,16 @@ async function applyCandidate(id) {
 }
 
 function openLyricsEditor() {
-	if (!state.current) return;
-	$("lyrics-text").value =
-		state.lyrics?.syncedText || state.lyrics?.plainText || "";
-	$("lyrics-status").textContent = "";
-	if (!$("lyrics-dialog").open) $("lyrics-dialog").showModal();
+  if (!state.current) return;
+  $("lyrics-text").value = state.lyrics?.syncedText || state.lyrics?.plainText || "";
+  $("lyrics-status").textContent = "";
+  if (!$("lyrics-dialog").open) $("lyrics-dialog").showModal();
+  captureEditorBaseline("lyrics-dialog");
 }
-async function saveLyrics(event) {
-	event.preventDefault();
-	try {
-		state.lyrics = await api(mediaUrl(state.current, "lyrics"), {
-			method: "PUT",
-			body: JSON.stringify({ text: $("lyrics-text").value }),
-		});
-		renderLyrics();
-		$("lyrics-status").textContent = "Lyrics saved.";
-	} catch (error) {
-		$("lyrics-status").textContent = error.message;
-	}
-}
+async function saveLyrics(event) { event.preventDefault(); try { state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "PUT", body: JSON.stringify({ text: $("lyrics-text").value }) }); renderLyrics(); $("lyrics-status").textContent = "Lyrics saved."; captureEditorBaseline("lyrics-dialog"); } catch (error) { $("lyrics-status").textContent = error.message; } }
+
+window.__openMetadataForTest = openMetadata;
+window.__openLyricsEditorForTest = (track, lyrics) => { state.current = track; state.lyrics = lyrics; openLyricsEditor(); };
 
 function showPanel(tab = "lyrics", toggle = false) {
 	if (
@@ -2865,22 +2875,15 @@ function setNowHeaderCompact(header, compact) {
 }
 
 function openMenu(actions, x, y) {
-	const menu = $("context-menu");
-	menu.innerHTML = actions
-		.map(
-			(item, index) =>
-				`<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`,
-		)
-		.join("");
-	// Re-opening while the previous menu is still fading would inherit the exit state.
-	clearTimeout(menuCloseTimer);
-	menu.classList.remove("is-leaving");
-	menu.hidden = false;
-	menu._actions = actions;
-	menu._returnFocus = document.activeElement;
-	menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
-	menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
-	menu.querySelector("button")?.focus();
+  const menu = $("context-menu");
+  const menuHost = document.querySelector("dialog[open]") || document.body;
+  if (menu.parentElement !== menuHost) menuHost.append(menu);
+  menu.innerHTML = actions.map((item, index) => `<button class="${item.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-index="${index}">${escapeHtml(item.label)}</button>`).join("");
+  // Re-opening while the previous menu is still fading would inherit the exit state.
+  clearTimeout(menuCloseTimer); menu.classList.remove("is-leaving");
+  menu.hidden = false; menu._actions = actions;
+  menu._returnFocus = document.activeElement;
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`; menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`; menu.querySelector("button")?.focus();
 }
 // Popovers get a quick fade on the way out too, so dismissing does not blink. Kept short
 // (--dur-1) because a context menu should feel instant, not animated at.
@@ -3029,6 +3032,29 @@ function sourceMenu(chatId, x, y) {
 		x,
 		y,
 	);
+}
+
+const DISCOVER_SORT_LABELS = { recent: "Latest", count: "Music files", name: "Name" };
+const DISCOVER_SORT_MENU_LABELS = { recent: "Latest post", count: "Most music files", name: "Name · A–Z" };
+
+function syncDiscoverSortTrigger() {
+  const value = $("discover-sort").value || "recent";
+  const label = DISCOVER_SORT_LABELS[value] || DISCOVER_SORT_LABELS.recent;
+  $("discover-sort-label").textContent = label;
+  $("discover-sort-trigger").setAttribute("aria-label", `Sort sources: ${DISCOVER_SORT_MENU_LABELS[value] || DISCOVER_SORT_MENU_LABELS.recent}`);
+}
+
+function openDiscoverSortMenu() {
+  const trigger = $("discover-sort-trigger");
+  const rect = trigger.getBoundingClientRect();
+  const current = $("discover-sort").value || "recent";
+  openMenu(Object.keys(DISCOVER_SORT_LABELS).map((value) => ({
+    label: `${value === current ? "✓ " : ""}${DISCOVER_SORT_MENU_LABELS[value]}`,
+    action: () => {
+      $("discover-sort").value = value;
+      $("discover-sort").dispatchEvent(new Event("change"));
+    },
+  })), Math.max(8, rect.right - 205), rect.bottom + 6);
 }
 
 const TRACK_SORT_LABELS = {
@@ -4275,7 +4301,13 @@ $("discover-list").addEventListener(
 	"change",
 	(event) => event.target.matches("[data-chat]") && toggleSource(event.target),
 );
-$("discover-sort").addEventListener("change", renderDiscovered);
+$("discover-sort").addEventListener("change", () => {
+	syncDiscoverSortTrigger();
+	renderDiscovered();
+});
+$("discover-search").addEventListener("input", renderDiscovered);
+$("discover-kind-filter").addEventListener("change", renderDiscovered);
+$("discover-sort-trigger").addEventListener("click", openDiscoverSortMenu);
 $("sidebar-sort").value = localStorage.getItem("tm-source-sort") || "custom";
 $("sidebar-sort").addEventListener("change", () => {
 	localStorage.setItem("tm-source-sort", $("sidebar-sort").value);
@@ -4613,32 +4645,29 @@ for (const id of ["contact-list", "frequent-list"]) {
 	});
 }
 $("metadata-form").addEventListener("submit", saveMetadata);
+$("metadata-form").addEventListener("input", () => updateEditorDirtyUi("metadata-dialog"));
+$("metadata-form").addEventListener("change", () => updateEditorDirtyUi("metadata-dialog"));
 $("reset-metadata").addEventListener("click", resetMetadata);
 $("fetch-metadata").addEventListener("click", fetchMetadata);
-$("candidate-list").addEventListener("click", (event) => {
-	const button = event.target.closest("[data-candidate]");
-	if (button) applyCandidate(button.dataset.candidate);
-});
+$("candidate-list").addEventListener("click", (event) => { const button = event.target.closest("[data-candidate]"); if (button) applyCandidate(button.dataset.candidate); });
 $("lyrics-form").addEventListener("submit", saveLyrics);
+$("lyrics-text").addEventListener("input", () => updateEditorDirtyUi("lyrics-dialog"));
 $("reset-lyrics").addEventListener("click", async () => {
-	if (
-		await confirmAction(
-			"Fetch lyrics again?",
-			"Saved lyrics will be replaced by a new internet lookup.",
-			"Fetch again",
-		)
-	) {
-		try {
-			$("lyrics-status").textContent = "Looking for lyrics…";
-			state.lyrics = await api(mediaUrl(state.current, "lyrics"), {
-				method: "DELETE",
-			});
-			renderLyrics();
-			$("lyrics-status").textContent = "Lyrics lookup finished.";
-		} catch (error) {
-			$("lyrics-status").textContent = error.message;
-		}
-	}
+  const dirty = editorIsDirty("lyrics-dialog");
+  const confirmed = await confirmAction(
+    dirty ? "Replace unsaved lyrics?" : "Fetch lyrics again?",
+    dirty ? "Your unsaved edits will be replaced by a new internet lookup." : "Saved lyrics will be replaced by a new internet lookup.",
+    "Fetch again",
+  );
+  if (!confirmed) return;
+  try {
+    $("lyrics-status").textContent = "Looking for lyrics…";
+    state.lyrics = await api(mediaUrl(state.current, "lyrics"), { method: "DELETE" });
+    renderLyrics();
+    $("lyrics-text").value = state.lyrics?.syncedText || state.lyrics?.plainText || "";
+    captureEditorBaseline("lyrics-dialog");
+    $("lyrics-status").textContent = "Lyrics lookup finished.";
+  } catch (error) { $("lyrics-status").textContent = error.message; }
 });
 
 $("open-settings").addEventListener("click", openSettings);
@@ -4763,74 +4792,37 @@ $("logout-telegram").addEventListener("click", async () => {
 	}
 });
 
-$("error-retry").addEventListener("click", () => {
-	$("error-dialog").close();
-	restoreDialogFocus();
-	const action = retryAction;
-	retryAction = null;
-	action?.();
-});
-$("confirm-accept").addEventListener("click", () => {
-	$("confirm-dialog").close();
-	restoreDialogFocus();
-	confirmResolve?.(true);
-	confirmResolve = null;
-});
-document.querySelectorAll("[data-close]").forEach((button) =>
-	button.addEventListener("click", () => {
-		const dialog = $(button.dataset.close);
-		dialog.close();
-		if (dialog.id === "confirm-dialog") {
-			confirmResolve?.(false);
-			confirmResolve = null;
-		}
-		if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog")
-			restoreDialogFocus();
-	}),
-);
+$("error-retry").addEventListener("click", () => { $("error-dialog").close(); restoreDialogFocus(); const action = retryAction; retryAction = null; action?.(); }); $("confirm-accept").addEventListener("click", () => { $("confirm-dialog").close(); restoreDialogFocus(); confirmResolve?.(true); confirmResolve = null; });
+document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", async () => {
+  const dialog = $(button.dataset.close);
+  if (!(await confirmEditorClose(dialog))) return;
+  dialog.close();
+  if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; }
+  if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus();
+}));
 document.querySelectorAll("dialog").forEach((dialog) => {
-	dialog.addEventListener("click", (event) => {
-		if (event.target !== dialog) return;
-		const rect = dialog.getBoundingClientRect();
-		if (
-			event.clientX < rect.left ||
-			event.clientX > rect.right ||
-			event.clientY < rect.top ||
-			event.clientY > rect.bottom
-		) {
-			dialog.close();
-			if (dialog.id === "confirm-dialog") {
-				confirmResolve?.(false);
-				confirmResolve = null;
-			}
-			restoreDialogFocus();
-		}
-	});
-	dialog.addEventListener("cancel", () => {
-		if (dialog.id === "confirm-dialog") {
-			confirmResolve?.(false);
-			confirmResolve = null;
-		}
-		restoreDialogFocus();
-	});
-	dialog.addEventListener("close", () => {
-		if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog")
-			restoreDialogFocus();
-	});
+  dialog.addEventListener("click", async (event) => {
+    if (event.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+      if (!(await confirmEditorClose(dialog))) return;
+      dialog.close();
+      if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; }
+      restoreDialogFocus();
+    }
+  });
+  dialog.addEventListener("cancel", async (event) => {
+    if (guardedEditorIds.has(dialog.id) && editorIsDirty(dialog.id)) {
+      event.preventDefault();
+      if (await confirmEditorClose(dialog)) dialog.close();
+      return;
+    }
+    if (dialog.id === "confirm-dialog") { confirmResolve?.(false); confirmResolve = null; }
+    restoreDialogFocus();
+  });
+  dialog.addEventListener("close", () => { if (dialog.id === "error-dialog" || dialog.id === "confirm-dialog") restoreDialogFocus(); });
 });
-document.addEventListener(
-	"error",
-	(event) => {
-		const image = event.target;
-		if (image.matches?.("img.source-avatar")) {
-			const replacement = document.createElement("span");
-			replacement.className = "source-avatar";
-			replacement.textContent = image.dataset.avatarFallback || "♪";
-			image.replaceWith(replacement);
-		}
-	},
-	true,
-);
+document.addEventListener("error", (event) => { const image = event.target; if (image.matches?.("img.source-avatar")) { const replacement = document.createElement("span"); replacement.className = "source-avatar"; replacement.textContent = image.dataset.avatarFallback || "♪"; image.replaceWith(replacement); } }, true);
 $("context-menu").addEventListener("keydown", (event) => {
 	const items = [...$("context-menu").querySelectorAll("[data-menu-index]")];
 	if (!items.length) return;
@@ -4884,6 +4876,9 @@ document.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
+		// Incoming branch: while a context menu is open, Escape must not also
+		// close the dialog underneath it.
+		if (!$("context-menu").hidden) event.preventDefault();
 		closeMenu();
 		closeGlobalSearch();
 	}

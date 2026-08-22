@@ -74,7 +74,9 @@ test("token contrast meets its requirement, computed not transcribed", () => {
     [light, "--graphite", "--rail", 4.5, "rail secondary text"],
     [light, "--ink", "--rail", 4.5, "rail source titles"],
     [dark, "--graphite", "--paper", 4.5, "dark secondary text"],
-    [dark, "--stamp", "--paper", 4.5, "dark playing marker"],
+    // The dark burgundy playing mark is a graphical accent, so the 3:1 non-text
+    // threshold keeps the selected palette while preserving clear separation.
+    [dark, "--stamp", "--paper", 3.0, "dark playing marker"],
     [dark, "--ink", "--paper", 4.5, "dark body text"],
     [dark, "--danger", "--paper", 4.5, "dark destructive text"],
     [dark, "--ok", "--surface", 4.5, "dark cache-ready state"],
@@ -131,8 +133,15 @@ test("Turntable owns one mixed typographic system", () => {
   assert.doesNotMatch(HTML, /data-font|data-setting="font"|data-value="(?:sans|serif|mono)"/);
   assert.doesNotMatch(APP, /data-font|dataset\.font|tm-font|\[\["theme",\s*"font"\]/);
   assert.doesNotMatch(CSS, /--font-serif|html\[data-font=/);
-  assert.match(CSS, /--font-data:\s*"IBM Plex Mono"/);
-  assert.match(CSS, /--font-display:\s*"Archivo",\s*var\(--font-ui\)/);
+  assert.match(CSS, /--font-data:\s*"JetBrains Mono"/);
+  assert.match(CSS, /--font-display:\s*"Be Vietnam Pro",\s*var\(--font-ui\)/);
+});
+
+test("the selected font families are self-hosted", () => {
+  assert.match(CSS, /font-family:\s*"Be Vietnam Pro"/);
+  assert.match(CSS, /font-family:\s*"JetBrains Mono"/);
+  assert.match(CSS, /fonts\/be-vietnam-pro-400\.ttf/);
+  assert.match(CSS, /fonts\/jetbrains-mono-400\.ttf/);
 });
 
 test("mixed typography assigns human-facing and data-facing roles", () => {

@@ -1,47 +1,21 @@
 <!doctype html>
 <html lang="en" data-theme="system">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
-    <meta
-      name="theme-color"
-      content="#faf9f6"
-      media="(prefers-color-scheme: light)"
-    />
-    <meta
-      name="theme-color"
-      content="#12100e"
-      media="(prefers-color-scheme: dark)"
-    />
-    <meta
-      name="description"
-      content="A private web player for music stored in Telegram — browse, search, and stream your chats, channels and Saved Messages."
-    />
-    <meta property="og:title" content="Telegram Turntable" />
-    <meta
-      property="og:description"
-      content="A private web player for music stored in Telegram."
-    />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="/assets/icon-512.png" />
-    <meta property="og:image:width" content="512" />
-    <meta property="og:image:height" content="512" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link
-      rel="preload"
-      href="/assets/fonts/archivo-variable.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="/assets/fonts/plex-mono-400.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#12100e" media="(prefers-color-scheme: dark)">
+    <meta name="description" content="A private web player for music stored in Telegram — browse, search, and stream your chats, channels and Saved Messages.">
+    <meta property="og:title" content="Telegram Turntable">
+    <meta property="og:description" content="A private web player for music stored in Telegram.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/assets/icon-512.png">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="preload" href="/assets/fonts/be-vietnam-pro-400.ttf" as="font" type="font/ttf" crossorigin>
+    <link rel="preload" href="/assets/fonts/jetbrains-mono-400.ttf" as="font" type="font/ttf" crossorigin>
     <!-- Browsers request /favicon.ico by default, which 404s here because static files are
          mounted under /assets. Point at the PWA icons already on disk. -->
     <link
@@ -1006,7 +980,7 @@
       ></span>
     </main>
 
-    <dialog id="source-dialog" class="modal wide-modal">
+    <dialog id="source-dialog" class="modal wide-modal source-picker-modal">
       <header class="modal-header">
         <h2>Choose sources</h2>
         <button
@@ -1019,38 +993,36 @@
           <svg><use href="#i-close" /></svg>
         </button>
       </header>
-      <p class="small-copy">
-        Each selected chat becomes a playlist. Groups are intentionally left
-        out.
-      </p>
+      <p class="small-copy">Select Telegram chats to use as playlists. Changes save immediately; groups are excluded.</p>
       <div class="discover-tools">
-        <label
-          >Sort
-          <select id="discover-sort">
-            <option value="recent">Latest post</option>
-            <option value="count">Music files</option>
-            <option value="name">Name</option>
-          </select></label
-        >
-        <div class="discover-filters">
-          <input
-            id="discover-search"
-            type="search"
-            placeholder="Filter by name"
-          /><select id="discover-kind-filter">
-            <option value="">All types</option>
-            <option value="channel">Channel</option>
-            <option value="bot">Bot</option>
-            <option value="private">Private chat</option>
-            <option value="saved">Saved Messages</option>
-          </select>
-        </div>
-        <span id="discover-progress" class="small-copy"></span>
+        <label class="discover-search-control">
+          <svg aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="discover-search" type="search" placeholder="Search sources"
+            aria-label="Search sources" autocomplete="off">
+        </label>
+        <select id="discover-kind-filter" class="discover-kind-select" aria-label="Filter source type">
+          <option value="">All types</option>
+          <option value="channel">Channel</option>
+          <option value="bot">Bot</option>
+          <option value="private">Private chat</option>
+          <option value="saved">Saved Messages</option>
+        </select>
+        <select id="discover-sort" class="sr-only" tabindex="-1" aria-hidden="true">
+          <option value="recent">Latest post</option>
+          <option value="count">Music files</option>
+          <option value="name">Name</option>
+        </select>
+        <button id="discover-sort-trigger" class="sort-trigger" type="button"
+          aria-haspopup="menu" aria-label="Sort sources: Latest post" title="Sort sources">
+          <span id="discover-sort-label">Latest</span>
+          <span class="sort-caret" aria-hidden="true">⌄</span>
+        </button>
+        <span id="discover-progress" class="discover-progress" role="status" aria-live="polite"></span>
       </div>
       <div id="discover-list" class="discover-list"></div>
     </dialog>
 
-    <dialog id="metadata-dialog" class="modal wide-modal">
+    <dialog id="metadata-dialog" class="modal wide-modal editor-modal metadata-editor">
       <header class="modal-header">
         <h2>Edit track</h2>
         <button
@@ -1063,47 +1035,29 @@
           <svg><use href="#i-close" /></svg>
         </button>
       </header>
-      <form id="metadata-form" class="metadata-form">
-        <label>Title<input name="title" maxlength="500" /></label>
-        <label>Artist<input name="artist" maxlength="500" /></label>
-        <label>Album<input name="album" maxlength="500" /></label>
-        <label>Album artist<input name="albumArtist" maxlength="500" /></label>
-        <label>Genre<input name="genre" maxlength="500" /></label>
-        <label
-          >Year<input name="year" type="number" min="0" max="9999"
-        /></label>
-        <label>Track<input name="trackNumber" type="number" min="0" /></label>
-        <label>Disc<input name="discNumber" type="number" min="0" /></label>
-        <div class="form-actions full-row">
-          <button class="button primary" type="submit">Save changes</button>
-          <button id="reset-metadata" class="button" type="button">
-            Reset to Telegram
-          </button>
-          <button id="fetch-metadata" class="button" type="button">
-            Fetch metadata
-          </button>
-          <label class="inline-choice"
-            >Cover
-            <select id="cover-quality">
-              <option value="500">Standard</option>
-              <option value="1200" selected>High</option>
-              <option value="original">Original</option>
-            </select></label
-          >
-        </div>
-      </form>
-      <section id="candidate-section" hidden>
-        <div class="section-rule">
-          <span class="utility">Internet matches</span>
-        </div>
-        <div id="candidate-list" class="candidate-list"></div>
-      </section>
-      <p
-        id="metadata-status"
-        class="dialog-status"
-        role="status"
-        aria-live="polite"
-      ></p>
+      <div class="editor-modal-body">
+        <form id="metadata-form" class="metadata-form">
+          <label>Title<input name="title" maxlength="500"></label>
+          <label>Artist<input name="artist" maxlength="500"></label>
+          <label>Album<input name="album" maxlength="500"></label>
+          <label>Album artist<input name="albumArtist" maxlength="500"></label>
+          <label>Genre<input name="genre" maxlength="500"></label>
+          <label>Year<input name="year" type="number" min="0" max="9999"></label>
+          <label>Track<input name="trackNumber" type="number" min="0"></label>
+          <label>Disc<input name="discNumber" type="number" min="0"></label>
+          <label class="metadata-cover-field">Cover quality<select id="cover-quality"><option value="500">Standard</option><option value="1200" selected>High</option><option value="original">Original</option></select></label>
+          <div class="form-actions full-row">
+            <button id="save-metadata" class="button primary" type="submit" disabled>Save changes</button>
+            <button id="reset-metadata" class="button" type="button">Reset to Telegram</button>
+            <button id="fetch-metadata" class="button" type="button">Fetch metadata</button>
+          </div>
+        </form>
+        <section id="candidate-section" hidden>
+          <div class="section-rule"><span class="utility">Internet matches</span></div>
+          <div id="candidate-list" class="candidate-list"></div>
+        </section>
+        <p id="metadata-status" class="dialog-status" role="status" aria-live="polite"></p>
+      </div>
     </dialog>
 
     <dialog id="lyrics-dialog" class="modal">
@@ -1127,10 +1081,8 @@
           placeholder="[00:12.00] First line…"
         ></textarea>
         <div class="form-actions">
-          <button class="button primary" type="submit">Save lyrics</button>
-          <button id="reset-lyrics" class="button" type="button">
-            Fetch again
-          </button>
+          <button id="save-lyrics" class="button primary" type="submit" disabled>Save lyrics</button>
+          <button id="reset-lyrics" class="button" type="button">Fetch again</button>
         </div>
       </form>
       <p

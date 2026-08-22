@@ -139,6 +139,45 @@ def _rel_lum(rgb):
     return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
 
 
+def material(page, selector):
+    return page.evaluate(
+        """(selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+
+          const style = getComputedStyle(element);
+          return {
+            filter: style.backdropFilter || style.webkitBackdropFilter || "none",
+            mask: style.maskImage || style.webkitMaskImage || "none",
+            background: style.backgroundColor,
+            display: style.display,
+          };
+        }""",
+        selector,
+    )
+
+
+def background_alpha(page, selector):
+    return page.evaluate(
+        """(selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+
+          const value = getComputedStyle(element).backgroundColor;
+          const rgba = value.match(
+            /rgba\\([^,]+,[^,]+,[^,]+,\\s*([\\d.]+)\\)/
+          );
+          if (rgba) return Number(rgba[1]);
+
+          const slash = value.match(/\\/\\s*([\\d.]+)\\s*\\)?$/);
+          if (slash) return Number(slash[1]);
+
+          return 1;
+        }""",
+        selector,
+    )
+
+
 class Handler(SimpleHTTPRequestHandler):
     # index.html asks for /assets/style.css because app.py:299 mounts /assets -> static/.
     # Without this rewrite every stylesheet 404s and every geometry assertion measures
@@ -1137,7 +1176,7 @@ class LayoutTests(unittest.TestCase):
         summary.press("Enter")
         self.assertFalse(details.evaluate("(el) => el.open"))
 
-    def test_login_status_copy_uses_the_ui_font(self):
+    def test_login_status_copy_uses_the_data_font(self):
         page = self.page(1440, 900)
         page.wait_for_timeout(300)
         fonts = page.evaluate("""() => ({
@@ -1146,14 +1185,9 @@ class LayoutTests(unittest.TestCase):
         })""")
         for name, family in fonts.items():
             self.assertIn(
-                "Archivo",
+                "JetBrains Mono",
                 family,
-                f"{name} is human status copy and must use the UI font: {fonts}",
-            )
-            self.assertNotIn(
-                "Mono",
-                family,
-                f"{name} must not use the data font: {fonts}",
+                f"{name} is machine-state copy and must use the data font: {fonts}",
             )
 
     def test_login_panel_no_overflow_or_clipped_cta_at_common_viewports(self):
@@ -1231,6 +1265,250 @@ class LayoutTests(unittest.TestCase):
                     metrics["qrY"],
                     f"{width}x{height}: phone must stack above QR",
                 )
+    def open_track_editor(self, page, editor):
+        track = {
+            "key": "-1001:1000",
+            "metadata": {"title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998},
+            "overrides": {},
+            "source": {"title": "Hyperdub", "selected": True},
+        }
+        if editor == "metadata":
+            page.evaluate("track => window.__openMetadataForTest(track)", track)
+        else:
+            page.evaluate("track => window.__openLyricsEditorForTest(track, {syncedText: '[00:00.00] initial', plainText: 'initial'})", track)
+        page.wait_for_selector(f"#{editor}-dialog[open]")
+
+    def test_metadata_editor_has_anchored_header_and_field_cover_control(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
+        shape = page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const body = dialog.querySelector('.editor-modal-body');
+          const disc = dialog.querySelector('[name="discNumber"]')?.closest('label');
+          const cover = dialog.querySelector('.metadata-cover-field');
+          const actions = dialog.querySelector('.form-actions');
+          return {
+            classes: [...dialog.classList],
+            display: getComputedStyle(dialog).display,
+            overflow: getComputedStyle(dialog).overflow,
+            bodyOverflow: body && getComputedStyle(body).overflowY,
+            coverAfterDisc: Boolean(disc && cover && disc.compareDocumentPosition(cover) & 4),
+            actionLabels: [...actions.querySelectorAll('label')].map((label) => label.textContent.trim()),
+            saveId: dialog.querySelector('button[type="submit"]')?.id,
+            spinner: getComputedStyle(dialog.querySelector('[name="year"]')).appearance,
+          };
+        }""")
+        self.assertIn("metadata-editor", shape["classes"])
+        self.assertEqual("grid", shape["display"])
+        self.assertIn("hidden", shape["overflow"])
+        self.assertEqual("auto", shape["bodyOverflow"])
+        self.assertTrue(shape["coverAfterDisc"], shape)
+        self.assertEqual([], shape["actionLabels"], shape)
+        self.assertEqual("save-metadata", shape["saveId"])
+        self.assertIn(shape["spinner"], {"none", "textfield"}, shape)
+
+    def test_metadata_header_stays_visible_when_candidates_scroll(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          dialog.showModal();
+          const section = document.getElementById('candidate-section');
+          section.hidden = false;
+          document.getElementById('candidate-list').innerHTML =
+            Array.from({length: 18}, (_, index) => `<article class="candidate-row">
+              <div class="candidate-cover"></div>
+              <div class="candidate-copy"><strong>Candidate ${index}</strong><span>Artist · Album ${index}</span></div>
+              <button class="button" type="button">Use match</button>
+            </article>`).join('');
+        }""")
+        before = page.evaluate("""() => {
+          const box = document.querySelector('#metadata-dialog .modal-header').getBoundingClientRect();
+          return {top: box.top, bottom: box.bottom};
+        }""")
+        page.evaluate("""() => {
+          const body = document.querySelector('#metadata-dialog .editor-modal-body');
+          body.scrollTop = body.scrollHeight;
+        }""")
+        after = page.evaluate("""() => {
+          const header = document.querySelector('#metadata-dialog .modal-header').getBoundingClientRect();
+          const dialog = document.getElementById('metadata-dialog').getBoundingClientRect();
+          return {top: header.top, bottom: header.bottom, dialogTop: dialog.top, dialogBottom: dialog.bottom};
+        }""")
+        self.assertLessEqual(abs(before["top"] - after["top"]), 1, after)
+        self.assertGreaterEqual(after["top"], after["dialogTop"], after)
+        self.assertLessEqual(after["bottom"], after["dialogBottom"], after)
+
+    def test_metadata_matches_explain_differences_without_repeating_perfect_scores(self):
+        page = self.page(1440, 900)
+        candidates = [
+            {"id": "same", "title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998, "score": 100},
+            {"id": "different", "title": "Angels", "artist": "Burial", "album": "Untrue", "year": 2000, "score": 87},
+        ]
+        page.route("**/metadata/search", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(candidates)))
+        self.open_track_editor(page, "metadata")
+        for selector, value in (("[name='title']", "Angels"), ("[name='artist']", "Burial"),
+                                ("[name='album']", "Untrue"), ("[name='year']", "1998")):
+            page.fill(f"#metadata-form {selector}", value)
+        page.click("#fetch-metadata")
+        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        rows = page.evaluate("""() => [...document.querySelectorAll('.candidate-row')].map((row) => ({
+          text: row.textContent,
+          differences: row.querySelector('.candidate-differences, .candidate-same')?.textContent || '',
+          button: row.querySelector('[data-candidate]')?.textContent.trim(),
+        }))""")
+        self.assertEqual(2, len(rows), rows)
+        self.assertIn("Matches the visible metadata", rows[0]["differences"])
+        self.assertNotIn("100%", rows[0]["text"])
+        self.assertIn("87%", rows[1]["text"])
+        self.assertIn("Year", rows[1]["differences"])
+        self.assertIn("2000", rows[1]["differences"])
+        self.assertNotIn("Artist", rows[1]["differences"])
+        self.assertEqual(["Use match", "Use match"], [row["button"] for row in rows])
+        self.assertEqual("Refresh matches", page.locator("#fetch-metadata").text_content())
+        page.evaluate("track => window.__openMetadataForTest(track)", {
+            "key": "-1001:1000",
+            "metadata": {"title": "Angels", "artist": "Burial", "album": "Untrue", "year": 1998},
+            "overrides": {},
+            "source": {"title": "Hyperdub", "selected": True},
+        })
+        self.assertEqual("Fetch metadata", page.locator("#fetch-metadata").text_content())
+
+    def test_metadata_candidates_reflow_without_mobile_horizontal_overflow(self):
+        page = self.page(390, 844)
+        candidates = [
+            {"id": str(index), "title": f"Candidate {index}", "artist": "Artist", "album": "Album", "year": 1998, "score": 92}
+            for index in range(6)
+        ]
+        page.route("**/metadata/search", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(candidates)))
+        self.open_track_editor(page, "metadata")
+        page.click("#fetch-metadata")
+        page.wait_for_function("() => !document.getElementById('fetch-metadata').disabled")
+        geometry = page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const body = dialog.querySelector('.editor-modal-body');
+          return {
+            dialogOverflow: dialog.scrollWidth > dialog.clientWidth,
+            bodyOverflow: body.scrollWidth > body.clientWidth,
+            rows: [...document.querySelectorAll('.candidate-row')].map((row) => ({
+              right: row.getBoundingClientRect().right,
+              bodyRight: body.getBoundingClientRect().right,
+            })),
+          };
+        }""")
+        self.assertFalse(geometry["dialogOverflow"], geometry)
+        self.assertFalse(geometry["bodyOverflow"], geometry)
+        self.assertTrue(all(row["right"] <= row["bodyRight"] + 1 for row in geometry["rows"]), geometry)
+
+    def test_metadata_dirty_state_protects_close_paths_and_save_state(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "metadata")
+        self.assertTrue(page.locator("#save-metadata").is_disabled())
+        title = page.locator("#metadata-form [name='title']")
+        title.fill("Changed title")
+        self.assertFalse(page.locator("#save-metadata").is_disabled())
+        title.fill("Angels")
+        self.assertTrue(page.locator("#save-metadata").is_disabled())
+        title.fill("Changed title")
+
+        page.locator("#metadata-dialog [data-close='metadata-dialog']").click()
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+        page.locator("#confirm-dialog [data-close='confirm-dialog']").click()
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.locator("#confirm-accept").click()
+        page.wait_for_function("() => !document.getElementById('metadata-dialog').open")
+
+    def test_metadata_dirty_backdrop_click_is_guarded(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "metadata")
+        page.fill("#metadata-form [name='title']", "Changed title")
+        page.evaluate("""() => {
+          const dialog = document.getElementById('metadata-dialog');
+          const rect = dialog.getBoundingClientRect();
+          dialog.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            clientX: rect.left - 2,
+            clientY: rect.top - 2,
+          }));
+        }""")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#metadata-dialog[open]").count())
+        page.click("#confirm-accept")
+        page.wait_for_function("() => !document.getElementById('metadata-dialog').open")
+
+    def test_lyrics_editor_tracks_dirty_state_and_fetch_again_updates_source(self):
+        page = self.page(1440, 900)
+
+        def lyrics_route(route):
+            if route.request.method == "DELETE":
+                return route.fulfill(status=200, content_type="application/json",
+                                     body='{"syncedText":"[00:01.00] fetched","plainText":"fetched"}')
+            if route.request.method == "PUT":
+                return route.fulfill(status=200, content_type="application/json",
+                                     body='{"syncedText":"[00:02.00] saved","plainText":"saved"}')
+            return route.fallback()
+
+        page.route("**/api/tracks/*/lyrics", lyrics_route)
+        self.open_track_editor(page, "lyrics")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+        style = page.evaluate("""() => {
+          const text = document.getElementById('lyrics-text');
+          const computed = getComputedStyle(text);
+          return {
+            family: computed.fontFamily,
+            filter: computed.backdropFilter || computed.webkitBackdropFilter || 'none',
+            background: computed.backgroundColor,
+          };
+        }""")
+        self.assertIn("JetBrains Mono", style["family"])
+        self.assertIn(style["filter"], {"none", ""}, style)
+        self.assertNotIn(style["background"], {"rgba(0, 0, 0, 0)", "transparent"}, style)
+
+        textarea = page.locator("#lyrics-text")
+        textarea.fill("manual unsaved lyrics")
+        self.assertFalse(page.locator("#save-lyrics").is_disabled())
+        page.click("#reset-lyrics")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertEqual("Replace unsaved lyrics?", page.locator("#confirm-title").text_content())
+        page.locator("#confirm-dialog [data-close='confirm-dialog']").click()
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertEqual("manual unsaved lyrics", textarea.input_value())
+
+        page.click("#reset-lyrics")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.click("#confirm-accept")
+        page.wait_for_function("() => document.getElementById('lyrics-text').value.includes('fetched')")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+
+        textarea.fill("manual saved lyrics")
+        page.click("#save-lyrics")
+        page.wait_for_function("() => document.getElementById('lyrics-status').textContent === 'Lyrics saved.'")
+        self.assertTrue(page.locator("#save-lyrics").is_disabled())
+
+        page.click("#lyrics-dialog [data-close='lyrics-dialog']")
+        page.wait_for_function("() => !document.getElementById('lyrics-dialog').open")
+        self.assertFalse(page.locator("#confirm-dialog[open]").count())
+
+    def test_lyrics_dirty_escape_is_guarded(self):
+        page = self.page(1440, 900)
+        self.open_track_editor(page, "lyrics")
+        page.fill("#lyrics-text", "manual unsaved lyrics")
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#confirm-dialog[open]")
+        self.assertTrue(page.locator("#lyrics-dialog[open]").count())
+        page.click("#confirm-dialog [data-close='confirm-dialog']")
+        page.wait_for_function("() => !document.getElementById('confirm-dialog').open")
+        self.assertTrue(page.locator("#lyrics-dialog[open]").count())
+        page.click("#lyrics-dialog [data-close='lyrics-dialog']")
+        page.wait_for_selector("#confirm-dialog[open]")
+        page.click("#confirm-accept")
+        page.wait_for_function("() => !document.getElementById('lyrics-dialog').open")
 
     def test_details_tab_shows_everything_already_indexed(self):
         page = self.page(1440, 900)
@@ -1265,9 +1543,9 @@ class LayoutTests(unittest.TestCase):
           duration: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Duration').nextElementSibling).fontFamily,
           format: getComputedStyle([...document.querySelectorAll('#track-details dt')].find((dt) => dt.textContent === 'Format').nextElementSibling).fontFamily,
         })""")
-        self.assertIn("Archivo", detail_fonts["source"])
-        self.assertIn("IBM Plex Mono", detail_fonts["duration"])
-        self.assertIn("IBM Plex Mono", detail_fonts["format"])
+        self.assertIn("Be Vietnam Pro", detail_fonts["source"])
+        self.assertIn("JetBrains Mono", detail_fonts["duration"])
+        self.assertIn("JetBrains Mono", detail_fonts["format"])
 
         # Actions must be reachable without scrolling the pane: DOCUMENT_POSITION_FOLLOWING (4)
         # means the list comes after the actions.
@@ -1386,13 +1664,16 @@ class LayoutTests(unittest.TestCase):
           const sync = box('#sync-all-sources');
           const add = box('#add-source');
           const settings = box('#open-settings');
+          const playerBox = player.getBoundingClientRect();
           const expandedBorder = getComputedStyle(document.querySelector('.rail-utilities')).borderTopWidth;
           const expandedPaddingTop = parseFloat(getComputedStyle(document.querySelector('.rail-utilities')).paddingTop);
           const collapsed = document.querySelector('.app-shell');
           collapsed.classList.add('sidebar-collapsed');
           const nav = document.querySelector('#source-list').closest('nav');
           return {
-            playerMarginBottom: parseFloat(getComputedStyle(player).marginBottom),
+            playerBottomGap: innerHeight - playerBox.bottom,
+            utilityBottom: utilities.bottom,
+            playerTop: playerBox.top,
             utilityBorder: expandedBorder,
             utilityPaddingTop: expandedPaddingTop,
             syncTop: sync.top,
@@ -1403,8 +1684,9 @@ class LayoutTests(unittest.TestCase):
             collapsedNav: { client: nav.clientWidth, scroll: nav.scrollWidth },
           };
         }""")
-        self.assertGreaterEqual(shape["playerMarginBottom"], 10, shape)
-        self.assertLessEqual(shape["playerMarginBottom"], 14, shape)
+        self.assertGreaterEqual(shape["playerBottomGap"], 10, shape)
+        self.assertLessEqual(shape["playerBottomGap"], 14, shape)
+        self.assertLessEqual(shape["utilityBottom"], shape["playerTop"] - 12, shape)
         self.assertEqual("1px", shape["utilityBorder"], shape)
         self.assertGreaterEqual(
             shape["syncTop"] - shape["utilityTop"], shape["utilityPaddingTop"], shape
@@ -1499,14 +1781,9 @@ class LayoutTests(unittest.TestCase):
         page.evaluate("() => document.getElementById('metadata-dialog').showModal()")
         page.wait_for_timeout(120)
         display, heights = page.evaluate("""() => [
-          getComputedStyle(document.querySelector('.metadata-form .inline-choice')).display,
+          getComputedStyle(document.querySelector('.metadata-cover-field')).display,
           [...document.querySelectorAll('#metadata-form .form-actions .button')].map((b) => Math.round(b.getBoundingClientRect().height)),
         ]""")
-        self.assertIn(display, {"flex", "inline-flex"})
-        self.assertTrue(
-            all(h == 40 for h in heights),
-            f"buttons stretched to {heights} instead of 40px",
-        )
 
     def test_failed_metadata_lookup_clears_its_skeleton(self):
         page = self.page(1440, 900)
@@ -2459,6 +2736,142 @@ class LayoutTests(unittest.TestCase):
             )
         )
 
+    def test_turntable_blur_material_matrix(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById("app-shell").hidden = false;
+          document.getElementById("now-panel").hidden = false;
+          document.querySelector(".now-header").classList.add("is-compact");
+        }""")
+
+        expected = [
+            (".library-header-blur", "36px", True),
+            ("#player", "36px", False),
+            ("#now-panel", "36px", False),
+            (".now-header.is-compact", "36px", False),
+            (".global-results", "36px", False),
+            ("#settings-dialog", "20px", False),
+            ("#metadata-dialog", "20px", False),
+            ("#lyrics-dialog", "20px", False),
+        ]
+
+        for selector, blur, must_have_mask in expected:
+            with self.subTest(selector=selector):
+                result = material(page, selector)
+                self.assertIsNotNone(result, selector)
+                self.assertIn(blur, result["filter"], result)
+                if must_have_mask:
+                    self.assertNotIn(result["mask"], ("none", ""), result)
+                else:
+                    self.assertIn(result["mask"], ("none", ""), result)
+
+    def test_unplanned_surfaces_do_not_use_backdrop_blur(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          document.getElementById("app-shell").hidden = false;
+          document.getElementById("queue-list").innerHTML = '<div class="queue-row"></div>';
+        }""")
+
+        selectors = [
+            ".source-rail",
+            ".track-row",
+            ".queue-row",
+            ".details-pane",
+            "#context-menu",
+            ".rail-scrim",
+        ]
+
+        for selector in selectors:
+            with self.subTest(selector=selector):
+                value = page.evaluate(
+                    """(selector) => {
+                      const element = document.querySelector(selector);
+                      if (!element) return "missing";
+                      const style = getComputedStyle(element);
+                      return style.backdropFilter || style.webkitBackdropFilter || "none";
+                    }""",
+                    selector,
+                )
+                self.assertIn(value, ("none", "", "missing"), (selector, value))
+
+        generic_dialog_blur = page.evaluate("""() => {
+          const dialog = document.querySelector(
+            "dialog.modal:not(#settings-dialog):not(#metadata-dialog):not(#lyrics-dialog)"
+          );
+          if (!dialog) return "missing";
+          const style = getComputedStyle(dialog);
+          return style.backdropFilter || style.webkitBackdropFilter || "none";
+        }""")
+        self.assertIn(generic_dialog_blur, ("none", "", "missing"), generic_dialog_blur)
+
+    def test_intended_glass_surfaces_are_translucent(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+
+        for selector in (
+            "#player",
+            "#now-panel",
+            ".global-results",
+            "#settings-dialog",
+            "#metadata-dialog",
+            "#lyrics-dialog",
+        ):
+            with self.subTest(selector=selector):
+                alpha = background_alpha(page, selector)
+                self.assertIsNotNone(alpha, selector)
+                self.assertLess(alpha, 0.98, (selector, alpha))
+
+    def test_player_physically_overlays_library_content(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        geometry = page.evaluate("""() => {
+          const player = document.getElementById("player").getBoundingClientRect();
+          const library = document.querySelector(".library-content").getBoundingClientRect();
+          const rail = document.getElementById("source-rail").getBoundingClientRect();
+          return {
+            player: { left: player.left, right: player.right, top: player.top, bottom: player.bottom },
+            library: { left: library.left, right: library.right, top: library.top, bottom: library.bottom },
+            railRight: rail.right,
+            viewportWidth: innerWidth,
+          };
+        }""")
+
+        overlap_y = (
+            min(geometry["player"]["bottom"], geometry["library"]["bottom"])
+            - max(geometry["player"]["top"], geometry["library"]["top"])
+        )
+        self.assertGreater(overlap_y, 20, geometry)
+        overlap_x = (
+            min(geometry["player"]["right"], geometry["library"]["right"])
+            - max(geometry["player"]["left"], geometry["library"]["left"])
+        )
+        self.assertGreater(overlap_x, 20, geometry)
+        self.assertAlmostEqual(geometry["player"]["left"], 16, delta=1, msg=geometry)
+        self.assertAlmostEqual(
+            geometry["viewportWidth"] - geometry["player"]["right"],
+            16,
+            delta=1,
+            msg=geometry,
+        )
+
+    def test_sidebar_collapse_does_not_change_player_horizontal_geometry(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        expanded = page.evaluate("""() => {
+          const box = document.getElementById('player').getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }""")
+        page.evaluate("() => document.getElementById('app-shell').classList.add('sidebar-collapsed')")
+        page.wait_for_timeout(320)
+        collapsed = page.evaluate("""() => {
+          const box = document.getElementById('player').getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }""")
+
+        self.assertLessEqual(abs(expanded["left"] - collapsed["left"]), 1, (expanded, collapsed))
+        self.assertLessEqual(abs(expanded["right"] - collapsed["right"]), 1, (expanded, collapsed))
+        self.assertLessEqual(abs(expanded["width"] - collapsed["width"]), 1, (expanded, collapsed))
+
     def test_mixed_typography_roles_are_rendered_without_font_picker(self):
         page = self.page(1440, 900)
         page.evaluate("""() => {
@@ -2497,40 +2910,51 @@ class LayoutTests(unittest.TestCase):
             dataFont: document.documentElement.dataset.font || null,
           };
         }""")
-        for name in (
-            "title",
-            "artist",
-            "source",
-            "heading",
-            "tab",
-            "button",
-            "globalHeading",
-            "discoverHeading",
-            "qrStatus",
-        ):
-            self.assertIn(
-                "Archivo",
-                fonts[name],
-                f"{name} must use the human-facing type: {fonts}",
-            )
-        for name in (
-            "ordinal",
-            "posted",
-            "duration",
-            "count",
-            "time",
-            "attribution",
-            "summary",
-            "globalCount",
-            "bulkCount",
-            "cacheUsage",
-            "passwordStatus",
-        ):
-            self.assertIn(
-                "IBM Plex Mono", fonts[name], f"{name} must use the data type: {fonts}"
-            )
         self.assertIsNone(fonts["picker"])
         self.assertIsNone(fonts["dataFont"])
+
+    def test_source_picker_keeps_task_controls_fixed_while_only_list_scrolls(self):
+        page = self.page(1440, 900)
+        page.evaluate("""() => {
+          const dialog = document.getElementById('source-dialog');
+          const list = document.getElementById('discover-list');
+          list.innerHTML = Array.from({length: 40}, (_, index) => `
+            <section class="discover-group">
+              ${index === 0 ? '<h3>Selected sources</h3>' : ''}
+              <label class="discover-row">Source ${index}<input type="checkbox" aria-label="Select source ${index}"></label>
+            </section>`).join('');
+          dialog.showModal();
+        }""")
+        before = page.evaluate("""() => {
+          const dialog = document.getElementById('source-dialog');
+          return {
+            headerTop: dialog.querySelector('.modal-header').getBoundingClientRect().top,
+            toolsTop: dialog.querySelector('.discover-tools').getBoundingClientRect().top,
+            dialogOverflow: getComputedStyle(dialog).overflow,
+            listOverflowY: getComputedStyle(document.getElementById('discover-list')).overflowY,
+            listScrollHeight: document.getElementById('discover-list').scrollHeight,
+            listClientHeight: document.getElementById('discover-list').clientHeight,
+          };
+        }""")
+        self.assertGreater(before["listScrollHeight"], before["listClientHeight"], before)
+        page.evaluate("""() => {
+          const list = document.getElementById('discover-list');
+          list.scrollTop = list.scrollHeight;
+        }""")
+        after = page.evaluate("""() => {
+          const dialog = document.getElementById('source-dialog');
+          return {
+            headerTop: dialog.querySelector('.modal-header').getBoundingClientRect().top,
+            toolsTop: dialog.querySelector('.discover-tools').getBoundingClientRect().top,
+            listScrollTop: document.getElementById('discover-list').scrollTop,
+          };
+        }""")
+
+        self.assertGreater(after["listScrollTop"], 0, after)
+        self.assertLessEqual(abs(before["headerTop"] - after["headerTop"]), 1, (before, after))
+        self.assertLessEqual(abs(before["toolsTop"] - after["toolsTop"]), 1, (before, after))
+        self.assertIn("hidden", before["dialogOverflow"], before)
+        self.assertEqual("auto", before["listOverflowY"], before)
 
     def test_track_action_position_is_fixed_regardless_of_title_length(self):
         page = self.page(1440, 900)
@@ -2921,6 +3345,298 @@ class LayoutTests(unittest.TestCase):
             "posted", page.evaluate("() => document.getElementById('track-sort').value")
         )
 
+    def test_discover_sort_menu_trigger_updates_hidden_select_and_closes_menu(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+
+        state = page.evaluate("""() => {
+          const select = document.getElementById('discover-sort');
+          const trigger = document.getElementById('discover-sort-trigger');
+          return {
+            selectTabIndex: select.tabIndex,
+            triggerHasPopup: trigger?.getAttribute('aria-haspopup'),
+          };
+        }""")
+        self.assertEqual(-1, state["selectTabIndex"], state)
+        self.assertEqual("menu", state["triggerHasPopup"], state)
+
+        page.click("#discover-sort-trigger")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.click('#context-menu button:has-text("Name · A–Z")')
+        page.wait_for_function("() => document.getElementById('discover-sort-label').textContent === 'Name'")
+
+        self.assertEqual("name", page.evaluate("() => document.getElementById('discover-sort').value"))
+        self.assertEqual("Name", page.text_content("#discover-sort-label"))
+        page.wait_for_selector("#context-menu", state="hidden")
+        self.assertTrue(page.is_hidden("#context-menu"))
+
+    def test_source_picker_filters_search_and_type_without_mutating_discovered_sources(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        items = [
+            {"chatId": "1", "title": "Dance in Doubt and Fear", "username": "dancefear", "kind": "channel", "selected": True, "trackCount": 7789},
+            {"chatId": "2", "title": "Mahdie 🎀", "username": None, "kind": "private", "selected": True, "trackCount": 337},
+            {"chatId": "3", "title": "VahidOnline", "username": "vahidonline", "kind": "channel", "selected": False, "trackCount": 0},
+        ]
+        page.evaluate("items => window.__renderDiscoveredForTest(items)", items)
+
+        def visible_titles():
+            return page.locator("#discover-list .discover-row strong").all_text_contents()
+
+        page.fill("#discover-search", "Vahid")
+        self.assertEqual(["VahidOnline"], visible_titles())
+        heading = page.locator("#discover-list .discover-group h3")
+        self.assertEqual("Channels", heading.locator("span").first.text_content())
+        self.assertEqual("1", heading.locator(".discover-group-count").text_content())
+
+        page.fill("#discover-search", "dancefear")
+        self.assertEqual(["Dance in Doubt and Fear"], visible_titles())
+
+        page.fill("#discover-search", "")
+        page.select_option("#discover-kind-filter", "private")
+        self.assertEqual(["Mahdie 🎀"], visible_titles())
+
+        page.fill("#discover-search", "missing")
+        self.assertEqual("No sources match these filters.", page.text_content("#discover-list .small-copy"))
+
+        page.fill("#discover-search", "")
+        page.select_option("#discover-kind-filter", "")
+        self.assertEqual(
+            ["Dance in Doubt and Fear", "Mahdie 🎀", "VahidOnline"],
+            visible_titles(),
+        )
+
+    def test_source_picker_catalogue_headings_show_visible_groups_counts_and_safe_titles(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => {
+          const channels = Array.from({ length: 1000 }, (_, index) => ({
+            chatId: `channel-${index}`,
+            title: `Channel ${index + 1}`,
+            username: null,
+            kind: 'channel',
+            selected: false,
+            trackCount: 0,
+          }));
+          window.__renderDiscoveredForTest([
+            { chatId: 'selected', title: '<Luna & Co>', username: null, kind: 'channel', selected: true, trackCount: 0 },
+            ...channels,
+            { chatId: 'bot', title: 'Helper bot', username: null, kind: 'bot', selected: false, trackCount: 0 },
+            { chatId: 'private', title: 'Private chat', username: null, kind: 'private', selected: false, trackCount: 0 },
+            { chatId: 'saved', title: 'Saved messages', username: null, kind: 'saved', selected: false, trackCount: 0 },
+          ]);
+        }""")
+
+        headings = page.locator("#discover-list .discover-group h3")
+        self.assertEqual(
+            [
+                ["Selected", "1"],
+                ["Channels", "1,000"],
+                ["Bots", "1"],
+                ["Private chats", "1"],
+                ["Saved messages", "1"],
+            ],
+            headings.evaluate_all("headings => headings.map((heading) => [...heading.querySelectorAll('span')].map((span) => span.textContent))"),
+        )
+        escaped_title = page.locator("#discover-list .discover-row strong").first
+        self.assertEqual("<Luna & Co>", escaped_title.text_content())
+        self.assertEqual(0, escaped_title.evaluate("element => element.childElementCount"))
+
+    def test_source_picker_checkbox_controls_are_native_labels_with_intentional_state(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.documentElement.dataset.theme = 'light'; }")
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'selected', title: '<Luna & Co>', username: null, kind: 'channel', selected: true, pending: false, trackCount: 0 },
+          { chatId: 'pending', title: 'Queue <now>', username: null, kind: 'bot', selected: false, pending: true, trackCount: 0 },
+          { chatId: 'quoted', title: 'Say "yes" & <now>', username: null, kind: 'private', selected: false, pending: false, trackCount: 0 },
+        ])""")
+        controls = page.locator("#discover-list .discover-row")
+        self.assertEqual(3, controls.count())
+        state = page.evaluate("""() => [...document.querySelectorAll('#discover-list .discover-row')].map((row) => {
+          const input = row.querySelector('input[type="checkbox"]');
+          const style = getComputedStyle(input);
+          const checkmark = getComputedStyle(input, '::before');
+          const root = getComputedStyle(document.documentElement);
+          return {
+            isLabel: row.tagName === 'LABEL',
+            containsInput: input.parentElement === row,
+            rowBusy: row.getAttribute('aria-busy'),
+            disabled: input.disabled,
+            label: input.getAttribute('aria-label'),
+            appearance: style.appearance,
+            width: style.width,
+            height: style.height,
+            background: style.backgroundColor,
+            borderColor: style.borderTopColor,
+            checkmarkVisible: input.checked && checkmark.content !== 'none' && checkmark.transform !== 'none',
+            ink: root.getPropertyValue('--ink').trim(),
+            graphite: root.getPropertyValue('--graphite').trim(),
+          };
+        })""")
+        self.assertEqual(
+            [
+                {
+                    "isLabel": True,
+                    "containsInput": True,
+                    "rowBusy": None,
+                    "disabled": False,
+                    "label": "Remove <Luna & Co> from library",
+                    "appearance": "none",
+                    "width": "18px",
+                    "height": "18px",
+                    "background": "rgb(20, 17, 15)",
+                    "borderColor": "rgb(20, 17, 15)",
+                    "checkmarkVisible": True,
+                    "ink": "#14110f",
+                    "graphite": "#6b655d",
+                },
+                {
+                    "isLabel": True,
+                    "containsInput": True,
+                    "rowBusy": "true",
+                    "disabled": True,
+                    "label": "Add Queue <now> to library",
+                    "appearance": "none",
+                    "width": "18px",
+                    "height": "18px",
+                    "background": "rgba(0, 0, 0, 0)",
+                    "borderColor": "rgb(107, 101, 93)",
+                    "checkmarkVisible": False,
+                    "ink": "#14110f",
+                    "graphite": "#6b655d",
+                },
+                {
+                    "isLabel": True,
+                    "containsInput": True,
+                    "rowBusy": None,
+                    "disabled": False,
+                    "label": "Add Say \"yes\" & <now> to library",
+                    "appearance": "none",
+                    "width": "18px",
+                    "height": "18px",
+                    "background": "rgba(0, 0, 0, 0)",
+                    "borderColor": "rgb(107, 101, 93)",
+                    "checkmarkVisible": False,
+                    "ink": "#14110f",
+                    "graphite": "#6b655d",
+                },
+            ],
+            state,
+        )
+
+    def test_source_picker_mixed_direction_titles_keep_metadata_ltr_without_overflow(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'mixed', title: 'وحید VahidOnline 🎧', username: null, kind: 'channel', selected: false, pending: false, trackCount: 12 },
+        ])""")
+        row = page.locator("#discover-list .discover-row")
+        title = row.locator("strong[dir='auto']")
+        metadata = row.locator("small[dir='ltr']")
+        self.assertEqual("وحید VahidOnline 🎧", title.text_content())
+        self.assertEqual("Channel · 12 music files", metadata.text_content())
+        self.assertEqual(0, row.evaluate("element => element.scrollWidth - element.clientWidth"))
+        self.assertEqual(0, row.locator(".discover-copy").evaluate("element => element.scrollWidth - element.clientWidth"))
+        self.assertEqual("hidden", title.evaluate("element => getComputedStyle(element).overflow"))
+        self.assertEqual("ellipsis", title.evaluate("element => getComputedStyle(element).textOverflow"))
+        self.assertEqual("nowrap", title.evaluate("element => getComputedStyle(element).whiteSpace"))
+        self.assertEqual("plaintext", title.evaluate("element => getComputedStyle(element).unicodeBidi"))
+
+    def test_source_picker_uses_plain_language_and_stable_scan_progress_copy(self):
+        page = self.page(1440, 900)
+        self.assertEqual(
+            "Select Telegram chats to use as playlists. Changes save immediately; groups are excluded.",
+            page.locator("#source-dialog > .small-copy").text_content(),
+        )
+        progress = page.locator("#discover-progress")
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest('loading', 12)")
+        self.assertEqual("Loading chats…", progress.text_content())
+
+        page.evaluate("""() => {
+          document.getElementById('source-dialog').showModal();
+          window.__updateDiscoverProgressForTest({ state: 'running', processed: 0 }, 12);
+        }""")
+        self.assertEqual("Scanning 0 of 12", progress.text_content())
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'running', processed: 7 }, 12)")
+        self.assertEqual("Scanning 7 of 12", progress.text_content())
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'complete', processed: 12 }, 12)")
+        self.assertEqual("12 chats scanned", progress.text_content())
+
+        page.evaluate("() => window.__updateDiscoverProgressForTest({ state: 'running', processed: 0 }, 0)")
+        self.assertEqual("", progress.text_content())
+
+    def test_source_picker_desktop_and_mobile_controls_fit_the_dialog(self):
+        for width, height in ((1440, 900), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                page.evaluate("() => document.getElementById('source-dialog').showModal()")
+                shape = page.evaluate("""() => {
+                  const dialog = document.getElementById('source-dialog');
+                  const tools = dialog.querySelector('.discover-tools');
+                  const search = document.getElementById('discover-search').closest('label');
+                  const kind = document.getElementById('discover-kind-filter');
+                  const sort = document.getElementById('discover-sort-trigger');
+                  const progress = document.getElementById('discover-progress');
+                  const close = dialog.querySelector('[data-close="source-dialog"]');
+                  const box = (element) => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+                  return { dialog: box(dialog), tools: box(tools), search: box(search), kind: box(kind), sort: box(sort), progress: box(progress), close: box(close), dialogOverflow: dialog.scrollWidth > dialog.clientWidth };
+                }""")
+                for name in ("tools", "search", "kind", "sort", "progress"):
+                    self.assertGreaterEqual(shape[name]["left"], shape["dialog"]["left"] - 1, shape)
+                    self.assertLessEqual(shape[name]["right"], shape["dialog"]["right"] + 1, shape)
+                self.assertLessEqual(shape["close"]["right"], width + 1, shape)
+                self.assertLessEqual(shape["close"]["bottom"], height + 1, shape)
+                self.assertFalse(shape["dialogOverflow"], shape)
+                if width > 620:
+                    self.assertGreater(shape["search"]["width"], shape["kind"]["width"] * 1.5, shape)
+                else:
+                    self.assertAlmostEqual(shape["search"]["left"], shape["tools"]["left"], delta=1, msg=str(shape))
+                    self.assertAlmostEqual(shape["search"]["right"], shape["tools"]["right"], delta=1, msg=str(shape))
+                    self.assertGreater(shape["kind"]["top"], shape["search"]["bottom"], shape)
+                    self.assertAlmostEqual(shape["kind"]["top"], shape["sort"]["top"], delta=1, msg=str(shape))
+                    self.assertGreater(shape["progress"]["top"], shape["kind"]["bottom"], shape)
+
+    def test_source_picker_type_filter_keeps_only_channels_and_updates_count(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'channel-1', title: 'Channel One', username: null, kind: 'channel', selected: false, trackCount: 0 },
+          { chatId: 'channel-2', title: 'Channel Two', username: null, kind: 'channel', selected: false, trackCount: 0 },
+          { chatId: 'private-1', title: 'Private One', username: null, kind: 'private', selected: false, trackCount: 0 },
+        ])""")
+        page.select_option("#discover-kind-filter", "channel")
+        rows = page.locator("#discover-list .discover-row")
+        self.assertEqual(2, rows.count())
+        self.assertTrue(all("Channel" in text for text in rows.locator("small").all_text_contents()))
+        self.assertEqual("2", page.locator("#discover-list .discover-group-count").text_content())
+
+    def test_source_picker_keyboard_reaches_controls_menu_and_checkbox(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => document.getElementById('source-dialog').showModal()")
+        page.evaluate("""() => window.__renderDiscoveredForTest([
+          { chatId: 'channel-1', title: 'Keyboard Channel', username: null, kind: 'channel', selected: false, trackCount: 0 },
+        ])""")
+
+        page.locator("#discover-search").focus()
+        page.keyboard.press("Tab")
+        self.assertEqual("discover-kind-filter", page.evaluate("() => document.activeElement.id"))
+        page.keyboard.press("Tab")
+        self.assertEqual("discover-sort-trigger", page.evaluate("() => document.activeElement.id"))
+        page.keyboard.press("Enter")
+        page.wait_for_selector("#context-menu:not([hidden])")
+        page.keyboard.press("Escape")
+        page.wait_for_function("() => document.getElementById('context-menu').hidden && document.activeElement.id === 'discover-sort-trigger'")
+        page.keyboard.press("Tab")
+        self.assertEqual("checkbox", page.evaluate("() => document.activeElement.type"))
+        page.keyboard.press("Space")
+        page.wait_for_function("() => document.querySelector('#discover-list input[type=checkbox]')?.checked")
+        self.assertTrue(page.locator("#discover-list input[type=checkbox]").is_checked())
+
     def test_library_header_blur_has_a_gradual_tail_without_more_blur(self):
         page = self.page(1440, 900)
         page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
@@ -3009,6 +3725,8 @@ class LayoutTests(unittest.TestCase):
                   const progressBox = document.querySelector('.progress-row').getBoundingClientRect();
                   const playerBox = player.getBoundingClientRect();
                   const contentBox = content.getBoundingClientRect();
+                  const tracks = [...document.querySelectorAll('.track-row:not(.track-placeholder)')];
+                  const lastTrackBox = tracks.at(-1)?.getBoundingClientRect();
                   const hit = (selector) => {
                     const box = document.querySelector(selector).getBoundingClientRect();
                     return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest(selector)?.id || '';
@@ -3020,7 +3738,8 @@ class LayoutTests(unittest.TestCase):
                     progress: { top: progressBox.top, bottom: progressBox.bottom },
                     playAboveDivider: playBox.bottom <= progressBox.top,
                     content: { bottom: contentBox.bottom, scrollable: content.scrollHeight > content.clientHeight,
-                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1 },
+                               atEnd: content.scrollTop + content.clientHeight >= content.scrollHeight - 1,
+                               lastTrackBottom: lastTrackBox?.bottom ?? null },
                     playHit: hit('#play'), progressHit: hit('#progress'), viewport: { width: innerWidth, height: innerHeight },
                   };
                 }""")
@@ -3052,12 +3771,6 @@ class LayoutTests(unittest.TestCase):
                     shape,
                 )
                 self.assertGreater(shape["player"]["radius"], 0, shape)
-                self.assertLessEqual(
-                    shape["content"]["bottom"], shape["player"]["top"] + 1, shape
-                )
-                self.assertTrue(
-                    shape["content"]["scrollable"] and shape["content"]["atEnd"], shape
-                )
                 self.assertEqual("play", shape["playHit"], shape)
                 self.assertEqual("progress", shape["progressHit"], shape)
 
@@ -3730,6 +4443,25 @@ class LayoutTests(unittest.TestCase):
                     geometry["boxes"],
                 )
 
+    def test_compact_now_header_stays_inside_now_panel_across_breakpoints(self):
+        for width, height in ((1440, 900), (1120, 900), (1024, 900), (861, 900), (860, 844), (390, 844)):
+            with self.subTest(viewport=(width, height)):
+                page = self.page(width, height)
+                self.open_now_panel(page)
+                page.evaluate("() => document.querySelector('.now-header').classList.add('is-compact')")
+                page.wait_for_timeout(80)
+                bounds = page.evaluate("""() => {
+                  const panel = document.getElementById('now-panel').getBoundingClientRect();
+                  const header = document.querySelector('.now-header.is-compact').getBoundingClientRect();
+                  return {
+                    panel: { left: panel.left, right: panel.right },
+                    header: { left: header.left, right: header.right },
+                    padding: getComputedStyle(document.getElementById('now-panel')).paddingLeft,
+                  };
+                }""")
+                self.assertGreaterEqual(bounds["header"]["left"], bounds["panel"]["left"] - 1, bounds)
+                self.assertLessEqual(bounds["header"]["right"], bounds["panel"]["right"] + 1, bounds)
+
     def test_search_results_reuse_the_library_row_system(self):
         page = self.page(1440, 900)
         requested = []
@@ -4090,3 +4822,79 @@ class LayoutTests(unittest.TestCase):
             else:
                 self.assertLessEqual(field, paper - 0.03, (theme, paper, field))
                 self.assertGreaterEqual(field, raised - 0.25, (theme, field, raised))
+
+    def test_burgundy_accent_tokens_resolve_per_theme(self):
+        page = self.page(1440, 900)
+        expected = {
+            "light": {"stamp": [125, 49, 64], "danger": [149, 64, 79]},
+            "dark": {"stamp": [166, 71, 91], "danger": [197, 107, 125]},
+        }
+
+        def read_tokens(target_page):
+            return target_page.evaluate("""() => {
+                const root = getComputedStyle(document.documentElement);
+                const read = (token) => {
+                    const probe = document.createElement('i');
+                    probe.style.background = root.getPropertyValue(token).trim();
+                    document.body.append(probe);
+                    const rgb = getComputedStyle(probe).backgroundColor
+                        .match(/\\d+(\\.\\d+)?/g)
+                        .slice(0, 3)
+                        .map(Number);
+                    probe.remove();
+                    return rgb;
+                };
+                return {stamp: read('--stamp'), danger: read('--danger')};
+            }""")
+
+        for theme, colors in expected.items():
+            page.evaluate(f"document.documentElement.dataset.theme = '{theme}'")
+            self.assertEqual(colors, read_tokens(page), theme)
+
+        system_page = self.browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme="dark")
+        system_page.route("**/api/**", self._stub)
+        system_page.goto(f"http://127.0.0.1:{self.port}/index.html", wait_until="load")
+        system_page.wait_for_timeout(200)
+        self.addCleanup(system_page.close)
+        system_page.evaluate("document.documentElement.dataset.theme = 'system'")
+        self.assertEqual(expected["dark"], read_tokens(system_page), "system-dark")
+
+    def test_track_play_overlay_is_centered_small_and_high_contrast(self):
+        page = self.page(1440, 900)
+        page.evaluate("() => { document.getElementById('app-shell').hidden = false; }")
+        page.wait_for_selector(".track-row:not(.track-placeholder)")
+        row = page.locator(".track-row:not(.track-placeholder)").first
+        row.hover()
+        page.wait_for_function("""() => {
+            const overlay = document.querySelector('.track-row:not(.track-placeholder) .track-play-overlay');
+            return overlay && getComputedStyle(overlay).opacity === '1'
+                && overlay.getBoundingClientRect().width >= 29.5;
+        }""")
+        shape = page.evaluate("""() => {
+            const cover = document.querySelector('.track-row:not(.track-placeholder) .mini-art-wrap').getBoundingClientRect();
+            const overlayElement = document.querySelector('.track-play-overlay');
+            const overlay = overlayElement.getBoundingClientRect();
+            const style = getComputedStyle(overlayElement);
+            const icon = overlayElement.querySelector('svg');
+            const iconStyle = getComputedStyle(icon);
+            return {
+                coverCenter: [cover.left + cover.width / 2, cover.top + cover.height / 2],
+                overlayCenter: [overlay.left + overlay.width / 2, overlay.top + overlay.height / 2],
+                width: overlay.width,
+                height: overlay.height,
+                color: style.color,
+                background: style.backgroundColor,
+                iconWidth: icon.getBoundingClientRect().width,
+                iconHeight: icon.getBoundingClientRect().height,
+                iconColor: iconStyle.color,
+            };
+        }""")
+        self.assertLessEqual(abs(shape["overlayCenter"][0] - shape["coverCenter"][0]), 1.5, shape)
+        self.assertLessEqual(abs(shape["overlayCenter"][1] - shape["coverCenter"][1]), 1.5, shape)
+        self.assertAlmostEqual(30, shape["width"], delta=0.5, msg=shape)
+        self.assertAlmostEqual(30, shape["height"], delta=0.5, msg=shape)
+        self.assertIn("255", shape["color"], shape)
+        self.assertIn("rgba(0, 0, 0, 0.62)", shape["background"], shape)
+        self.assertAlmostEqual(14, shape["iconWidth"], delta=0.5, msg=shape)
+        self.assertAlmostEqual(14, shape["iconHeight"], delta=0.5, msg=shape)
+        self.assertIn("255", shape["iconColor"], shape)
