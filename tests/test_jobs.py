@@ -94,16 +94,18 @@ class JobRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.runner.status("missing")
 
     def test_prune_drops_old_terminal_jobs_and_caps_survivors(self):
-        # time.monotonic() is boot-relative and large, so a created_at of 0 is ancient.
+        # time.monotonic() is boot-relative and can be near zero on a freshly
+        # booted runner, so "ancient" must be computed relative to now, never
+        # assumed to be 0.
+        now = time.monotonic()
         old = self._job()
         old.state = "complete"
-        old.created_at = 0
+        old.created_at = now - JOB_RETENTION_SECONDS - 1
         self.runner.register(old)
         self.runner.prune()
         self.assertNotIn(old.id, self.runner.jobs)
 
         # More than the cap of survivors: the oldest ones go.
-        now = time.monotonic()
         for index in range(JOB_MAX_SURVIVORS + 5):
             job = self._job(chat_id=str(index))
             job.state = "complete"
